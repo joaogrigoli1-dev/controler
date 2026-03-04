@@ -17,7 +17,7 @@ Servidores:
   - Mac local:   desenvolvimento
 
 Arquitetura de deploy (atomic releases):
-  /opt/myclinicsoft/
+  /app/myclinicsoft/
     ├── releases/
     │   ├── 20260304-191500/
     │   └── 20260304-193000/  ← release atual
@@ -26,6 +26,9 @@ Arquitetura de deploy (atomic releases):
         ├── .env
         ├── uploads/
         └── .storage/
+
+  NOTA: Na migração inicial, o conteúdo flat existente em /app/myclinicsoft
+  será reorganizado automaticamente para a estrutura de atomic releases.
 """
 
 import os
@@ -41,7 +44,7 @@ from core.database import log_execution, get_rules
 LOCAL_PATH  = "/Users/jhgm/Documents/DEV/myclinicsoft"
 SERVER_IP   = "187.77.40.102"
 SSH_KEY     = "~/.ssh/prod_server"
-REMOTE_BASE = "/opt/myclinicsoft"
+REMOTE_BASE = "/app/myclinicsoft"
 GITHUB_REPO = "joaogrigoli1-dev/myclinicsoft"
 HEALTH_URL  = "http://localhost:5000/api/health"
 MAX_RELEASES = 5
@@ -155,6 +158,68 @@ def _check_ssh():
     """Testa se a conexão SSH está funcional."""
     r = _ssh("echo ok", timeout=15)
     return r["success"] and "ok" in r.get("stdout", "")
+
+
+def _ensure_atomic_structure(log):
+    """
+    Garante que a estrutura de atomic releases existe no servidor.
+    Se o servidor ainda usa a estrutura flat (sem releases/), faz a migração:
+      1. Cria releases/ e shared/
+      2. Move .env para shared/
+      3. Move .storage e uploads para shared/
+      4. Não toca nos arquivos da app (serão recriados no deploy)
+    """
+    r = _ssh(f"test -d {REMOTE_BASE}/releases && echo EXISTS || echo MISSING", timeout=10)
+    if "EXISTS" in r.get("stdout", ""):
+        log("structure", "ok", "Estrutura de atomic releases já existe")
+        return True
+
+    log("structure", "running", "Migrando para atomic releases...")
+
+    # Cria diretórios
+    _ssh(f"mkdir -p {REMOTE_BASE}/releases {REMOTE_BASE}/shared", timeout=10)
+
+    # Move .env para shared (se existir na raiz e não existir em shared)
+    _ssh(
+        f'test -f {REMOTE_BASE}/.env && ! test -f {REMOTE_BASE}/shared/.env && '
+        f'cp {REMOTE_BASE}/.env {REMOTE_BASE}/shared/.env || true',
+        timeout=10
+    )
+
+    # Move .storage para shared (se existir na raiz)
+    _ssh(
+        f'test -d {REMOTE_BASE}/.storage && ! test -d {REMOTE_BASE}/shared/.storage && '
+        f'mv {REMOTE_BASE}/.storage {REMOTE_BASE}/shared/.storage || true',
+        timeout=15
+    )
+
+    # Move uploads para shared (se existir na raiz)
+    _ssh(
+        f'test -d {REMOTE_BASE}/uploads && ! test -d {REMOTE_BASE}/shared/uploads && '
+        f'mv {REMOTE_BASE}/uploads {REMOTE_BASE}/shared/uploads || true',
+        timeout=15
+    )
+
+    # Atualiza ecosystem.config.js para usar current/ (symlink)
+    _ssh(
+        f"sed -i \"s|{REMOTE_BASE}/dist/index.cjs|{REMOTE_BASE}/current/dist/index.cjs|g\" "
+        f"/app/ecosystem.config.js 2>/dev/null || true",
+        timeout=10
+    )
+    _ssh(
+        f"sed -i \"s|cwd: '{REMOTE_BASE}'|cwd: '{REMOTE_BASE}/current'|\" "
+        f"/app/ecosystem.config.js 2>/dev/null || true",
+        timeout=10
+    )
+
+    # Verifica
+    r = _ssh(f"test -d {REMOTE_BASE}/releases && test -d {REMOTE_BASE}/shared && echo OK", timeout=10)
+    if "OK" in r.get("stdout", ""):
+        log("structure", "ok", "Estrutura de atomic releases criada com sucesso")
+        return True
+
+    log("structure", "error", "Falha ao criar estrutura de atomic releases")
+    return False
 
 
 def _check_buffer_health():
@@ -279,14 +344,15 @@ async def sync_leads_from_prod(log_callback=None):
     # 1: DATABASE_URL do servidor
     log("db-url", "running", "Lendo DATABASE_URL do servidor...")
     r = _ssh(
-        "grep '^DATABASE_URL=' /opt/myclinicsoft/shared/.env | cut -d'=' -f2- | tr -d '\"' | tr -d \"'\"",
+        f"grep '^DATABASE_URL=' {REMOTE_BASE}/shared/.env | cut -d'=' -f2- | tr -d '\"' | tr -d \"'\"",
         timeout=15
     )
     prod_url = r.get("stdout", "").strip()
     if not prod_url:
-        # Fallback: tenta no current
+        # Fallback: tenta no current (ou .env direto na raiz)
         r = _ssh(
-            "grep '^DATABASE_URL=' /opt/myclinicsoft/current/.env | cut -d'=' -f2- | tr -d '\"' | tr -d \"'\"",
+            f"grep '^DATABASE_URL=' {REMOTE_BASE}/current/.env 2>/dev/null || "
+            f"grep '^DATABASE_URL=' {REMOTE_BASE}/.env 2>/dev/null | cut -d'=' -f2- | tr -d '\"' | tr -d \"'\"",
             timeout=15
         )
         prod_url = r.get("stdout", "").strip()
@@ -413,6 +479,11 @@ async def deploy(log_callback=None):
         log_execution("myclinicsoft", "deploy", "failed", logs)
         return {"success": False, "logs": logs, "error": "SSH inacessível"}
     log("ssh", "ok", f"SSH OK → srv2 ({SERVER_IP})")
+
+    # ── 0.5: Estrutura atômica ──
+    if not _ensure_atomic_structure(log):
+        log_execution("myclinicsoft", "deploy", "failed", logs)
+        return {"success": False, "logs": logs, "error": "Estrutura atômica falhou"}
 
     # ── 1: Buffer check ──
     log("buffer-pre", "running", "Verificando WhatsApp Buffer...")
