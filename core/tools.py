@@ -92,7 +92,7 @@ def list_directory(path: str) -> dict:
 
 
 def ssh_command(command: str, host: str = "187.77.40.102", user: str = "root",
-                key: str = "~/.ssh/coolify_server", timeout: int = 30) -> dict:
+                key: str = "~/.ssh/prod_server", timeout: int = 30) -> dict:
     """Executa comando via SSH no servidor remoto."""
     key_path = os.path.expanduser(key)
     ssh_opts = f"-i {key_path} -o StrictHostKeyChecking=no -o ConnectTimeout=10"

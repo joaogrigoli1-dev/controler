@@ -1,19 +1,31 @@
 """
-Deploy MyClinicSoft — Local DEV → Produção (187.77.40.102)
-=========================================================
-Regra inviolável: caminho ÚNICO = Local → (rsync/git) → Servidor
-O WhatsApp Buffer NUNCA pode ser afetado pelo deploy.
+Deploy MyClinicSoft — Workflow Profissional
+============================================
+Fluxo: develop (dev) → PR → main (GitHub) → deploy (prod)
 
-Arquitetura do novo servidor (bare-metal, sem Coolify/Docker para a app):
-  - App principal: PM2 + Node.js em /app/myclinicsoft/
-  - Deploy: rsync local dist/ → servidor + pm2 reload
-  - PostgreSQL: banco principal 'myclinicsoft' + banco separado 'whatsapp'
+Regras do workflow profissional:
+  1. Desenvolvimento acontece na branch 'develop'
+  2. Deploy para produção SOMENTE via merge da 'develop' na 'main'
+  3. O deploy lê a branch 'main' e envia para produção
+  4. Rollback automático se health check falhar
+  5. Banco de dados: migrations via Drizzle (nunca sync dev→prod)
+  6. WhatsApp Buffer NUNCA pode ser afetado pelo deploy
 
-DB Sync (Fase 1):
-  O banco dev sobrescreve o banco de produção completamente.
-  IMPORTANTE: O banco 'whatsapp' é INTEIRAMENTE SEPARADO do 'myclinicsoft'.
-  O pg_dump do 'myclinicsoft' não inclui tabelas WhatsApp — elas vivem
-  num banco próprio e jamais são tocadas pelo deploy sync.
+Servidores:
+  - srv2 (prod): 187.77.40.102 — myclinicsoft produção (PM2 + PostgreSQL)
+  - srv1 (dev):  62.72.63.18   — projetos SaaS novos (Coolify)
+  - Mac local:   desenvolvimento
+
+Arquitetura de deploy (atomic releases):
+  /opt/myclinicsoft/
+    ├── releases/
+    │   ├── 20260304-191500/
+    │   └── 20260304-193000/  ← release atual
+    ├── current → releases/20260304-193000  (symlink)
+    └── shared/
+        ├── .env
+        ├── uploads/
+        └── .storage/
 """
 
 import os
@@ -24,161 +36,203 @@ from datetime import datetime
 from core.tools import execute_command, ssh_command
 from core.database import log_execution, get_rules
 
+# ─── Configuração ────────────────────────────────────────────────────────────
+
 LOCAL_PATH  = "/Users/jhgm/Documents/DEV/myclinicsoft"
 SERVER_IP   = "187.77.40.102"
-SSH_KEY     = "~/.ssh/coolify_server"
-REMOTE_BASE = "/app/myclinicsoft"
+SSH_KEY     = "~/.ssh/prod_server"
+REMOTE_BASE = "/opt/myclinicsoft"
+GITHUB_REPO = "joaogrigoli1-dev/myclinicsoft"
+HEALTH_URL  = "http://localhost:5000/api/health"
+MAX_RELEASES = 5
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Script de sincronização executado DENTRO do servidor (bare-metal).
-# PostgreSQL roda diretamente no servidor (não em Docker).
-# Lê DATABASE_URL do .env e restaura via psql.
-# ─────────────────────────────────────────────────────────────────────────────
-DB_SYNC_SCRIPT = r"""#!/bin/bash
+# ─── Deploy Script (executado no servidor) ───────────────────────────────────
+
+REMOTE_DEPLOY_SCRIPT = r"""#!/bin/bash
 set -eo pipefail
 
-DUMP_FILE="/tmp/myclinicsoft_dev_dump.sql"
+RELEASE_DIR="$1"
+SHARED_DIR="$2"
+CURRENT_LINK="$3"
+REMOTE_BASE="$4"
+MAX_RELEASES="$5"
 
-echo "=== MyClinicSoft DB Sync: dev -> prod ==="
+echo "=== MyClinicSoft Deploy: Atomic Release ==="
+echo "Release: $RELEASE_DIR"
 
-# Verifica dump disponível
-if [ ! -f "$DUMP_FILE" ]; then
-  echo "ERROR: dump nao encontrado em $DUMP_FILE" >&2
-  exit 1
-fi
-DUMP_SIZE=$(wc -c < "$DUMP_FILE")
-echo "Dump recebido: ${DUMP_SIZE} bytes"
+# Symlink shared resources
+ln -sfn "$SHARED_DIR/.env" "$RELEASE_DIR/.env"
+ln -sfn "$SHARED_DIR/uploads" "$RELEASE_DIR/uploads" 2>/dev/null || true
+ln -sfn "$SHARED_DIR/.storage" "$RELEASE_DIR/.storage" 2>/dev/null || true
+echo "  Shared resources linked"
 
-# Descobre DATABASE_URL do .env
-ENV_FILE=""
-if [ -f "/app/myclinicsoft/.env" ]; then
-  ENV_FILE="/app/myclinicsoft/.env"
-fi
-
-if [ -z "$ENV_FILE" ]; then
-  echo "ERROR: .env nao encontrado em /app/myclinicsoft/" >&2
-  exit 1
-fi
-
-DATABASE_URL=$(grep "^DATABASE_URL=" "$ENV_FILE" | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-if [ -z "$DATABASE_URL" ]; then
-  echo "ERROR: DATABASE_URL nao encontrada no .env ($ENV_FILE)" >&2
-  exit 1
-fi
-echo "Prod DB: $(echo "$DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://*****@|')"
-
-# Extrai componentes da URL
-# Ex: postgresql://user:pass@localhost:5432/myclinicsoft
-PSQL_USER=$(echo "$DATABASE_URL" | sed -E 's|.*://([^:]+):.*|\1|')
-PSQL_PASS=$(echo "$DATABASE_URL" | sed -E 's|.*://[^:]+:([^@]+)@.*|\1|')
-PSQL_HOST=$(echo "$DATABASE_URL" | sed -E 's|.*@([^:]+):.*|\1|')
-PSQL_PORT=$(echo "$DATABASE_URL" | sed -E 's|.*:([0-9]+)/.*|\1|')
-PSQL_DB=$(echo   "$DATABASE_URL" | sed -E 's|.*/([^?]+).*|\1|')
-PSQL_PORT=${PSQL_PORT:-5432}
-
-echo "DB: host=$PSQL_HOST port=$PSQL_PORT db=$PSQL_DB user=$PSQL_USER"
-
-# Restaura — psql direto (bare-metal, sem docker)
-echo "[1/1] Restaurando banco dev em producao..."
-RESTORE_ERRORS=$(
-  PGPASSWORD="$PSQL_PASS" psql \
-    -U "$PSQL_USER" -h "$PSQL_HOST" -p "$PSQL_PORT" -d "$PSQL_DB" \
-    -f "$DUMP_FILE" 2>&1 \
-  | grep -cE "^ERROR" || true
-)
-echo "      Erros SQL: ${RESTORE_ERRORS:-0}"
-
-# Limpeza
-rm -f "$DUMP_FILE"
-echo "=== SYNC_OK ==="
-"""
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Script de deploy rsync + PM2 executado DENTRO do servidor.
-# Faz gestão de releases com symlink + pm2 reload.
-# ─────────────────────────────────────────────────────────────────────────────
-DEPLOY_SCRIPT = r"""#!/bin/bash
-set -eo pipefail
-
-APP_DIR="/app/myclinicsoft"
-
-echo "=== MyClinicSoft Deploy: PM2 ==="
-echo "App dir: $APP_DIR"
-
-cd "$APP_DIR"
-
-# Instala deps só se package-lock mudou
-LOCK_BACKUP="/tmp/myclinicsoft_prev_lock.json"
+# Install dependencies
+PREV_RELEASE=$(readlink -f "$CURRENT_LINK" 2>/dev/null || echo "")
 LOCK_CHANGED=true
 
-if [ -f "$LOCK_BACKUP" ] && [ -f "$APP_DIR/package-lock.json" ]; then
-  if diff -q "$APP_DIR/package-lock.json" "$LOCK_BACKUP" &>/dev/null; then
+if [ -n "$PREV_RELEASE" ] && [ -f "$PREV_RELEASE/package-lock.json" ]; then
+  if diff -q "$RELEASE_DIR/package-lock.json" "$PREV_RELEASE/package-lock.json" &>/dev/null; then
     LOCK_CHANGED=false
   fi
 fi
 
 if [ "$LOCK_CHANGED" = true ]; then
-  echo "  package-lock.json mudou — npm install..."
-  # Remove lock do Mac (ARM64) — incompatível com servidor x64.
-  # --force: ignora incompatibilidade de plataforma (arm64 vs x64)
-  rm -f "$APP_DIR/package-lock.json"
-  npm install --omit=dev --ignore-scripts --no-audit --no-fund --force 2>&1 | tail -10
-  echo "  npm install concluido"
-  # Salva lock gerado pelo servidor para comparação futura
-  cp -f "$APP_DIR/package-lock.json" "$LOCK_BACKUP" 2>/dev/null || true
+  echo "  package-lock.json changed — npm ci..."
+  cd "$RELEASE_DIR"
+  npm ci --omit=dev --ignore-scripts 2>&1 | tail -5
 else
-  echo "  package-lock.json inalterado — deps ok"
+  echo "  package-lock.json unchanged — copying node_modules..."
+  cp -al "$PREV_RELEASE/node_modules" "$RELEASE_DIR/node_modules" 2>/dev/null || {
+    echo "  cp -al failed, falling back to npm ci..."
+    cd "$RELEASE_DIR"
+    npm ci --omit=dev --ignore-scripts 2>&1 | tail -5
+  }
 fi
 
-# PM2: reload (zero-downtime) ou start se não existir
+# Atomic symlink switch
+ln -sfn "$RELEASE_DIR" "${CURRENT_LINK}.tmp"
+mv -fT "${CURRENT_LINK}.tmp" "$CURRENT_LINK"
+echo "  Symlink: current -> $RELEASE_DIR"
+
+# PM2 reload (zero-downtime)
 if pm2 describe myclinicsoft &>/dev/null; then
   pm2 reload myclinicsoft --update-env
   echo "  PM2: reloaded"
 else
-  pm2 start "$APP_DIR/dist/index.cjs" --name myclinicsoft
+  cd "$REMOTE_BASE"
+  pm2 start "$CURRENT_LINK/dist/index.cjs" --name myclinicsoft
   echo "  PM2: started"
+fi
+
+# Cleanup old releases
+cd "$REMOTE_BASE/releases"
+RELEASES=($(ls -1d */ 2>/dev/null | sort))
+TOTAL=${#RELEASES[@]}
+if [ "$TOTAL" -gt "$MAX_RELEASES" ]; then
+  TO_DELETE=$((TOTAL - MAX_RELEASES))
+  for ((i=0; i<TO_DELETE; i++)); do
+    echo "  Removing old release: ${RELEASES[$i]}"
+    rm -rf "${RELEASES[$i]}"
+  done
 fi
 
 echo "=== DEPLOY_OK ==="
 """
 
+REMOTE_ROLLBACK_SCRIPT = r"""#!/bin/bash
+set -eo pipefail
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Funções auxiliares
-# ─────────────────────────────────────────────────────────────────────────────
+CURRENT_LINK="$1"
+REMOTE_BASE="$2"
+
+echo "=== ROLLBACK ==="
+RELEASES=($(ls -1d "$REMOTE_BASE/releases"/*/ 2>/dev/null | sort))
+TOTAL=${#RELEASES[@]}
+
+if [ "$TOTAL" -lt 2 ]; then
+  echo "ERROR: No previous release to rollback to"
+  exit 1
+fi
+
+PREV="${RELEASES[$((TOTAL-2))]}"
+PREV_DIR="${PREV%/}"
+ln -sfn "$PREV_DIR" "${CURRENT_LINK}.tmp"
+mv -fT "${CURRENT_LINK}.tmp" "$CURRENT_LINK"
+pm2 reload myclinicsoft --update-env
+echo "Rolled back to: $(basename $PREV_DIR)"
+echo "=== ROLLBACK_OK ==="
+"""
+
+
+# ─── Funções auxiliares ──────────────────────────────────────────────────────
+
+def _ssh(cmd, timeout=30):
+    """Executa comando SSH no servidor de produção."""
+    return ssh_command(cmd, host=SERVER_IP, key=SSH_KEY, timeout=timeout)
+
 
 def _check_ssh():
     """Testa se a conexão SSH está funcional."""
-    r = ssh_command("echo ok", timeout=15)
+    r = _ssh("echo ok", timeout=15)
     return r["success"] and "ok" in r.get("stdout", "")
 
 
 def _check_buffer_health():
     """
     Verifica se o WhatsApp Buffer está UP no servidor.
-    Tenta múltiplos métodos (do mais confiável ao fallback):
-      1. curl na porta 3001 (qualquer resposta = UP)
-      2. docker ps filtrando container do buffer (buffer ainda usa Docker)
-      3. netstat/ss verificando porta 3001 em LISTEN
+    Tenta: 1) curl porta 3001  2) docker ps  3) ss porta 3001
     """
-    # Método 1: curl simples na porta 3001 (aceita qualquer resposta HTTP)
-    r = ssh_command("curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/ --max-time 5", timeout=15)
+    r = _ssh("curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/ --max-time 5", timeout=15)
     if r["success"]:
         code = r.get("stdout", "").strip().strip("'")
         if code and code != "000":
             return {"up": True, "method": "http", "detail": f"HTTP {code}"}
 
-    # Método 2: verificar container Docker do buffer (o buffer ainda pode rodar em Docker)
-    r = ssh_command("docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null | grep -i buffer", timeout=15)
+    r = _ssh("docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null | grep -i buffer", timeout=15)
     if r["success"] and r.get("stdout", "").strip():
         return {"up": True, "method": "docker", "detail": r["stdout"].strip()}
 
-    # Método 3: verificar porta 3001 em LISTEN
-    r = ssh_command("ss -tlnp 2>/dev/null | grep ':3001 ' || netstat -tlnp 2>/dev/null | grep ':3001 '", timeout=15)
+    r = _ssh("ss -tlnp 2>/dev/null | grep ':3001 ' || netstat -tlnp 2>/dev/null | grep ':3001 '", timeout=15)
     if r["success"] and r.get("stdout", "").strip():
         return {"up": True, "method": "port", "detail": "Porta 3001 em LISTEN"}
 
     return {"up": False, "method": "all_failed", "detail": "Nenhum método detectou o buffer ativo"}
+
+
+def _get_current_branch():
+    """Retorna a branch atual do repositório local."""
+    r = execute_command("git rev-parse --abbrev-ref HEAD", cwd=LOCAL_PATH)
+    return r.get("stdout", "").strip() if r["success"] else None
+
+
+def _get_git_status():
+    """Retorna se há alterações não commitadas."""
+    r = execute_command("git status --porcelain", cwd=LOCAL_PATH)
+    return r.get("stdout", "").strip() if r["success"] else ""
+
+
+def _ensure_main_branch(log):
+    """
+    Garante que estamos na branch main e que está atualizada.
+    O deploy SEMPRE parte da main (que é a branch de produção).
+    """
+    current = _get_current_branch()
+    if current != "main":
+        log("git-branch", "running", f"Alternando de '{current}' para 'main'...")
+        r = execute_command("git checkout main", cwd=LOCAL_PATH, timeout=30)
+        if not r["success"]:
+            log("git-branch", "error", f"Falha ao trocar para main: {r.get('stderr', '')[:200]}")
+            return False
+
+    # Pull para garantir que temos o último merge da develop
+    log("git-pull", "running", "Atualizando main com GitHub...")
+    r = execute_command("git pull origin main", cwd=LOCAL_PATH, timeout=60)
+    if not r["success"]:
+        log("git-pull", "error", f"Git pull falhou: {r.get('stderr', '')[:200]}")
+        return False
+    log("git-pull", "ok", "Branch main atualizada")
+    return True
+
+
+def _restore_branch(original_branch):
+    """Volta para a branch original após o deploy."""
+    if original_branch and original_branch != "main":
+        execute_command(f"git checkout {original_branch}", cwd=LOCAL_PATH, timeout=15)
+
+
+# ─── Sync Leads: prod → local ───────────────────────────────────────────────
+
+_LEADS_TABLES = ["partners", "leads", "lead_interactions"]
+
+
+def _parse_db_url(url: str):
+    """Extrai componentes de uma DATABASE_URL postgresql://user:pass@host:port/db."""
+    m = re.match(r'postgresql(?:\+\w+)?://([^:]+):([^@]+)@([^:/]+):?(\d+)?/([^?]+)', url)
+    if not m:
+        return None
+    user, password, host, port, dbname = m.groups()
+    return {"user": user, "password": password, "host": host,
+            "port": port or "5432", "dbname": dbname}
 
 
 def _get_local_db_url():
@@ -195,237 +249,10 @@ def _get_local_db_url():
     return None
 
 
-def _find_pg_dump():
-    """Localiza o executável pg_dump no Mac (Homebrew arm64 ou intel)."""
-    candidates = [
-        "pg_dump",                          # já no PATH
-        "/opt/homebrew/bin/pg_dump",        # Homebrew Apple Silicon
-        "/usr/local/bin/pg_dump",           # Homebrew Intel
-        "/opt/homebrew/opt/postgresql@16/bin/pg_dump",
-        "/opt/homebrew/opt/postgresql@15/bin/pg_dump",
-        "/opt/homebrew/opt/postgresql@14/bin/pg_dump",
-    ]
-    for c in candidates:
-        r = execute_command(f'test -x "$(which {c} 2>/dev/null || echo {c})" && echo OK || {c} --version 2>/dev/null | head -1')
-        if r["success"] or "pg_dump" in r.get("stdout", ""):
-            return c
-    # fallback: tenta achar via mdfind (Spotlight)
-    r = execute_command("mdfind -name pg_dump 2>/dev/null | grep bin | head -1")
-    found = r.get("stdout", "").strip()
-    if found:
-        return found
-    return "pg_dump"
-
-
-def _sync_database_dev_to_prod(log):
-    """
-    Sincroniza banco 'myclinicsoft' dev (Mac local) → prod (servidor bare-metal).
-
-    Fase 1: dev é fonte única da verdade para todos os dados.
-
-    Nota sobre banco WhatsApp:
-    O banco 'whatsapp' (tabelas conversations, messages, etc.) é SEPARADO do
-    'myclinicsoft'. O pg_dump abaixo só captura 'myclinicsoft' — as tabelas
-    WhatsApp não existem nesse banco e NUNCA são afetadas.
-    """
-    DUMP_LOCAL    = "/tmp/myclinicsoft_dev_dump.sql"
-    DUMP_REMOTE   = "/tmp/myclinicsoft_dev_dump.sql"
-    SCRIPT_LOCAL  = "/tmp/myclinicsoft_db_sync.sh"
-    SCRIPT_REMOTE = "/tmp/myclinicsoft_db_sync.sh"
-
-    # ── Localiza pg_dump ──
-    pg_dump_bin = _find_pg_dump()
-
-    # ── Obtém URL do banco local ──
-    local_db_url = _get_local_db_url()
-    if not local_db_url:
-        log("db-sync", "error", "DATABASE_URL não encontrada no .env local do projeto")
-        return False
-
-    # ── Passo 1: pg_dump do banco dev local ──
-    # Não precisa mais excluir tabelas WhatsApp — elas estão no banco 'whatsapp' separado.
-    log("db-dump", "running", f"pg_dump banco dev local (myclinicsoft)... ({pg_dump_bin})")
-    r = execute_command(
-        f'PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" '
-        f'{pg_dump_bin} "{local_db_url}" --clean --if-exists --no-owner --no-acl '
-        f'> {DUMP_LOCAL} 2>/tmp/pgdump_err.txt',
-        timeout=120
-    )
-    if not r["success"] or not os.path.exists(DUMP_LOCAL) or os.path.getsize(DUMP_LOCAL) < 1000:
-        err = ""
-        try:
-            with open("/tmp/pgdump_err.txt") as f:
-                err = f.read()[-400:]
-        except Exception:
-            err = r.get("stderr") or r.get("stdout", "")
-        log("db-dump", "error", f"pg_dump falhou:\n{err or 'sem saída — verifique se pg_dump está instalado'}")
-        return False
-
-    dump_size_kb = os.path.getsize(DUMP_LOCAL) // 1024
-    log("db-dump", "ok", f"Dump gerado: {dump_size_kb} KB")
-
-    # ── Passo 2: SCP dump → servidor ──
-    log("db-transfer", "running", f"Transferindo dump ({dump_size_kb} KB) → servidor...")
-    r = execute_command(
-        f'scp -i {SSH_KEY} -o StrictHostKeyChecking=no '
-        f'{DUMP_LOCAL} root@{SERVER_IP}:{DUMP_REMOTE}',
-        timeout=120
-    )
-    if not r["success"]:
-        log("db-transfer", "error",
-            f"SCP falhou: {r.get('stderr') or r.get('stdout', '')[:300]}")
-        execute_command(f'rm -f {DUMP_LOCAL}')
-        return False
-    log("db-transfer", "ok", "Dump transferido")
-
-    # ── Passo 3: Envia script de sync ──
-    log("db-script", "running", "Enviando script de sync para o servidor...")
-    try:
-        with open(SCRIPT_LOCAL, "w") as f:
-            f.write(DB_SYNC_SCRIPT)
-    except Exception as e:
-        log("db-script", "error", f"Falha ao criar script: {e}")
-        execute_command(f'rm -f {DUMP_LOCAL}')
-        return False
-
-    r = execute_command(
-        f'scp -i {SSH_KEY} -o StrictHostKeyChecking=no '
-        f'{SCRIPT_LOCAL} root@{SERVER_IP}:{SCRIPT_REMOTE}',
-        timeout=30
-    )
-    if not r["success"]:
-        log("db-script", "error", f"SCP script falhou: {r.get('stderr', '')[:200]}")
-        execute_command(f'rm -f {DUMP_LOCAL} {SCRIPT_LOCAL}')
-        return False
-    log("db-script", "ok", "Script enviado")
-
-    # ── Passo 4: Executa script no servidor (psql direto, sem Docker) ──
-    log("db-restore", "running", "Servidor: restaurando banco myclinicsoft (psql direto)...")
-    r = ssh_command(f'bash {SCRIPT_REMOTE} 2>&1', timeout=300)
-    output = (r.get("stdout", "") + r.get("stderr", "")).strip()
-
-    # Limpeza local
-    execute_command(f'rm -f {DUMP_LOCAL} {SCRIPT_LOCAL}')
-    ssh_command(f'rm -f {SCRIPT_REMOTE} 2>/dev/null || true')
-
-    if not r["success"] or "SYNC_OK" not in output:
-        error_lines = [l for l in output.split('\n') if 'ERROR' in l or 'error' in l.lower()]
-        detail = '\n'.join(error_lines[:5]) if error_lines else output[-400:]
-        log("db-restore", "error", f"Sync falhou no servidor:\n{detail or '(sem saída)'}")
-        return False
-
-    summary = '\n'.join(l for l in output.split('\n') if l.strip())
-    log("db-restore", "ok",
-        f"✓ Banco sincronizado: dev → prod | Banco whatsapp preservado (separado)\n{summary}")
-    return True
-
-
-def _deploy_rsync_pm2(log):
-    """
-    Faz o deploy do código para o servidor via rsync + PM2.
-    Estratégia: rsync dist/ + package.json → /app/myclinicsoft/ + pm2 reload.
-    """
-    APP_DIR         = f"{REMOTE_BASE}"
-    SCRIPT_LOCAL    = "/tmp/myclinicsoft_deploy.sh"
-    SCRIPT_REMOTE   = "/tmp/myclinicsoft_deploy.sh"
-
-    # ── Passo 1: rsync dist/ + package files para o servidor ──
-    log("rsync", "running", f"rsync dist/ → {SERVER_IP}:{APP_DIR}/...")
-    r = execute_command(
-        f'rsync -az --delete '
-        f'-e "ssh -i {SSH_KEY} -o StrictHostKeyChecking=no" '
-        f'{LOCAL_PATH}/dist/ '
-        f'root@{SERVER_IP}:{APP_DIR}/dist/',
-        cwd=LOCAL_PATH,
-        timeout=120
-    )
-    if not r["success"]:
-        log("rsync", "error", f"rsync dist/ falhou: {r.get('stderr') or r.get('stdout', '')[:300]}")
-        return False
-
-    # rsync package.json + package-lock.json separadamente
-    r2 = execute_command(
-        f'scp -i {SSH_KEY} -o StrictHostKeyChecking=no '
-        f'{LOCAL_PATH}/package.json {LOCAL_PATH}/package-lock.json '
-        f'root@{SERVER_IP}:{APP_DIR}/',
-        timeout=30
-    )
-    if not r2["success"]:
-        log("rsync", "error", f"scp package files falhou: {r2.get('stderr', '')[:200]}")
-        return False
-
-    # Calcula tamanho do dist/
-    size_r = execute_command(f'du -sh {LOCAL_PATH}/dist/')
-    size_str = size_r.get("stdout", "").split()[0] if size_r["success"] else "?"
-    log("rsync", "ok", f"Arquivos sincronizados ({size_str})")
-
-    # ── Passo 2: Envia script de deploy ──
-    log("pm2-deploy", "running", "Enviando script de PM2 deploy...")
-    try:
-        with open(SCRIPT_LOCAL, "w") as f:
-            f.write(DEPLOY_SCRIPT)
-    except Exception as e:
-        log("pm2-deploy", "error", f"Falha ao criar script: {e}")
-        return False
-
-    r = execute_command(
-        f'scp -i {SSH_KEY} -o StrictHostKeyChecking=no '
-        f'{SCRIPT_LOCAL} root@{SERVER_IP}:{SCRIPT_REMOTE}',
-        timeout=30
-    )
-    if not r["success"]:
-        log("pm2-deploy", "error", f"SCP script falhou: {r.get('stderr', '')[:200]}")
-        execute_command(f'rm -f {SCRIPT_LOCAL}')
-        return False
-
-    # ── Passo 3: Executa deploy no servidor ──
-    log("pm2-deploy", "running", "Servidor: npm ci (se necessário) + pm2 reload...")
-    r = ssh_command(f'bash {SCRIPT_REMOTE} 2>&1', timeout=180)
-    output = (r.get("stdout", "") + r.get("stderr", "")).strip()
-
-    # Limpeza
-    execute_command(f'rm -f {SCRIPT_LOCAL}')
-    ssh_command(f'rm -f {SCRIPT_REMOTE} 2>/dev/null || true')
-
-    if not r["success"] or "DEPLOY_OK" not in output:
-        error_lines = [l for l in output.split('\n') if 'ERROR' in l.upper() or 'failed' in l.lower()]
-        detail = '\n'.join(error_lines[:5]) if error_lines else output[-400:]
-        log("pm2-deploy", "error", f"Deploy PM2 falhou:\n{detail or '(sem saída)'}")
-        return False
-
-    summary = '\n'.join(l for l in output.split('\n') if l.strip())
-    log("pm2-deploy", "ok", f"✓ Deploy PM2 concluído\n{summary}")
-    return True
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Sync Leads: prod → local
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Tabelas de leads a sincronizar (ordem respeita FKs: partners antes de leads)
-_LEADS_TABLES = ["partners", "leads", "lead_interactions"]
-
-def _parse_db_url(url: str):
-    """Extrai componentes de uma DATABASE_URL postgresql://user:pass@host:port/db."""
-    m = re.match(r'postgresql(?:\+\w+)?://([^:]+):([^@]+)@([^:/]+):?(\d+)?/([^?]+)', url)
-    if not m:
-        return None
-    user, password, host, port, dbname = m.groups()
-    return {"user": user, "password": password, "host": host,
-            "port": port or "5432", "dbname": dbname}
-
-
 async def sync_leads_from_prod(log_callback=None):
     """
     Puxa novos leads/interações do servidor de produção para o banco local.
-
-    Fluxo:
-      1. Verifica SSH
-      2. Lê DATABASE_URL do servidor (.env do app)
-      3. pg_dump --data-only --column-inserts das tabelas de leads
-      4. SCP dump → local
-      5. Adiciona ON CONFLICT (id) DO NOTHING em cada INSERT
-      6. Aplica no banco local via psql
+    Fluxo: prod → dump → SCP → patch ON CONFLICT → import local
     """
     logs = []
     started = datetime.now()
@@ -441,32 +268,38 @@ async def sync_leads_from_prod(log_callback=None):
     DUMP_LOCAL  = "/tmp/leads_prod_dump.sql"
     DUMP_PATCHED = "/tmp/leads_prod_dump_patched.sql"
 
-    # ── 0: SSH ──
+    # 0: SSH
     log("ssh", "running", f"Conectando ao servidor {SERVER_IP}...")
-    r = ssh_command("echo ok", timeout=15)
+    r = _ssh("echo ok", timeout=15)
     if not r.get("success"):
         log("ssh", "error", f"Sem acesso SSH ao servidor {SERVER_IP}")
         return {"success": False, "logs": logs}
     log("ssh", "ok", "SSH OK")
 
-    # ── 1: Lê DATABASE_URL do servidor ──
+    # 1: DATABASE_URL do servidor
     log("db-url", "running", "Lendo DATABASE_URL do servidor...")
-    r = ssh_command(
-        "grep '^DATABASE_URL=' /app/myclinicsoft/.env | cut -d'=' -f2- | tr -d '\"' | tr -d \"'\"",
+    r = _ssh(
+        "grep '^DATABASE_URL=' /opt/myclinicsoft/shared/.env | cut -d'=' -f2- | tr -d '\"' | tr -d \"'\"",
         timeout=15
     )
     prod_url = r.get("stdout", "").strip()
     if not prod_url:
-        log("db-url", "error", "DATABASE_URL não encontrada em /app/myclinicsoft/.env")
+        # Fallback: tenta no current
+        r = _ssh(
+            "grep '^DATABASE_URL=' /opt/myclinicsoft/current/.env | cut -d'=' -f2- | tr -d '\"' | tr -d \"'\"",
+            timeout=15
+        )
+        prod_url = r.get("stdout", "").strip()
+    if not prod_url:
+        log("db-url", "error", "DATABASE_URL não encontrada no servidor")
         return {"success": False, "logs": logs}
     creds = _parse_db_url(prod_url)
     if not creds:
-        log("db-url", "error", f"Formato de DATABASE_URL inesperado: {prod_url[:40]}...")
+        log("db-url", "error", f"Formato de DATABASE_URL inesperado")
         return {"success": False, "logs": logs}
-    masked = prod_url.replace(creds["password"], "****")
-    log("db-url", "ok", f"Banco prod: {masked}")
+    log("db-url", "ok", "Banco prod localizado")
 
-    # ── 2: pg_dump no servidor ──
+    # 2: pg_dump no servidor
     tables_arg = " ".join(f"--table={t}" for t in _LEADS_TABLES)
     pg_env = f'PGPASSWORD="{creds["password"]}"'
     pg_conn = f'-U {creds["user"]} -h {creds["host"]} -p {creds["port"]} -d {creds["dbname"]}'
@@ -476,24 +309,18 @@ async def sync_leads_from_prod(log_callback=None):
         f'> {DUMP_REMOTE} 2>/tmp/leads_dump_err.txt && echo "DUMP_OK"'
     )
     log("pg-dump", "running", f"Dump das tabelas {', '.join(_LEADS_TABLES)} no servidor...")
-    r = ssh_command(dump_cmd, timeout=180)
-    stdout = r.get("stdout", "")
-    if not r.get("success") or "DUMP_OK" not in stdout:
-        err_r = ssh_command("cat /tmp/leads_dump_err.txt 2>/dev/null | tail -10", timeout=10)
+    r = _ssh(dump_cmd, timeout=180)
+    if not r.get("success") or "DUMP_OK" not in r.get("stdout", ""):
+        err_r = _ssh("cat /tmp/leads_dump_err.txt 2>/dev/null | tail -10", timeout=10)
         log("pg-dump", "error", f"pg_dump falhou:\n{err_r.get('stdout', '')[:400]}")
         return {"success": False, "logs": logs}
+    log("pg-dump", "ok", "Dump gerado")
 
-    size_r = ssh_command(
-        f"stat -c%s {DUMP_REMOTE} 2>/dev/null || stat -f%z {DUMP_REMOTE} 2>/dev/null || echo 0",
-        timeout=10
-    )
-    size_kb = int(re.sub(r'[^\d]', '', size_r.get("stdout", "0").strip() or "0") or "0") // 1024
-    log("pg-dump", "ok", f"Dump gerado: {size_kb} KB")
-
-    # ── 3: SCP → local ──
+    # 3: SCP → local
     log("scp", "running", "Transferindo dump para local...")
+    key_path = os.path.expanduser(SSH_KEY)
     r = execute_command(
-        f'scp -i {SSH_KEY} -o StrictHostKeyChecking=no '
+        f'scp -i {key_path} -o StrictHostKeyChecking=no '
         f'root@{SERVER_IP}:{DUMP_REMOTE} {DUMP_LOCAL}',
         timeout=180
     )
@@ -502,54 +329,39 @@ async def sync_leads_from_prod(log_callback=None):
         return {"success": False, "logs": logs}
     log("scp", "ok", "Dump transferido")
 
-    # ── 4: Patch INSERT → ON CONFLICT (id) DO NOTHING ──
-    log("patch", "running", "Aplicando ON CONFLICT (id) DO NOTHING nas inserções...")
+    # 4: Patch INSERT → ON CONFLICT
+    log("patch", "running", "Aplicando ON CONFLICT (id) DO NOTHING...")
     r = execute_command(
-        f"sed \"s/^INSERT INTO \\([^ ]*\\) (\\(.*\\)) VALUES (\\(.*\\));$/INSERT INTO \\1 (\\2) VALUES (\\3) ON CONFLICT (id) DO NOTHING;/\" "
-        f"{DUMP_LOCAL} > {DUMP_PATCHED}",
+        f'sed "s/^INSERT INTO \\([^ ]*\\) (\\(.*\\)) VALUES (\\(.*\\));$/INSERT INTO \\1 (\\2) VALUES (\\3) ON CONFLICT (id) DO NOTHING;/" '
+        f'{DUMP_LOCAL} > {DUMP_PATCHED}',
         timeout=30
     )
-    if not r["success"] or not os.path.exists(DUMP_PATCHED):
+    if not r["success"]:
         log("patch", "error", "Falha ao processar dump")
         execute_command(f"rm -f {DUMP_LOCAL} {DUMP_PATCHED}")
         return {"success": False, "logs": logs}
     log("patch", "ok", "Dump processado")
 
-    # ── 5: Aplica no banco local ──
+    # 5: Import local
     local_db_url = _get_local_db_url()
     if not local_db_url:
         log("import", "error", "DATABASE_URL local não encontrada")
         execute_command(f"rm -f {DUMP_LOCAL} {DUMP_PATCHED}")
         return {"success": False, "logs": logs}
 
-    log("import", "running", "Importando no banco local (ON CONFLICT → ignora duplicatas)...")
+    log("import", "running", "Importando no banco local...")
     r = execute_command(
         f'psql "{local_db_url}" --set ON_ERROR_STOP=off -f {DUMP_PATCHED} 2>&1 | tail -5',
         timeout=180
     )
-    output = (r.get("stdout", "") + r.get("stderr", "")).strip()
 
-    # Limpa arquivos temporários
     execute_command(f"rm -f {DUMP_LOCAL} {DUMP_PATCHED}")
-    ssh_command(f"rm -f {DUMP_REMOTE} /tmp/leads_dump_err.txt 2>/dev/null || true")
+    _ssh(f"rm -f {DUMP_REMOTE} /tmp/leads_dump_err.txt 2>/dev/null || true")
 
-    if not r.get("success"):
-        log("import", "error", f"Import falhou:\n{output[:400]}")
-        return {"success": False, "logs": logs}
-
-    # Conta leads novos importados
-    local_creds = _parse_db_url(local_db_url)
-    count_r = execute_command(
-        f'psql "{local_db_url}" -t -A -c "SELECT COUNT(*) FROM leads"',
-        timeout=15
-    )
+    count_r = execute_command(f'psql "{local_db_url}" -t -A -c "SELECT COUNT(*) FROM leads"', timeout=15)
     total_local = count_r.get("stdout", "?").strip()
 
-    log("import", "ok",
-        f"✓ Leads sincronizados de prod → local\n"
-        f"  Total no banco local agora: {total_local} leads\n"
-        f"  (Duplicatas ignoradas automaticamente)\n"
-        f"  {output or 'OK'}")
+    log("import", "ok", f"✓ Leads sincronizados | Total local: {total_local} leads")
 
     elapsed = (datetime.now() - started).total_seconds()
     success = all(l["status"] != "error" for l in logs)
@@ -560,28 +372,30 @@ async def sync_leads_from_prod(log_callback=None):
     return {"success": success, "logs": logs, "elapsed_seconds": elapsed}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Pipeline principal de deploy
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Pipeline de Deploy Profissional ─────────────────────────────────────────
 
 async def deploy(log_callback=None):
     """
-    Executa o deploy completo do MyClinicSoft.
+    Deploy profissional do MyClinicSoft.
     log_callback(entry) — para atualizar interface em tempo real.
 
-    Sequência (novo servidor bare-metal + PM2):
+    Sequência:
       0. SSH check
       1. Buffer check (pré-deploy) — cancela se offline
-      2. TypeScript check           — cancela se erros
-      3. Build local                — cancela se falhar
-      4. DB Sync dev → prod         — cancela se falhar (Fase 1)
-      5. Git push → main            — para versionamento
-      6. rsync dist/ + pm2 reload   — deploy sem Coolify
+      2. Git: garantir branch main atualizada
+      3. TypeScript check (npm run check)
+      4. Build local (npm run build)
+      5. rsync dist/ → servidor (release atômica)
+      6. npm ci + PM2 reload no servidor
       7. Health check app
       8. Health check buffer (pós-deploy)
+      9. Volta para branch develop
+
+    Em caso de falha no health check: rollback automático.
     """
     logs = []
     started = datetime.now()
+    original_branch = _get_current_branch()
 
     def log(step, status, msg):
         entry = {"step": step, "status": status, "message": msg, "time": datetime.now().isoformat()}
@@ -589,87 +403,153 @@ async def deploy(log_callback=None):
         if log_callback:
             log_callback(entry)
 
-    # ── PRÉ-CHECK 0: Conexão SSH ──
-    log("ssh", "running", f"Testando conexão SSH com servidor {SERVER_IP}...")
+    # ── 0: SSH ──
+    log("ssh", "running", f"Testando conexão SSH com srv2 ({SERVER_IP})...")
     if not _check_ssh():
         log("ssh", "error",
             f"Sem acesso SSH ao servidor {SERVER_IP}. "
-            "Verifique: 1) chave SSH existe  "
-            "2) servidor acessível  3) permissões da chave (chmod 600)")
+            "Verifique: 1) chave ~/.ssh/prod_server  "
+            "2) servidor acessível  3) permissões da chave")
         log_execution("myclinicsoft", "deploy", "failed", logs)
         return {"success": False, "logs": logs, "error": "SSH inacessível"}
-    log("ssh", "ok", f"SSH OK → {SERVER_IP}")
+    log("ssh", "ok", f"SSH OK → srv2 ({SERVER_IP})")
 
-    # ── PRÉ-CHECK 1: Buffer deve estar UP ──
-    log("pre-check", "running", "Verificando WhatsApp Buffer...")
+    # ── 1: Buffer check ──
+    log("buffer-pre", "running", "Verificando WhatsApp Buffer...")
     buf = _check_buffer_health()
     if not buf["up"]:
-        log("pre-check", "error",
-            f"WhatsApp Buffer OFFLINE! Deploy CANCELADO por segurança. "
-            f"Detalhe: {buf['detail']}")
+        log("buffer-pre", "error",
+            f"WhatsApp Buffer OFFLINE! Deploy CANCELADO. Detalhe: {buf['detail']}")
         log_execution("myclinicsoft", "deploy", "failed", logs)
         return {"success": False, "logs": logs, "error": "Buffer offline"}
-    log("pre-check", "ok", f"Buffer UP — verificado via {buf['method']} ({buf['detail']})")
+    log("buffer-pre", "ok", f"Buffer UP ({buf['method']}: {buf['detail']})")
 
-    # ── 1: TypeScript check ──
-    log("check", "running", "npm run check...")
+    # ── 2: Git — branch main atualizada ──
+    log("git", "running", "Preparando branch main para deploy...")
+    uncommitted = _get_git_status()
+    if uncommitted:
+        log("git", "error",
+            f"Há alterações não commitadas na branch '{original_branch}'! "
+            f"Commit ou stash antes de deployar.\n"
+            f"Arquivos: {uncommitted[:300]}")
+        log_execution("myclinicsoft", "deploy", "failed", logs)
+        return {"success": False, "logs": logs, "error": "Alterações não commitadas"}
+
+    if not _ensure_main_branch(log):
+        _restore_branch(original_branch)
+        log_execution("myclinicsoft", "deploy", "failed", logs)
+        return {"success": False, "logs": logs, "error": "Falha ao atualizar main"}
+    log("git", "ok", "Branch main pronta para deploy")
+
+    # ── 3: TypeScript check ──
+    log("check", "running", "npm run check (TypeScript)...")
     r = execute_command("npm run check", cwd=LOCAL_PATH, timeout=60)
     if not r["success"]:
-        log("check", "error", f"TypeScript com erros:\n{r['stderr'] or r['stdout']}")
+        log("check", "error", f"TypeScript com erros:\n{(r.get('stderr') or r.get('stdout', ''))[:500]}")
+        _restore_branch(original_branch)
         log_execution("myclinicsoft", "deploy", "failed", logs)
         return {"success": False, "logs": logs, "error": "TypeScript check falhou"}
     log("check", "ok", "0 erros TypeScript")
 
-    # ── 2: Build ──
+    # ── 4: Build ──
     log("build", "running", "npm run build...")
     r = execute_command("npm run build", cwd=LOCAL_PATH, timeout=180)
     if not r["success"]:
-        log("build", "error", f"Build falhou:\n{r['stderr'] or r['stdout']}")
+        log("build", "error", f"Build falhou:\n{(r.get('stderr') or r.get('stdout', ''))[:500]}")
+        _restore_branch(original_branch)
         log_execution("myclinicsoft", "deploy", "failed", logs)
         return {"success": False, "logs": logs, "error": "Build falhou"}
-    log("build", "ok", "Build OK")
 
-    # ── 3: DB Sync dev → prod (Fase 1 — dev é fonte única da verdade) ──
-    log("db-sync", "running", "Iniciando DB sync: myclinicsoft dev → prod...")
-    sync_ok = _sync_database_dev_to_prod(log)
-    if not sync_ok:
-        log("db-sync", "error",
-            "DB sync falhou — deploy cancelado para proteger integridade do banco de produção")
+    size_r = execute_command(f"du -sh {LOCAL_PATH}/dist/")
+    size_str = size_r.get("stdout", "").split()[0] if size_r["success"] else "?"
+    log("build", "ok", f"Build OK ({size_str})")
+
+    # ── 5: rsync dist/ → servidor (release atômica) ──
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    release_dir = f"{REMOTE_BASE}/releases/{timestamp}"
+    shared_dir = f"{REMOTE_BASE}/shared"
+    current_link = f"{REMOTE_BASE}/current"
+    key_path = os.path.expanduser(SSH_KEY)
+
+    log("rsync", "running", f"Criando release {timestamp} no servidor...")
+    _ssh(f"mkdir -p {release_dir}", timeout=15)
+
+    r = execute_command(
+        f'rsync -az --delete '
+        f'-e "ssh -i {key_path} -o StrictHostKeyChecking=no" '
+        f'{LOCAL_PATH}/dist/ '
+        f'root@{SERVER_IP}:{release_dir}/dist/',
+        cwd=LOCAL_PATH,
+        timeout=120
+    )
+    if not r["success"]:
+        log("rsync", "error", f"rsync falhou: {(r.get('stderr') or r.get('stdout', ''))[:300]}")
+        _restore_branch(original_branch)
         log_execution("myclinicsoft", "deploy", "failed", logs)
-        return {"success": False, "logs": logs, "error": "DB sync falhou"}
+        return {"success": False, "logs": logs, "error": "rsync falhou"}
 
-    # ── 4: Git push → main (versionamento) ──
-    log("git", "running", "Git push main...")
-    r = execute_command("git status --porcelain", cwd=LOCAL_PATH)
-    if r["stdout"].strip():
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        execute_command(f'git add -A && git commit -m "deploy: {ts}"', cwd=LOCAL_PATH)
-        r = execute_command("git push origin main", cwd=LOCAL_PATH, timeout=60)
-        log("git", "ok" if r["success"] else "warning",
-            "Push OK" if r["success"] else f"Push falhou (deploy continua via rsync)")
-    else:
-        execute_command("git push origin main", cwd=LOCAL_PATH, timeout=60)
-        log("git", "ok", "Sem alterações para commitar — push feito")
-
-    # ── 5: Deploy via rsync + PM2 (substituiu Coolify) ──
-    log("deploy", "running", "Deploy: rsync dist/ + PM2 reload...")
-    deploy_ok = _deploy_rsync_pm2(log)
-    if not deploy_ok:
+    # Envia package.json + package-lock.json
+    r2 = execute_command(
+        f'scp -i {key_path} -o StrictHostKeyChecking=no '
+        f'{LOCAL_PATH}/package.json {LOCAL_PATH}/package-lock.json '
+        f'root@{SERVER_IP}:{release_dir}/',
+        timeout=30
+    )
+    if not r2["success"]:
+        log("rsync", "error", f"scp package files falhou")
+        _restore_branch(original_branch)
         log_execution("myclinicsoft", "deploy", "failed", logs)
-        return {"success": False, "logs": logs, "error": "Deploy rsync/PM2 falhou"}
+        return {"success": False, "logs": logs, "error": "scp package files falhou"}
+    log("rsync", "ok", f"Release {timestamp} sincronizada ({size_str})")
 
-    # ── 6: Health check app ──
-    import time
-    log("health-app", "running", "Health check da app...")
-    MAX_WAIT = 60   # 1 minuto para PM2 subir
-    INTERVAL = 10
+    # ── 6: Ativar release (npm ci + symlink + PM2) ──
+    log("activate", "running", "Ativando release no servidor...")
+
+    # Envia script
+    script_local = "/tmp/myclinicsoft_deploy.sh"
+    try:
+        with open(script_local, "w") as f:
+            f.write(REMOTE_DEPLOY_SCRIPT)
+    except Exception as e:
+        log("activate", "error", f"Falha ao criar script: {e}")
+        _restore_branch(original_branch)
+        return {"success": False, "logs": logs}
+
+    execute_command(
+        f'scp -i {key_path} -o StrictHostKeyChecking=no '
+        f'{script_local} root@{SERVER_IP}:/tmp/myclinicsoft_deploy.sh',
+        timeout=15
+    )
+    execute_command(f'rm -f {script_local}')
+
+    r = _ssh(
+        f'bash /tmp/myclinicsoft_deploy.sh '
+        f'"{release_dir}" "{shared_dir}" "{current_link}" "{REMOTE_BASE}" "{MAX_RELEASES}" 2>&1',
+        timeout=180
+    )
+    output = (r.get("stdout", "") + r.get("stderr", "")).strip()
+    _ssh('rm -f /tmp/myclinicsoft_deploy.sh 2>/dev/null || true')
+
+    if not r["success"] or "DEPLOY_OK" not in output:
+        error_lines = [l for l in output.split('\n') if 'ERROR' in l.upper() or 'failed' in l.lower()]
+        detail = '\n'.join(error_lines[:5]) if error_lines else output[-400:]
+        log("activate", "error", f"Ativação falhou:\n{detail or '(sem saída)'}")
+        _restore_branch(original_branch)
+        log_execution("myclinicsoft", "deploy", "failed", logs)
+        return {"success": False, "logs": logs, "error": "Ativação falhou"}
+    log("activate", "ok", f"Release {timestamp} ativada")
+
+    # ── 7: Health check app ──
+    log("health-app", "running", "Health check...")
+    MAX_WAIT = 60
+    INTERVAL = 5
     elapsed_w = 0
     app_ok = False
     code = "000"
 
     while elapsed_w < MAX_WAIT:
-        r = ssh_command(
-            "curl -sf -o /dev/null -w '%{http_code}' http://localhost:5000/api/health --max-time 8",
+        r = _ssh(
+            f"curl -sf -o /dev/null -w '%{{http_code}}' {HEALTH_URL} --max-time 8",
             timeout=15
         )
         code = r.get("stdout", "").strip().strip("'")
@@ -678,23 +558,60 @@ async def deploy(log_callback=None):
             break
         time.sleep(INTERVAL)
         elapsed_w += INTERVAL
-        log("health-app", "running", f"Aguardando app subir... {elapsed_w}s/{MAX_WAIT}s (HTTP {code or '?'})")
+        log("health-app", "running", f"Aguardando app... {elapsed_w}s/{MAX_WAIT}s (HTTP {code or '?'})")
 
-    log("health-app", "ok" if app_ok else "error",
-        f"App UP (HTTP {code})" if app_ok
-        else f"App não respondeu após {MAX_WAIT}s (HTTP {code or '?'}) — verifique PM2: pm2 logs myclinicsoft")
+    if not app_ok:
+        log("health-app", "error",
+            f"App não respondeu após {MAX_WAIT}s (HTTP {code or '?'}) — ROLLBACK!")
 
-    # ── 7: Health check buffer pós-deploy ──
-    log("health-buffer", "running", "Health check buffer pós-deploy...")
+        # ── ROLLBACK automático ──
+        log("rollback", "running", "Executando rollback para release anterior...")
+        script_rb = "/tmp/myclinicsoft_rollback.sh"
+        try:
+            with open(script_rb, "w") as f:
+                f.write(REMOTE_ROLLBACK_SCRIPT)
+            execute_command(
+                f'scp -i {key_path} -o StrictHostKeyChecking=no '
+                f'{script_rb} root@{SERVER_IP}:/tmp/myclinicsoft_rollback.sh',
+                timeout=15
+            )
+            execute_command(f'rm -f {script_rb}')
+            r_rb = _ssh(
+                f'bash /tmp/myclinicsoft_rollback.sh "{current_link}" "{REMOTE_BASE}" 2>&1',
+                timeout=60
+            )
+            rb_out = r_rb.get("stdout", "")
+            _ssh('rm -f /tmp/myclinicsoft_rollback.sh')
+            if "ROLLBACK_OK" in rb_out:
+                log("rollback", "ok", f"Rollback concluído: {rb_out.strip()}")
+            else:
+                log("rollback", "error", f"Rollback falhou: {rb_out[:300]}")
+        except Exception as e:
+            log("rollback", "error", f"Rollback exception: {e}")
+
+        _restore_branch(original_branch)
+        log_execution("myclinicsoft", "deploy", "failed", logs)
+        return {"success": False, "logs": logs, "error": "Health check falhou + rollback"}
+
+    log("health-app", "ok", f"App UP (HTTP {code})")
+
+    # ── 8: Buffer check pós-deploy ──
+    log("buffer-post", "running", "Verificando buffer pós-deploy...")
     buf = _check_buffer_health()
-    log("health-buffer", "ok" if buf["up"] else "error",
-        f"Buffer continua UP ({buf['detail']})" if buf["up"] else
-        f"ALERTA CRÍTICO: Buffer caiu após deploy! {buf['detail']} — Agir imediatamente!")
+    log("buffer-post", "ok" if buf["up"] else "error",
+        f"Buffer {'UP' if buf['up'] else 'CAIU!'} ({buf['detail']})")
 
+    # ── 9: Volta para branch develop ──
+    _restore_branch(original_branch)
+    if original_branch and original_branch != "main":
+        log("git-restore", "ok", f"Voltou para branch '{original_branch}'")
+
+    # ── Resultado final ──
     elapsed = (datetime.now() - started).total_seconds()
     success = all(l["status"] != "error" for l in logs)
     log("done", "ok" if success else "error",
-        f"{'✓ Deploy concluído' if success else '✗ Deploy com problemas'} em {elapsed:.0f}s")
+        f"{'✓ Deploy concluído' if success else '✗ Deploy com problemas'} em {elapsed:.0f}s | "
+        f"Release: {timestamp}")
 
     log_execution("myclinicsoft", "deploy", "success" if success else "failed", logs, elapsed)
-    return {"success": success, "logs": logs, "elapsed_seconds": elapsed}
+    return {"success": success, "logs": logs, "elapsed_seconds": elapsed, "release": timestamp}
