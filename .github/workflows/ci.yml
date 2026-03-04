@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check syntax
+        run: python -m py_compile controler.py
+
+      - name: Check core modules
+        run: |
+          python -m py_compile core/agent.py
+          python -m py_compile core/database.py
+          python -m py_compile core/tools.py
