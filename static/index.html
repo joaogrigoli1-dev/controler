@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Controler — Dashboard de Desenvolvimento</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.2/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    :root {
+      --bg: #0a0e14; --s1: #12171f; --s2: #1a2030; --s3: #222c3c;
+      --bd: #2a3545; --tx: #e1e8f0; --dim: #7a8a9e; --muted: #4a5a6e;
+      --ac: #3b82f6; --ac2: #60a5fa; --gn: #22c55e; --rd: #ef4444;
+      --yw: #eab308; --or: #f97316; --pu: #a855f7; --cy: #06b6d4;
+      --radius: 10px; --shadow: 0 1px 3px rgba(0,0,0,.4);
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif;
+           background: var(--bg); color: var(--tx); height: 100vh; overflow: hidden;
+           display: flex; flex-direction: column; }
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--bd); border-radius: 3px; }
+
+    /* Layout */
+    .shell { display: flex; flex: 1; overflow: hidden; }
+    .sidebar { width: 220px; background: var(--s1); border-right: 1px solid var(--bd);
+               display: flex; flex-direction: column; flex-shrink: 0; }
+    .sidebar-header { padding: 20px 16px 12px; border-bottom: 1px solid var(--bd); }
+    .sidebar-header h1 { font-size: 13px; font-weight: 700; letter-spacing: 1.2px;
+                         color: var(--ac2); text-transform: uppercase; display: flex;
+                         align-items: center; gap: 8px; }
+    .sidebar-header .dot { width: 7px; height: 7px; background: var(--gn); border-radius: 50%;
+                           animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .sidebar-header .sub { font-size: 10px; color: var(--dim); margin-top: 4px; }
+    .nav { flex: 1; padding: 8px 0; overflow-y: auto; }
+    .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 16px;
+                cursor: pointer; font-size: 13px; color: var(--dim); transition: all .15s;
+                border-left: 3px solid transparent; }
+    .nav-item:hover { background: var(--s2); color: var(--tx); }
+    .nav-item.active { background: var(--s2); color: var(--ac2); border-left-color: var(--ac); }
+    .nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+    .nav-section { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase;
+                   letter-spacing: 1px; padding: 16px 16px 6px; }
+    .main { flex: 1; overflow-y: auto; padding: 24px 28px; }
+    .main-header { margin-bottom: 24px; }
+    .main-header h2 { font-size: 22px; font-weight: 700; }
+    .main-header p { font-size: 13px; color: var(--dim); margin-top: 4px; }
+
+    /* Cards */
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; margin-bottom: 24px; }
+    .card { background: var(--s1); border: 1px solid var(--bd); border-radius: var(--radius);
+            padding: 16px; transition: all .2s; }
+    .card:hover { border-color: var(--ac); transform: translateY(-1px); box-shadow: var(--shadow); }
+    .card-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 6px; }
+    .card-value { font-size: 28px; font-weight: 700; }
+    .card-sub { font-size: 11px; color: var(--dim); margin-top: 4px; }
+    .card-value.blue { color: var(--ac2); }
+    .card-value.green { color: var(--gn); }
+    .card-value.purple { color: var(--pu); }
+    .card-value.orange { color: var(--or); }
+    .card-value.cyan { color: var(--cy); }
+
+    /* Tables */
+    .table-wrap { background: var(--s1); border: 1px solid var(--bd); border-radius: var(--radius);
+                  overflow: hidden; margin-bottom: 24px; }
+    .table-header { display: flex; align-items: center; justify-content: space-between;
+                    padding: 14px 16px; border-bottom: 1px solid var(--bd); }
+    .table-header h3 { font-size: 14px; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; }
+    th { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--dim);
+         text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--bd); font-weight: 600; }
+    td { font-size: 13px; padding: 10px 16px; border-bottom: 1px solid rgba(42,53,69,.5); }
+    tr:hover td { background: var(--s2); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px;
+             font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+    .badge-decision { background: rgba(59,130,246,.15); color: var(--ac2); }
+    .badge-pattern { background: rgba(168,85,247,.15); color: var(--pu); }
+    .badge-error { background: rgba(239,68,68,.15); color: var(--rd); }
+    .badge-context { background: rgba(6,182,212,.15); color: var(--cy); }
+    .badge-person { background: rgba(234,179,8,.15); color: var(--yw); }
+    .badge-cleanup { background: rgba(122,138,158,.15); color: var(--dim); }
+
+    /* Buttons */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px;
+           border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer;
+           border: 1px solid var(--bd); background: var(--s2); color: var(--tx);
+           transition: all .15s; }
+    .btn:hover { background: var(--s3); border-color: var(--ac); }
+    .btn-primary { background: var(--ac); border-color: var(--ac); color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .btn-danger { border-color: var(--rd); color: var(--rd); }
+    .btn-danger:hover { background: rgba(239,68,68,.1); }
+
+    /* Inputs */
+    input, textarea, select { background: var(--s2); border: 1px solid var(--bd); color: var(--tx);
+           border-radius: 6px; padding: 8px 12px; font-size: 13px; font-family: inherit;
+           width: 100%; transition: border-color .15s; }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: var(--ac); }
+    textarea { resize: vertical; min-height: 80px; }
+    .form-group { margin-bottom: 12px; }
+    .form-label { font-size: 11px; color: var(--dim); margin-bottom: 4px; display: block;
+                  text-transform: uppercase; letter-spacing: .5px; }
+
+    /* Search */
+    .search-bar { position: relative; margin-bottom: 16px; }
+    .search-bar input { padding-left: 36px; }
+    .search-bar svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+                      width: 14px; height: 14px; color: var(--dim); }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 2px; margin-bottom: 20px; background: var(--s1);
+            border-radius: 8px; padding: 3px; border: 1px solid var(--bd); width: fit-content; }
+    .tab { padding: 6px 16px; border-radius: 6px; font-size: 12px; font-weight: 500;
+           cursor: pointer; color: var(--dim); transition: all .15s; }
+    .tab:hover { color: var(--tx); }
+    .tab.active { background: var(--ac); color: #fff; }
+
+    /* Project card */
+    .proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .proj-card { background: var(--s1); border: 1px solid var(--bd); border-radius: var(--radius);
+                 padding: 18px; cursor: pointer; transition: all .2s; }
+    .proj-card:hover { border-color: var(--ac); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+    .proj-card h4 { font-size: 16px; font-weight: 600; margin-bottom: 8px; display: flex;
+                    align-items: center; gap: 8px; }
+    .proj-card .meta { font-size: 12px; color: var(--dim); margin-bottom: 10px; }
+    .proj-card .type-bar { display: flex; gap: 3px; height: 6px; border-radius: 3px; overflow: hidden; }
+    .proj-card .type-bar div { border-radius: 3px; }
+
+    /* Modal */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 100;
+                     display: flex; align-items: center; justify-content: center; }
+    .modal { background: var(--s1); border: 1px solid var(--bd); border-radius: 12px;
+             width: 560px; max-height: 80vh; overflow-y: auto; padding: 24px; }
+    .modal h3 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+
+    /* Rules editor */
+    .rules-editor { background: var(--s2); border: 1px solid var(--bd); border-radius: var(--radius);
+                    padding: 16px; font-family: 'SF Mono', 'Menlo', monospace; font-size: 13px;
+                    line-height: 1.6; min-height: 300px; white-space: pre-wrap; }
+
+    /* KPI Ring */
+    .kpi-ring { display: flex; align-items: center; gap: 12px; }
+    .ring-svg { width: 48px; height: 48px; transform: rotate(-90deg); }
+    .ring-bg { fill: none; stroke: var(--bd); stroke-width: 4; }
+    .ring-fg { fill: none; stroke-width: 4; stroke-linecap: round; transition: stroke-dashoffset .5s; }
+
+    /* Chip list */
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px;
+            border-radius: 12px; font-size: 11px; background: var(--s3); color: var(--dim); }
+
+    /* Empty state */
+    .empty { text-align: center; padding: 40px; color: var(--dim); }
+    .empty svg { width: 40px; height: 40px; margin-bottom: 12px; opacity: .5; }
+    .empty p { font-size: 13px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useMemo } = React;
+const API = 'http://localhost:3001/api';
+
+// ── Icons (inline SVG) ─────────────────────────────────────────────────────
+const Icon = {
+  Home: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
+  Brain: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9.5 2A5.5 5.5 0 005 7.5c0 .8.2 1.6.5 2.3A5.5 5.5 0 003 14.5 5.5 5.5 0 008.5 20H9"/><path d="M14.5 2A5.5 5.5 0 0120 7.5c0 .8-.2 1.6-.5 2.3A5.5 5.5 0 0122 14.5 5.5 5.5 0 0016.5 20H16"/><path d="M12 2v20"/></svg>,
+  Shield: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+  Chart: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>,
+  Search: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>,
+  Plus: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>,
+  Trash: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>,
+  Folder: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>,
+  Edit: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+  X: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>,
+  Rocket: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>,
+  Refresh: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>,
+  Database: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>,
+};
+
+// ── API hooks ───────────────────────────────────────────────────────────────
+function useFetch(url, deps=[]) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const reload = useCallback(() => {
+    setLoading(true);
+    fetch(API + url).then(r => r.json()).then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [url]);
+  useEffect(reload, [...deps, url]);
+  return { data, loading, reload };
+}
+
+// ── KPI Card ────────────────────────────────────────────────────────────────
+function KPICard({ label, value, color='blue', sub }) {
+  return (
+    <div className="card">
+      <div className="card-label">{label}</div>
+      <div className={`card-value ${color}`}>{value}</div>
+      {sub && <div className="card-sub">{sub}</div>}
+    </div>
+  );
+}
+
+// ── Ring Chart ──────────────────────────────────────────────────────────────
+function Ring({ value, max, color='var(--ac)', size=48 }) {
+  const r = 18, c = 2 * Math.PI * r;
+  const pct = max > 0 ? value / max : 0;
+  return (
+    <svg className="ring-svg" width={size} height={size} viewBox="0 0 44 44">
+      <circle className="ring-bg" cx="22" cy="22" r={r} />
+      <circle className="ring-fg" cx="22" cy="22" r={r}
+        stroke={color} strokeDasharray={c} strokeDashoffset={c * (1 - pct)} />
+    </svg>
+  );
+}
+
+// ── Type Badge ──────────────────────────────────────────────────────────────
+function TypeBadge({ type }) {
+  const cls = `badge badge-${type.toLowerCase()}`;
+  return <span className={cls}>{type}</span>;
+}
+
+// ── Overview Page ───────────────────────────────────────────────────────────
+function Overview({ onNavigate }) {
+  const { data, loading } = useFetch('/overview');
+  const { data: kpis } = useFetch('/kpis');
+  if (loading || !data) return <div className="empty"><p>Carregando...</p></div>;
+
+  const typeColors = { DECISION:'var(--ac2)', PATTERN:'var(--pu)', ERROR:'var(--rd)',
+                       CONTEXT:'var(--cy)', PERSON:'var(--yw)', CLEANUP:'var(--dim)' };
+  const rulesCoverage = data.projects.filter(p => p.hasRules).length;
+  const avgMemories = data.projects.length > 0 ? Math.round(data.totalMemories / data.projects.length) : 0;
+  const g = kpis?.global;
+
+  return (
+    <div>
+      <div className="main-header">
+        <h2>Dashboard</h2>
+        <p>Visão geral de todos os projetos em ~/Documents/DEV/</p>
+      </div>
+
+      <div className="cards" style={{gridTemplateColumns:'repeat(auto-fill, minmax(180px, 1fr))'}}>
+        <KPICard label="Projetos Ativos" value={data.projects.length} color="blue" sub="Detectados automaticamente" />
+        <KPICard label="Memórias Totais" value={data.totalMemories} color="purple" sub={`Média ${avgMemories}/projeto`} />
+        <KPICard label="Cobertura de Regras" value={`${rulesCoverage}/${data.projects.length}`} color="green"
+                 sub={rulesCoverage === data.projects.length ? 'Todos cobertos' : 'Projetos sem regras'} />
+        {g && <KPICard label="Commits (7 dias)" value={g.totalCommits7d} color="green" sub={`${g.totalCommits30d} no mês`} />}
+        <KPICard label="Última Atividade" value={data.lastGlobalActivity ? new Date(data.lastGlobalActivity).toLocaleDateString('pt-BR') : '—'}
+                 color="cyan" sub={data.lastGlobalActivity ? new Date(data.lastGlobalActivity).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''} />
+        {g && <KPICard label="Health Score" value={`${g.avgHealth}/100`} color={g.avgHealth>=70?'green':g.avgHealth>=40?'orange':'red'} sub={g.avgHealth>=70?'Saudável':'Atenção'} />}
+      </div>
+
+      <div className="table-header" style={{background:'transparent',border:'none',padding:'0 0 12px'}}>
+        <h3>Projetos</h3>
+      </div>
+      <div className="proj-grid">
+        {data.projects.map(p => {
+          const total = p.memories || 1;
+          return (
+            <div key={p.name} className="proj-card" onClick={() => onNavigate('memories', p.name)}>
+              <h4>
+                <Icon.Folder />
+                {p.name}
+                {p.hasRules && <span style={{fontSize:10,color:'var(--gn)'}}>● regras</span>}
+              </h4>
+              <div className="meta">{p.memories} memórias</div>
+              <div className="type-bar">
+                {Object.entries(p.byType || {}).map(([type, count]) => (
+                  <div key={type} style={{
+                    flex: count, background: typeColors[type] || 'var(--dim)', minWidth: count > 0 ? 4 : 0
+                  }} title={`${type}: ${count}`} />
+                ))}
+              </div>
+              <div className="chips" style={{marginTop:8}}>
+                {Object.entries(p.byType || {}).map(([type, count]) => (
+                  <span key={type} className="chip">{type} {count}</span>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* KPIs de Desenvolvimento */}
+      <div className="table-wrap">
+        <div className="table-header"><h3>KPIs de Desenvolvimento</h3></div>
+        <table>
+          <thead><tr><th>Indicador</th><th>Valor</th><th>Meta</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Cobertura de Regras</td>
+              <td>{Math.round(rulesCoverage/data.projects.length*100)}%</td>
+              <td>100%</td>
+              <td><span className={`badge ${rulesCoverage===data.projects.length?'badge-context':'badge-error'}`}>
+                {rulesCoverage===data.projects.length?'OK':'Pendente'}</span></td>
+            </tr>
+            <tr>
+              <td>Memórias por Projeto (média)</td>
+              <td>{avgMemories}</td>
+              <td>≥ 10</td>
+              <td><span className={`badge ${avgMemories>=10?'badge-context':'badge-cleanup'}`}>
+                {avgMemories>=10?'Bom':'Enriquecer'}</span></td>
+            </tr>
+            <tr>
+              <td>Tipo de Memória Dominante</td>
+              <td>{(() => {
+                const all = {};
+                data.projects.forEach(p => Object.entries(p.byType||{}).forEach(([t,c]) => all[t]=(all[t]||0)+c));
+                const sorted = Object.entries(all).sort((a,b)=>b[1]-a[1]);
+                return sorted[0] ? `${sorted[0][0]} (${sorted[0][1]})` : '—';
+              })()}</td>
+              <td>Balanceado</td>
+              <td><span className="badge badge-pattern">Info</span></td>
+            </tr>
+            <tr>
+              <td>Projetos com Atividade Recente (7d)</td>
+              <td>{data.projects.filter(p => p.lastActivity && (Date.now()-new Date(p.lastActivity).getTime()) < 7*86400000).length}</td>
+              <td>{data.projects.length}</td>
+              <td><span className="badge badge-decision">Monitorar</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Memories Page ────────────────────────────────────────────────────────────
+function Memories({ selectedProject }) {
+  const [project, setProject] = useState(selectedProject || '');
+  const [search, setSearch] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+  const { data: projList } = useFetch('/projects');
+  const url = project ? `/memories?project=${project}&limit=50${search?'&search='+encodeURIComponent(search):''}` : null;
+  const { data, reload } = useFetch(url || '/memories?project=geral&limit=50', [project, search]);
+
+  useEffect(() => { if(selectedProject) setProject(selectedProject); }, [selectedProject]);
+
+  const [newContent, setNewContent] = useState('');
+  const [newType, setNewType] = useState('CONTEXT');
+  const doSave = () => {
+    if(!newContent.trim() || !project) return;
+    fetch(API+'/memories', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({project, content:newContent, type:newType})
+    }).then(() => { setNewContent(''); setShowAdd(false); reload(); });
+  };
+  const doDelete = (id) => {
+    fetch(API+`/memories/${id}?project=${project}&reason=Removido via dashboard`, {method:'DELETE'})
+      .then(() => reload());
+  };
+
+  return (
+    <div>
+      <div className="main-header">
+        <h2>Memórias</h2>
+        <p>Gestão de memórias persistentes por projeto</p>
+      </div>
+
+      <div style={{display:'flex', gap:12, marginBottom:16}}>
+        <select value={project} onChange={e => setProject(e.target.value)} style={{width:200}}>
+          <option value="">Selecione um projeto</option>
+          {(projList||[]).map(p => <option key={p.name} value={p.name}>{p.name} ({p.memoryCount})</option>)}
+        </select>
+        <div className="search-bar" style={{flex:1, marginBottom:0}}>
+          <Icon.Search />
+          <input placeholder="Buscar memórias..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <button className="btn btn-primary" onClick={() => setShowAdd(true)}>
+          <Icon.Plus /> Nova
+        </button>
+      </div>
+
+      {data?.memories?.length > 0 ? (
+        <div className="table-wrap">
+          <div className="table-header">
+            <h3>{data.count} memória(s) — {project}</h3>
+          </div>
+          <table>
+            <thead><tr><th>Tipo</th><th>Conteúdo</th><th>Data</th><th></th></tr></thead>
+            <tbody>
+              {data.memories.map(m => (
+                <tr key={m.id}>
+                  <td><TypeBadge type={m.type} /></td>
+                  <td style={{maxWidth:400, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                      title={m.content}>{m.content}</td>
+                  <td style={{fontSize:11, color:'var(--dim)', whiteSpace:'nowrap'}}>
+                    {new Date(m.created_at).toLocaleDateString('pt-BR')}
+                  </td>
+                  <td>
+                    <button className="btn btn-sm btn-danger" onClick={() => doDelete(m.id)} title="Remover">
+                      <Icon.Trash />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="empty">
+          <Icon.Brain />
+          <p>{project ? 'Nenhuma memória encontrada' : 'Selecione um projeto'}</p>
+        </div>
+      )}
+
+      {showAdd && (
+        <div className="modal-overlay" onClick={() => setShowAdd(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3>Nova Memória — {project}</h3>
+            <div className="form-group">
+              <label className="form-label">Tipo</label>
+              <select value={newType} onChange={e => setNewType(e.target.value)}>
+                <option value="DECISION">DECISION — Decisão arquitetural</option>
+                <option value="PATTERN">PATTERN — Padrão de código</option>
+                <option value="ERROR">ERROR — Bug e correção</option>
+                <option value="CONTEXT">CONTEXT — Contexto geral</option>
+                <option value="PERSON">PERSON — Info sobre pessoa</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Conteúdo</label>
+              <textarea rows="4" value={newContent} onChange={e => setNewContent(e.target.value)}
+                        placeholder="Descreva a memória de forma detalhada..." />
+            </div>
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button className="btn" onClick={() => setShowAdd(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={doSave}>Salvar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Rules Page ──────────────────────────────────────────────────────────────
+function Rules() {
+  const { data, reload } = useFetch('/rules');
+  const [selected, setSelected] = useState(null); // null=geral, string=projeto
+  const [content, setContent] = useState('');
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (!data) return;
+    if (selected === null) { setContent(data.general || ''); }
+    else {
+      fetch(API+`/rules?project=${selected}`).then(r=>r.json()).then(d => setContent(d.content || ''));
+    }
+  }, [selected, data]);
+
+  const doSave = () => {
+    fetch(API+'/rules', { method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ project: selected, content })
+    }).then(() => { setEditing(false); reload(); });
+  };
+
+  return (
+    <div>
+      <div className="main-header">
+        <h2>Regras dos Projetos</h2>
+        <p>Gestão visual das regras gerais e por projeto</p>
+      </div>
+
+      <div style={{display:'flex', gap:16}}>
+        {/* Sidebar de projetos */}
+        <div style={{width:200, flexShrink:0}}>
+          <div className={`nav-item ${selected===null?'active':''}`} onClick={() => { setSelected(null); setEditing(false); }}>
+            <Icon.Shield /> Regras Gerais
+          </div>
+          {(data?.projects||[]).map(p => (
+            <div key={p.project} className={`nav-item ${selected===p.project?'active':''}`}
+                 onClick={() => { setSelected(p.project); setEditing(false); }}>
+              <Icon.Folder />
+              {p.project}
+              {p.hasRules ? <span style={{fontSize:10,color:'var(--gn)'}}>●</span>
+                          : <span style={{fontSize:10,color:'var(--rd)'}}>○</span>}
+            </div>
+          ))}
+        </div>
+
+        {/* Editor */}
+        <div style={{flex:1}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
+            <h3 style={{fontSize:16}}>{selected === null ? 'Regras Gerais' : `Regras — ${selected}`}</h3>
+            <div style={{display:'flex', gap:8}}>
+              {editing ? (
+                <>
+                  <button className="btn" onClick={() => setEditing(false)}>Cancelar</button>
+                  <button className="btn btn-primary" onClick={doSave}>Salvar</button>
+                </>
+              ) : (
+                <button className="btn" onClick={() => setEditing(true)}><Icon.Edit /> Editar</button>
+              )}
+            </div>
+          </div>
+          {editing ? (
+            <textarea style={{minHeight:400, fontFamily:'SF Mono, Menlo, monospace', fontSize:12, lineHeight:1.6}}
+                      value={content} onChange={e => setContent(e.target.value)} />
+          ) : (
+            <div className="rules-editor" dangerouslySetInnerHTML={{
+              __html: content ? content.replace(/\n/g,'<br>').replace(/^# (.+)/gm,'<h1 style="font-size:18px;color:var(--ac2);margin:12px 0 6px">$1</h1>')
+                .replace(/^## (.+)/gm,'<h2 style="font-size:15px;color:var(--tx);margin:10px 0 4px">$1</h2>')
+                .replace(/^### (.+)/gm,'<h3 style="font-size:13px;color:var(--dim);margin:8px 0 4px">$1</h3>')
+                .replace(/\*\*(.+?)\*\*/g,'<strong style="color:var(--ac2)">$1</strong>')
+                .replace(/`(.+?)`/g,'<code style="background:var(--s3);padding:1px 4px;border-radius:3px;font-size:12px">$1</code>')
+                .replace(/^- (.+)/gm,'<div style="padding-left:16px">• $1</div>')
+              : '<span style="color:var(--dim)">Nenhuma regra definida. Clique em Editar para criar.</span>'
+            }} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── KPIs Page ───────────────────────────────────────────────────────────────
+function KPIs() {
+  const { data } = useFetch('/kpis');
+  if (!data) return <div className="empty"><p>Carregando...</p></div>;
+
+  const g = data.global;
+  const typeColors = { DECISION:'var(--ac2)', PATTERN:'var(--pu)', ERROR:'var(--rd)',
+                       CONTEXT:'var(--cy)', PERSON:'var(--yw)', CLEANUP:'var(--dim)' };
+  const sortedTypes = Object.entries(g.typeDistribution||{}).sort((a,b)=>b[1]-a[1]);
+  const scoreColor = (s) => s>=70?'var(--gn)':s>=40?'var(--yw)':'var(--rd)';
+  const scoreLabel = (s) => s>=70?'Saudável':s>=40?'Atenção':'Crítico';
+
+  return (
+    <div>
+      <div className="main-header">
+        <h2>KPIs de Desenvolvimento</h2>
+        <p>Métricas avançadas e indicadores de saúde do ecossistema</p>
+      </div>
+
+      {/* Row 1: Health + Git Overview */}
+      <div className="cards" style={{gridTemplateColumns:'repeat(auto-fill, minmax(180px, 1fr))'}}>
+        <div className="card">
+          <div className="card-label">Health Score Global</div>
+          <div className="kpi-ring">
+            <Ring value={g.avgHealth} max={100} color={scoreColor(g.avgHealth)} />
+            <div>
+              <div className="card-value" style={{fontSize:24, color:scoreColor(g.avgHealth)}}>{g.avgHealth}/100</div>
+              <div className="card-sub">{scoreLabel(g.avgHealth)}</div>
+            </div>
+          </div>
+        </div>
+        <KPICard label="Commits (7 dias)" value={g.totalCommits7d} color="green" sub={`${g.totalCommits30d} no mês`} />
+        <KPICard label="Projetos Ativos (7d)" value={g.activeProjects7d} color="cyan" sub={`de ${g.totalProjects} total`} />
+        <KPICard label="Cobertura de Regras" value={g.rulesCoverage} color="green" sub="Projetos com regras" />
+        <KPICard label="Memórias Totais" value={g.totalMemories} color="purple" sub={`Média ${g.avgMemoriesPerProject}/projeto`} />
+        <KPICard label="Projetos c/ Git" value={g.projectsWithGit} color="blue" sub={`de ${g.totalProjects} total`} />
+      </div>
+
+      {/* Distribuição por tipo */}
+      <div className="table-wrap">
+        <div className="table-header"><h3>Distribuição de Memórias por Tipo</h3></div>
+        <div style={{padding:16}}>
+          {sortedTypes.map(([type, count]) => (
+            <div key={type} style={{display:'flex', alignItems:'center', gap:12, marginBottom:8}}>
+              <div style={{width:80, fontSize:11, color:'var(--dim)', textTransform:'uppercase'}}>{type}</div>
+              <div style={{flex:1, height:20, background:'var(--s3)', borderRadius:4, overflow:'hidden'}}>
+                <div style={{width:`${count/g.totalMemories*100}%`, height:'100%',
+                     background:typeColors[type]||'var(--dim)', borderRadius:4, transition:'width .5s'}} />
+              </div>
+              <div style={{width:40, textAlign:'right', fontSize:13, fontWeight:600}}>{count}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Saúde detalhada por Projeto */}
+      <div className="table-wrap">
+        <div className="table-header"><h3>Saúde por Projeto (detalhado)</h3></div>
+        <table>
+          <thead><tr><th>Projeto</th><th>Health</th><th>Memórias</th><th>Diversidade</th><th>Regras</th><th>Commits 7d</th><th>Commits 30d</th><th>Total Commits</th><th>Staleness</th></tr></thead>
+          <tbody>
+            {data.projects.map(p => (
+              <tr key={p.project}>
+                <td style={{fontWeight:600}}>{p.project}</td>
+                <td>
+                  <div style={{display:'flex', alignItems:'center', gap:6}}>
+                    <div style={{width:40, height:6, background:'var(--s3)', borderRadius:3, overflow:'hidden'}}>
+                      <div style={{width:`${p.health}%`, height:'100%', background:scoreColor(p.health), borderRadius:3}} />
+                    </div>
+                    <span style={{fontWeight:700, color:scoreColor(p.health), fontSize:13}}>{p.health}</span>
+                  </div>
+                </td>
+                <td>{p.memories.total}</td>
+                <td>
+                  <span style={{color: p.diversity>=70?'var(--gn)':p.diversity>=40?'var(--yw)':'var(--rd)'}}>
+                    {p.diversity}%
+                  </span>
+                </td>
+                <td>{p.hasRules ? <span style={{color:'var(--gn)'}}>✓</span> : <span style={{color:'var(--rd)'}}>✗</span>}</td>
+                <td style={{color: p.git.commits7d>0?'var(--gn)':'var(--dim)'}}>{p.git.commits7d}</td>
+                <td>{p.git.commits30d}</td>
+                <td>{p.git.totalCommits}</td>
+                <td>
+                  {p.staleness < 0 ? <span style={{color:'var(--dim)'}}>—</span>
+                  : p.staleness <= 3 ? <span style={{color:'var(--gn)'}}>{p.staleness}d</span>
+                  : p.staleness <= 7 ? <span style={{color:'var(--yw)'}}>{p.staleness}d</span>
+                  : <span style={{color:'var(--rd)'}}>{p.staleness}d</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Git Activity */}
+      {data.projects.some(p => p.git.totalCommits > 0) && (
+        <div className="table-wrap">
+          <div className="table-header"><h3>Atividade Git</h3></div>
+          <div style={{padding:16}}>
+            {data.projects.filter(p => p.git.totalCommits > 0).map(p => (
+              <div key={p.project} style={{marginBottom:16}}>
+                <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:6}}>
+                  <span style={{fontWeight:600, fontSize:14}}>{p.project}</span>
+                  <span style={{fontSize:11, color:'var(--dim)'}}>
+                    {p.git.branches} branch(es) · último commit: {p.git.lastCommit ? new Date(p.git.lastCommit).toLocaleDateString('pt-BR') : '—'}
+                  </span>
+                </div>
+                <div style={{display:'flex', gap:4, height:24}}>
+                  {/* Visual: barra proporcional 7d vs 30d vs rest */}
+                  {p.git.commits7d > 0 && (
+                    <div style={{flex:p.git.commits7d, background:'var(--gn)', borderRadius:4, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, color:'#000', fontWeight:700, minWidth:30}}>
+                      {p.git.commits7d} (7d)
+                    </div>
+                  )}
+                  {(p.git.commits30d - p.git.commits7d) > 0 && (
+                    <div style={{flex:p.git.commits30d - p.git.commits7d, background:'var(--ac)', borderRadius:4, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, color:'#fff', fontWeight:600, minWidth:30}}>
+                      {p.git.commits30d - p.git.commits7d} (8-30d)
+                    </div>
+                  )}
+                  {(p.git.totalCommits - p.git.commits30d) > 0 && (
+                    <div style={{flex:p.git.totalCommits - p.git.commits30d, background:'var(--s3)', borderRadius:4, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, color:'var(--dim)', minWidth:30}}>
+                      {p.git.totalCommits - p.git.commits30d} (antigos)
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Project Page (MyClinicSoft) ──────────────────────────────────────────────
+function ProjectView() {
+  const [status, setStatus] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [deploying, setDeploying] = useState(false);
+  const [logs, setLogs] = useState([]);
+  const [result, setResult] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncLogs, setSyncLogs] = useState([]);
+  const [syncResult, setSyncResult] = useState(null);
+  const [showMemory, setShowMemory] = useState(false);
+  const { data: memData } = useFetch('/memories?project=myclinicsoft&limit=10');
+
+  const fetchStatus = useCallback(() => {
+    setStatusLoading(true);
+    fetch(API + '/myclinicsoft/status').then(r => r.json()).catch(() => null)
+      .then(s => { setStatus(s); setStatusLoading(false); });
+    fetch(API + '/myclinicsoft/last-update').then(r => r.json()).catch(() => null)
+      .then(d => { if (d) setLastUpdate(d); });
+  }, []);
+
+  useEffect(fetchStatus, []);
+
+  const startDeploy = () => {
+    setDeploying(true);
+    setLogs([]);
+    setResult(null);
+    const es = new EventSource(API + '/myclinicsoft/deploy/stream');
+    let gotMessage = false;
+    es.onmessage = (e) => {
+      gotMessage = true;
+      try {
+        const data = JSON.parse(e.data);
+        if (data.step === '__done__') {
+          setResult(data.result);
+          setDeploying(false);
+          es.close();
+          fetchStatus();
+        } else {
+          setLogs(prev => [...prev, data]);
+        }
+      } catch(err) {
+        setLogs(prev => [...prev, {step:'parse', status:'error', message:'Erro ao processar: ' + e.data}]);
+      }
+    };
+    es.onerror = () => {
+      setDeploying(false);
+      setResult({ success: false, error: gotMessage ? 'Conex\u00e3o SSE perdida' : 'N\u00e3o conectou ao endpoint' });
+      es.close();
+    };
+  };
+
+  const startSync = () => {
+    setSyncing(true);
+    setSyncLogs([]);
+    setSyncResult(null);
+    const es = new EventSource(API + '/myclinicsoft/whatsdev-sync/stream');
+    es.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data.step === '__done__') {
+        setSyncResult(data.result);
+        setSyncing(false);
+        es.close();
+      } else {
+        setSyncLogs(prev => [...prev, data]);
+      }
+    };
+    es.onerror = () => {
+      setSyncing(false);
+      setSyncResult({ success: false, error: 'Conexão SSE perdida' });
+      es.close();
+    };
+  };
+
+  const stepColor = (s) => s === 'ok' ? 'var(--gn)' : s === 'error' ? 'var(--rd)' : s === 'running' ? 'var(--ac2)' : 'var(--yw)';
+  const stepIcon = (s) => s === 'ok' ? '\u2713' : s === 'error' ? '\u2717' : s === 'running' ? '\u27F3' : '\u2026';
+
+  return (
+    <div>
+      <div className="main-header">
+        <h2>Deploy MyClinicSoft</h2>
+        <p>Deploy local DEV \u2192 Produ\u00e7\u00e3o (187.77.40.102)</p>
+      </div>
+
+      <div className="cards" style={{gridTemplateColumns:'repeat(auto-fill, minmax(180px, 1fr))'}}>
+        <div className="card">
+          <div className="card-label">SSH</div>
+          <div className={`card-value ${statusLoading ? '' : status?.ssh ? 'green' : 'orange'}`} style={{fontSize:20}}>
+            {statusLoading ? '...' : status?.ssh ? '\u25CF Conectado' : '\u25CF Offline'}
+          </div>
+          <div className="card-sub">187.77.40.102</div>
+        </div>
+        <div className="card">
+          <div className="card-label">App (porta 5000)</div>
+          <div className={`card-value ${statusLoading ? '' : status?.app?.online ? 'green' : 'orange'}`} style={{fontSize:20}}>
+            {statusLoading ? '...' : status?.app?.online ? '\u25CF Online' : '\u25CF Offline'}
+          </div>
+          <div className="card-sub">{status?.app?.response || '\u2014'}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Buffer WhatsApp (3001)</div>
+          <div className={`card-value ${statusLoading ? '' : status?.buffer?.online ? 'green' : 'orange'}`} style={{fontSize:20}}>
+            {statusLoading ? '...' : status?.buffer?.online ? '\u25CF Online' : '\u25CF Offline'}
+          </div>
+          <div className="card-sub">{status?.buffer?.response || '\u2014'}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">\u00DAltima Altera\u00e7\u00e3o Local</div>
+          <div className="card-value cyan" style={{fontSize:18}}>
+            {lastUpdate?.last_update || '\u2014'}
+          </div>
+          <div className="card-sub" style={{fontSize:10, wordBreak:'break-all'}}>{lastUpdate?.file || ''}</div>
+        </div>
+      </div>
+
+      <div style={{display:'flex', gap:12, marginBottom:24}}>
+        <button className="btn btn-primary" onClick={startDeploy} disabled={deploying}
+                style={{padding:'10px 24px', fontSize:14, opacity: deploying ? 0.6 : 1}}>
+          <Icon.Rocket /> {deploying ? 'Deploy em andamento...' : 'Deploy \u2192 Produ\u00e7\u00e3o'}
+        </button>
+        <button className="btn" onClick={startSync} disabled={syncing}
+                style={{padding:'10px 24px', fontSize:14, opacity: syncing ? 0.6 : 1}}>
+          <Icon.Refresh /> {syncing ? 'Sincronizando...' : 'Sync WhatsApp Prod \u2192 Dev'}
+        </button>
+        <button className="btn btn-sm" onClick={fetchStatus} style={{marginLeft:'auto'}}>
+          <Icon.Refresh /> Atualizar Status
+        </button>
+      </div>
+
+      {(logs.length > 0 || result) && (
+        <div className="table-wrap" style={{marginBottom:24}}>
+          <div className="table-header">
+            <h3>Deploy \u2014 Log de Execu\u00e7\u00e3o</h3>
+            {result && (
+              <span className={`badge ${result.success ? 'badge-context' : 'badge-error'}`}>
+                {result.success ? 'SUCESSO' : 'FALHOU'}
+              </span>
+            )}
+          </div>
+          <div style={{padding:16, fontFamily:'SF Mono, Menlo, monospace', fontSize:12, lineHeight:1.8, maxHeight:400, overflowY:'auto'}}>
+            {logs.map((l, i) => (
+              <div key={i} style={{display:'flex', gap:8, alignItems:'flex-start'}}>
+                <span style={{color: stepColor(l.status), fontWeight:700, flexShrink:0, width:16, textAlign:'center'}}>
+                  {stepIcon(l.status)}
+                </span>
+                <span style={{color: l.status === 'error' ? 'var(--rd)' : 'var(--tx)'}}>
+                  <span style={{color:'var(--dim)'}}>[{l.step}]</span> {l.message}
+                </span>
+              </div>
+            ))}
+            {deploying && (
+              <div style={{color:'var(--ac2)', marginTop:8}}>{'\u27F3'} Deploy em execu\u00e7\u00e3o...</div>
+            )}
+            {result && !result.success && result.error && (
+              <div style={{marginTop:12, padding:12, background:'rgba(239,68,68,.1)', borderRadius:6, border:'1px solid var(--rd)', fontSize:12, color:'var(--rd)'}}>
+                <strong>Erro:</strong> {result.error}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {(syncLogs.length > 0 || syncResult) && (
+        <div className="table-wrap">
+          <div className="table-header">
+            <h3>WhatsApp Sync \u2014 Log</h3>
+            {syncResult && (
+              <span className={`badge ${syncResult.success ? 'badge-context' : 'badge-error'}`}>
+                {syncResult.success ? 'SUCESSO' : 'FALHOU'}
+              </span>
+            )}
+          </div>
+          <div style={{padding:16, fontFamily:'SF Mono, Menlo, monospace', fontSize:12, lineHeight:1.8, maxHeight:300, overflowY:'auto'}}>
+            {syncLogs.map((l, i) => (
+              <div key={i} style={{display:'flex', gap:8, alignItems:'flex-start'}}>
+                <span style={{color: stepColor(l.status), fontWeight:700, flexShrink:0, width:16, textAlign:'center'}}>
+                  {stepIcon(l.status)}
+                </span>
+                <span style={{color: l.status === 'error' ? 'var(--rd)' : 'var(--tx)'}}>
+                  <span style={{color:'var(--dim)'}}>[{l.step}]</span> {l.message}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!logs.length && !syncLogs.length && (
+        <div className="table-wrap">
+          <div className="table-header"><h3>Pipeline de Deploy</h3></div>
+          <div style={{padding:16, fontSize:13, lineHeight:1.8, color:'var(--dim)'}}>
+            <div style={{marginBottom:8}}><strong style={{color:'var(--tx)'}}>Etapas do Deploy:</strong></div>
+            <div>1. Valida TypeScript (npx tsc --noEmit)</div>
+            <div>2. Build do projeto (npm run build)</div>
+            <div>3. Git push \u2192 main</div>
+            <div>4. Rsync dist/ \u2192 servidor (187.77.40.102:/app/myclinicsoft/)</div>
+            <div>5. DB sync: pg_dump dev \u2192 pg_restore prod</div>
+            <div>6. PM2 reload</div>
+            <div>7. Health check app (porta 5000) + buffer (porta 3001)</div>
+            <div style={{marginTop:12, color:'var(--yw)', fontSize:11}}>
+              {'\u26A0'} O Buffer WhatsApp (Docker, porta 3001) NUNCA \u00e9 afetado pelo deploy.
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main App ────────────────────────────────────────────────────────────────
+function App() {
+  const [page, setPage] = useState('overview');
+  const [selectedProject, setSelectedProject] = useState('');
+
+  const navigate = (p, proj) => {
+    setPage(p);
+    if (proj) setSelectedProject(proj);
+  };
+
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+  const dateStr = now.toLocaleDateString('pt-BR', {weekday:'short', day:'numeric', month:'short'});
+
+  return (
+    <div className="shell">
+      <div className="sidebar">
+        <div className="sidebar-header">
+          <h1><span className="dot" /> Controler</h1>
+          <div className="sub">Dashboard de Desenvolvimento</div>
+        </div>
+        <nav className="nav">
+          <div className="nav-section">Principal</div>
+          <div className={`nav-item ${page==='overview'?'active':''}`} onClick={() => setPage('overview')}>
+            <Icon.Home /> Overview
+          </div>
+          <div className={`nav-item ${page==='memories'?'active':''}`} onClick={() => setPage('memories')}>
+            <Icon.Brain /> Memórias
+          </div>
+          <div className={`nav-item ${page==='rules'?'active':''}`} onClick={() => setPage('rules')}>
+            <Icon.Shield /> Regras
+          </div>
+          <div className={`nav-item ${page==='kpis'?'active':''}`} onClick={() => setPage('kpis')}>
+            <Icon.Chart /> KPIs
+          </div>
+
+          <div className="nav-section" style={{marginTop:24}}>DevOps</div>
+          <div className={`nav-item ${page==='deploy'?'active':''}`} onClick={() => setPage('deploy')}>
+            <Icon.Rocket /> Deploy
+          </div>
+
+          <div className="nav-section" style={{marginTop:24}}>Sistema</div>
+          <div className="nav-item" style={{fontSize:11}}>
+            <span style={{color:'var(--gn)'}}>●</span> API Online — :3001
+          </div>
+          <div className="nav-item" style={{fontSize:11}}>
+            <span style={{color:'var(--gn)'}}>●</span> MCP Ativo
+          </div>
+          <div className="nav-item" style={{fontSize:11, color:'var(--dim)'}}>
+            {dateStr} · {timeStr}
+          </div>
+        </nav>
+      </div>
+
+      <div className="main">
+        {page === 'overview' && <Overview onNavigate={navigate} />}
+        {page === 'memories' && <Memories selectedProject={selectedProject} />}
+        {page === 'rules' && <Rules />}
+        {page === 'kpis' && <KPIs />}
+        {page === 'deploy' && <ProjectView />}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

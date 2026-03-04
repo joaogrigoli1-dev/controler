@@ -1,0 +1,830 @@
+#!/usr/bin/env python3
+"""
+Controler — Mesa de Controle Operacional
+==========================================
+Uso:  python3 controler.py
+Abre: http://localhost:3001
+"""
+
+import json
+import asyncio
+import threading
+import os
+import sys
+from pathlib import Path
+from datetime import datetime
+from contextlib import asynccontextmanager
+
+# Auto-install
+DEPS = ["fastapi", "uvicorn", "pyyaml"]
+for dep in DEPS:
+    try:
+        __import__(dep)
+    except ImportError:
+        os.system(f"{sys.executable} -m pip install {dep} -q")
+
+from fastapi import FastAPI, Request, Query
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+import uvicorn
+import yaml
+import subprocess
+
+# Init database
+from core.database import (
+    init_db, get_projects, get_project, get_actions, get_rules,
+    get_memory, save_memory, get_recent_logs, get_setting, set_setting,
+    upsert_project, add_action, add_rule,
+    get_memories, get_memories_count_by_type, get_memories_total,
+    add_memory_entry, delete_memory_entry,
+    get_rules_text, save_rules_text
+)
+
+# Configurações
+CONFIG_PATH = Path(__file__).parent / "config" / "settings.yaml"
+with open(CONFIG_PATH) as f:
+    CONFIG = yaml.safe_load(f)
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+# ════════════════════════════════════════
+# Lifespan (startup/shutdown)
+# ════════════════════════════════════════
+
+@asynccontextmanager
+async def lifespan(app):
+    init_db()
+    _seed_initial_data()
+    yield
+
+
+app = FastAPI(title="Controler", version="1.0.0", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Flag global para evitar deploys simultâneos
+_deploy_running = False
+# Flag global para evitar syncs simultâneos
+_whatsdev_sync_running = False
+
+
+# ════════════════════════════════════════
+# API: Projetos
+# ════════════════════════════════════════
+
+@app.get("/api/projects")
+async def api_projects():
+    dev_path = Path.home() / "Documents" / "DEV"
+    result = []
+    if dev_path.exists():
+        for folder in sorted(dev_path.iterdir()):
+            if folder.is_dir() and not folder.name.startswith('.'):
+                result.append({
+                    "name": folder.name,
+                    "memoryCount": get_memories_total(folder.name)
+                })
+    return result
+
+
+@app.get("/api/projects/{project_id}")
+async def api_project(project_id: str):
+    project = get_project(project_id)
+    if not project:
+        return JSONResponse({"error": "Projeto não encontrado"}, 404)
+    project["actions"] = get_actions(project_id)
+    project["rules_count"] = len(get_rules(project_id))
+    return project
+
+
+# ════════════════════════════════════════
+# API: Deploy MyClinicSoft
+# ════════════════════════════════════════
+
+@app.get("/api/myclinicsoft/deploy/stream")
+async def api_deploy_stream():
+    """
+    SSE endpoint — transmite cada passo do deploy em tempo real.
+    O frontend conecta via EventSource e recebe eventos conforme ocorrem.
+    """
+    global _deploy_running
+
+    loop = asyncio.get_event_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    # Envia evento SSE formatado
+    def make_event(entry: dict) -> str:
+        return f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
+
+    # Se já estiver rodando, avisa imediatamente
+    if _deploy_running:
+        async def already_running():
+            yield make_event({"step": "lock", "status": "error",
+                              "message": "Deploy já em andamento. Aguarde terminar."})
+            yield make_event({"step": "__done__", "status": "done",
+                              "result": {"success": False, "error": "Deploy em andamento"}})
+        return StreamingResponse(already_running(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    _deploy_running = True
+
+    # Callback thread-safe: chamado de dentro da thread do deploy
+    def sync_callback(entry: dict):
+        loop.call_soon_threadsafe(queue.put_nowait, entry)
+
+    # Roda o deploy em thread separada (execute_command é síncrono/bloqueante)
+    def run_in_thread():
+        global _deploy_running
+        try:
+            import asyncio as _aio
+            from devops.deploy_myclinicsoft import deploy
+            result = _aio.run(deploy(log_callback=sync_callback))
+        except Exception as exc:
+            result = {"success": False, "error": str(exc), "logs": []}
+        finally:
+            _deploy_running = False
+        loop.call_soon_threadsafe(queue.put_nowait, {
+            "step": "__done__", "status": "done", "result": result
+        })
+
+    t = threading.Thread(target=run_in_thread, daemon=True)
+    t.start()
+
+    async def generator():
+        try:
+            while True:
+                # Timeout de 6 min (deploy inteiro nunca deve passar disso)
+                entry = await asyncio.wait_for(queue.get(), timeout=360)
+                yield make_event(entry)
+                if entry.get("step") == "__done__":
+                    break
+        except asyncio.TimeoutError:
+            global _deploy_running
+            _deploy_running = False
+            yield make_event({"step": "timeout", "status": "error",
+                              "message": "Timeout: deploy demorou mais de 6 minutos"})
+            yield make_event({"step": "__done__", "status": "done",
+                              "result": {"success": False, "error": "Timeout"}})
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"}
+    )
+
+
+@app.get("/api/myclinicsoft/whatsdev-sync/stream")
+async def api_whatsdev_sync_stream():
+    """
+    SSE endpoint — transmite cada passo do sync WhatsDev em tempo real.
+    Copia whatsapp_conversations + whatsapp_messages de Prod → Dev local.
+    """
+    global _whatsdev_sync_running
+
+    loop = asyncio.get_event_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def make_event(entry: dict) -> str:
+        return f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
+
+    if _whatsdev_sync_running:
+        async def already_running():
+            yield make_event({"step": "lock", "status": "error",
+                              "message": "Sync já em andamento. Aguarde terminar."})
+            yield make_event({"step": "__done__", "status": "done",
+                              "result": {"success": False, "error": "Sync em andamento"}})
+        return StreamingResponse(already_running(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    _whatsdev_sync_running = True
+
+    def sync_callback(entry: dict):
+        loop.call_soon_threadsafe(queue.put_nowait, entry)
+
+    def run_in_thread():
+        global _whatsdev_sync_running
+        try:
+            import asyncio as _aio
+            from devops.whatsdev_sync import sync
+            result = _aio.run(sync(log_callback=sync_callback))
+        except Exception as exc:
+            result = {"success": False, "error": str(exc)}
+        finally:
+            _whatsdev_sync_running = False
+        loop.call_soon_threadsafe(queue.put_nowait, {
+            "step": "__done__", "status": "done", "result": result
+        })
+
+    t = threading.Thread(target=run_in_thread, daemon=True)
+    t.start()
+
+    async def generator():
+        try:
+            while True:
+                entry = await asyncio.wait_for(queue.get(), timeout=300)
+                yield make_event(entry)
+                if entry.get("step") == "__done__":
+                    break
+        except asyncio.TimeoutError:
+            global _whatsdev_sync_running
+            _whatsdev_sync_running = False
+            yield make_event({"step": "timeout", "status": "error",
+                              "message": "Timeout: sync demorou mais de 5 minutos"})
+            yield make_event({"step": "__done__", "status": "done",
+                              "result": {"success": False, "error": "Timeout"}})
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"}
+    )
+
+
+@app.get("/api/myclinicsoft/last-update")
+async def api_last_update():
+    """
+    Retorna data/hora da última modificação em arquivos do Controler OU do MyClinicSoft.
+    Varre os dois projetos e retorna o mtime mais recente entre os dois.
+    Ignora: __pycache__, node_modules, .git, dist, .pyc, .DS_Store,
+            bd/ (SQLite muda a todo momento), arquivos binários comuns.
+    """
+    import os
+    from datetime import datetime
+
+    SCAN_DIRS = [
+        Path(__file__).parent,                          # Controler
+        Path("/Users/jhgm/Documents/DEV/myclinicsoft"),    # MyClinicSoft
+    ]
+
+    skip_dirs = {"__pycache__", "bd", "node_modules", ".git", "dist", ".next", "coverage"}
+    skip_exts = {".pyc", ".DS_Store", ".db-shm", ".db-wal",
+                 ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+                 ".woff", ".woff2", ".ttf", ".eot",
+                 ".lock", ".map"}
+
+    latest_mtime = 0.0
+    latest_file  = ""
+
+    for scan_root in SCAN_DIRS:
+        if not scan_root.exists():
+            continue
+        label = scan_root.name  # "controler" ou "myclinicsoft"
+        for root, dirs, files in os.walk(scan_root):
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            for fname in files:
+                if any(fname.endswith(e) for e in skip_exts):
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    mtime = os.path.getmtime(fpath)
+                    if mtime > latest_mtime:
+                        latest_mtime = mtime
+                        rel = os.path.relpath(fpath, scan_root)
+                        latest_file = f"{label}/{rel}"
+                except OSError:
+                    continue
+
+    if latest_mtime:
+        dt = datetime.fromtimestamp(latest_mtime)
+        formatted = dt.strftime("%d/%m/%Y %H:%M")
+        return {"last_update": formatted, "file": latest_file}
+    return {"last_update": None, "file": ""}
+
+
+@app.get("/api/myclinicsoft/status")
+async def api_status():
+    from core.tools import ssh_command
+
+    # Primeiro testa se SSH funciona
+    ssh_ok = ssh_command("echo ok", timeout=10)
+    if not ssh_ok["success"] or "ok" not in ssh_ok.get("stdout", ""):
+        return {
+            "app": {"online": False, "response": "SSH inacessível"},
+            "buffer": {"online": False, "response": "SSH inacessível"},
+            "ssh": False,
+            "checked_at": datetime.now().isoformat()
+        }
+
+    # App check — aceita qualquer resposta HTTP
+    app_r = ssh_command("curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ --max-time 5", timeout=15)
+    app_code = app_r.get("stdout", "").strip().strip("'")
+    app_online = app_r["success"] and app_code and app_code != "000"
+
+    # Buffer check — aceita qualquer resposta HTTP
+    buf_r = ssh_command("curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/ --max-time 5", timeout=15)
+    buf_code = buf_r.get("stdout", "").strip().strip("'")
+    buf_online = buf_r["success"] and buf_code and buf_code != "000"
+
+    # Fallback buffer: docker ps
+    if not buf_online:
+        docker_r = ssh_command("docker ps --format '{{.Names}}' 2>/dev/null | grep -i buffer", timeout=10)
+        if docker_r["success"] and docker_r.get("stdout", "").strip():
+            buf_online = True
+            buf_code = "docker:running"
+
+    return {
+        "app": {"online": app_online, "response": f"HTTP {app_code}" if app_online else app_code},
+        "buffer": {"online": buf_online, "response": f"HTTP {buf_code}" if buf_online else buf_code},
+        "ssh": True,
+        "checked_at": datetime.now().isoformat()
+    }
+
+
+# ════════════════════════════════════════
+# API: Memória
+# ════════════════════════════════════════
+
+@app.get("/api/memory/{project_id}")
+async def api_get_memory(project_id: str):
+    mem = get_memory(project_id)
+    return mem or {"content": "", "version": 0}
+
+
+@app.post("/api/memory/{project_id}")
+async def api_save_memory(project_id: str, request: Request):
+    body = await request.json()
+    version = save_memory(project_id, body.get("content", ""))
+    return {"saved": True, "version": version}
+
+
+# ════════════════════════════════════════
+# API: Rules
+# ════════════════════════════════════════
+
+@app.get("/api/rules/{project_id}")
+async def api_rules(project_id: str):
+    return get_rules(project_id)
+
+
+# ════════════════════════════════════════
+# API: Logs
+# ════════════════════════════════════════
+
+@app.get("/api/logs/{project_id}")
+async def api_logs(project_id: str):
+    return get_recent_logs(project_id)
+
+
+# ════════════════════════════════════════
+# API: Agente IA (o motor Claude Code)
+# ════════════════════════════════════════
+
+@app.post("/api/agent/chat")
+async def api_agent_chat(request: Request):
+    try:
+        body = await request.json()
+    except Exception as e:
+        return JSONResponse({"error": f"Invalid JSON in request: {str(e)}"}, 400)
+
+    try:
+        message = body.get("message", "")
+        project_id = body.get("project_id")
+        history = body.get("history", [])
+        cli_session_id = body.get("cli_session_id")  # Para continuidade de sessão
+
+        if not message.strip():
+            return JSONResponse({"response": "Mensagem vazia.", "tool_calls": [], "messages": []}, 200)
+
+        from core.agent import chat
+        result = await chat(message, history, project_id, cli_session_id)
+
+        # Ensure all data is JSON-serializable before returning
+        response_data = {
+            "response": result.get("response", ""),
+            "tool_calls": result.get("tool_calls", []),
+            "messages": _serialize_messages(result.get("messages", [])),
+            "cli_session_id": result.get("cli_session_id"),
+            "cost_usd": result.get("cost_usd", 0),
+            "num_turns": result.get("num_turns", 0),
+            "duration_ms": result.get("duration_ms", 0)
+        }
+        return JSONResponse(response_data, 200)
+
+    except Exception as e:
+        import traceback
+        error_msg = f"Error processing chat: {str(e)}"
+        traceback.print_exc()
+        return JSONResponse({
+            "error": error_msg,
+            "response": "",
+            "tool_calls": [],
+            "messages": []
+        }, 500)
+
+
+def _serialize_messages(messages: list) -> list:
+    """
+    Recursively ensure all message objects are JSON-serializable.
+    Converts any non-serializable objects to strings.
+    """
+    import json
+
+    def make_serializable(obj):
+        if isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+        elif isinstance(obj, dict):
+            return {k: make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [make_serializable(item) for item in obj]
+        else:
+            # For any other type, try str() conversion
+            return str(obj)
+
+    serializable = []
+    for msg in messages:
+        try:
+            serializable.append(make_serializable(msg))
+        except Exception as e:
+            # If even that fails, store error message
+            serializable.append({"role": "system", "content": f"[Serialization error: {str(e)}]"})
+
+    return serializable
+
+
+# ════════════════════════════════════════
+# API: Settings
+# ════════════════════════════════════════
+
+@app.get("/api/settings/has-key")
+async def api_has_key():
+    """Verifica se o Claude CLI está autenticado (plano Max)."""
+    try:
+        import subprocess
+        cli_path = os.environ.get("CLAUDE_CLI_PATH", "/Users/jhgm/.npm-global/bin/claude")
+        result = subprocess.run(
+            [cli_path, "auth", "status"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            import json as _json
+            data = _json.loads(result.stdout)
+            return {
+                "has_key": data.get("loggedIn", False),
+                "method": "claude_cli_max",
+                "email": data.get("email", ""),
+                "subscription": data.get("subscriptionType", "")
+            }
+    except Exception:
+        pass
+    return {"has_key": False, "method": "claude_cli_max"}
+
+
+@app.post("/api/settings/api-key")
+async def api_set_key(request: Request):
+    """Legacy: mantido para compatibilidade, mas CLI usa plano Max."""
+    return JSONResponse({
+        "info": "O Controler agora usa Claude CLI com plano Max. Não é necessária API key.",
+        "saved": False
+    }, 200)
+
+
+# ════════════════════════════════════════
+# API: Memories (tipadas)
+# ════════════════════════════════════════
+
+@app.get("/api/memories")
+async def api_get_memories(
+    project: str = Query(None),
+    limit: int = Query(50),
+    search: str = Query(None)
+):
+    if not project:
+        return {"memories": [], "count": 0}
+    memories = get_memories(project, limit, search)
+    return {"memories": memories, "count": len(memories)}
+
+
+@app.post("/api/memories")
+async def api_add_memory(request: Request):
+    body = await request.json()
+    project = body.get("project")
+    content = body.get("content", "").strip()
+    type_ = body.get("type", "CONTEXT")
+    if not project or not content:
+        return JSONResponse({"error": "project e content são obrigatórios"}, 400)
+    add_memory_entry(project, type_, content)
+    return {"saved": True}
+
+
+@app.delete("/api/memories/{memory_id}")
+async def api_delete_memory(
+    memory_id: int,
+    project: str = Query(None),
+    reason: str = Query(None)
+):
+    delete_memory_entry(memory_id, project or "")
+    return {"deleted": True}
+
+
+# ════════════════════════════════════════
+# API: Rules (texto livre)
+# ════════════════════════════════════════
+
+@app.get("/api/rules")
+async def api_get_rules(project: str = Query(None)):
+    if project:
+        content = get_rules_text(project)
+        return {"content": content}
+    # Sem project: retorna regras gerais + lista de projetos com status
+    general = get_rules_text(None)
+    dev_path = Path.home() / "Documents" / "DEV"
+    projects = []
+    if dev_path.exists():
+        for folder in sorted(dev_path.iterdir()):
+            if folder.is_dir() and not folder.name.startswith('.'):
+                txt = get_rules_text(folder.name)
+                projects.append({"project": folder.name, "hasRules": bool(txt.strip())})
+    return {"general": general, "projects": projects}
+
+
+@app.put("/api/rules")
+async def api_save_rules(request: Request):
+    body = await request.json()
+    project = body.get("project")  # None = regras gerais
+    content = body.get("content", "")
+    save_rules_text(project, content)
+    return {"saved": True}
+
+
+# ════════════════════════════════════════
+# API: Overview
+# ════════════════════════════════════════
+
+def _git_run(folder, *args, timeout=5):
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(folder)] + list(args),
+            capture_output=True, text=True, timeout=timeout
+        )
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+@app.get("/api/overview")
+async def api_overview():
+    dev_path = Path.home() / "Documents" / "DEV"
+    projects = []
+    total_memories = 0
+    last_global_activity = None
+
+    if dev_path.exists():
+        for folder in sorted(dev_path.iterdir()):
+            if not folder.is_dir() or folder.name.startswith('.'):
+                continue
+            proj = folder.name
+            by_type = get_memories_count_by_type(proj)
+            mem_count = sum(by_type.values())
+            total_memories += mem_count
+            rules_txt = get_rules_text(proj)
+            has_rules = bool(rules_txt.strip())
+            last_commit = _git_run(folder, "log", "-1", "--format=%ci")
+            last_activity = last_commit or None
+            if last_activity and (last_global_activity is None or last_activity > last_global_activity):
+                last_global_activity = last_activity
+            projects.append({
+                "name": proj,
+                "memories": mem_count,
+                "byType": by_type,
+                "hasRules": has_rules,
+                "lastActivity": last_activity
+            })
+
+    return {
+        "projects": projects,
+        "totalMemories": total_memories,
+        "lastGlobalActivity": last_global_activity
+    }
+
+
+# ════════════════════════════════════════
+# API: KPIs
+# ════════════════════════════════════════
+
+@app.get("/api/kpis")
+async def api_kpis():
+    dev_path = Path.home() / "Documents" / "DEV"
+    project_kpis = []
+    global_type_dist = {}
+    total_memories = 0
+    total_projects = 0
+    projects_with_git = 0
+    total_commits_7d = 0
+    total_commits_30d = 0
+    active_7d = 0
+    rules_count = 0
+    health_scores = []
+
+    if dev_path.exists():
+        for folder in sorted(dev_path.iterdir()):
+            if not folder.is_dir() or folder.name.startswith('.'):
+                continue
+            proj = folder.name
+            total_projects += 1
+
+            by_type = get_memories_count_by_type(proj)
+            mem_total = sum(by_type.values())
+            total_memories += mem_total
+            for t, c in by_type.items():
+                global_type_dist[t] = global_type_dist.get(t, 0) + c
+
+            rules_txt = get_rules_text(proj)
+            has_rules = bool(rules_txt.strip())
+            if has_rules:
+                rules_count += 1
+
+            is_git = (folder / ".git").exists()
+            git_stats = {"commits7d": 0, "commits30d": 0, "totalCommits": 0,
+                         "branches": 0, "lastCommit": None}
+            staleness = -1
+
+            if is_git:
+                projects_with_git += 1
+                total_raw = _git_run(folder, "rev-list", "--count", "HEAD")
+                if total_raw.isdigit():
+                    git_stats["totalCommits"] = int(total_raw)
+
+                c7 = _git_run(folder, "log", "--oneline", "--since=7 days ago")
+                git_stats["commits7d"] = len([x for x in c7.split('\n') if x]) if c7 else 0
+
+                c30 = _git_run(folder, "log", "--oneline", "--since=30 days ago")
+                git_stats["commits30d"] = len([x for x in c30.split('\n') if x]) if c30 else 0
+
+                branches_raw = _git_run(folder, "branch", "-a")
+                git_stats["branches"] = len([x for x in branches_raw.split('\n') if x]) if branches_raw else 0
+
+                last_ci = _git_run(folder, "log", "-1", "--format=%ci")
+                if last_ci:
+                    git_stats["lastCommit"] = last_ci
+                    try:
+                        from datetime import datetime as _dt
+                        # formato: "2026-03-03 13:59:38 -0300" → pega só a data/hora sem tz
+                        date_part = last_ci[:19]  # "2026-03-03 13:59:38"
+                        last_dt = _dt.strptime(date_part, "%Y-%m-%d %H:%M:%S")
+                        staleness = (_dt.now() - last_dt).days
+                    except Exception:
+                        staleness = -1
+
+                if git_stats["commits7d"] > 0:
+                    active_7d += 1
+                total_commits_7d += git_stats["commits7d"]
+                total_commits_30d += git_stats["commits30d"]
+
+            # Health score (0-100)
+            score = 0
+            score += min(30, mem_total * 3)         # memórias: até 30pts
+            score += min(20, len(by_type) * 5)      # diversidade: até 20pts
+            if has_rules:
+                score += 20                          # tem regras: 20pts
+            if git_stats["commits7d"] > 0:
+                score += 20                          # ativo esta semana: 20pts
+            elif git_stats["commits30d"] > 0:
+                score += 10
+            if git_stats["totalCommits"] > 0:
+                score += 10                          # tem histórico git: 10pts
+            score = min(100, score)
+            health_scores.append(score)
+
+            diversity = min(100, round(len(by_type) / 5 * 100))
+            project_kpis.append({
+                "project": proj,
+                "health": score,
+                "memories": {"total": mem_total},
+                "diversity": diversity,
+                "hasRules": has_rules,
+                "git": git_stats,
+                "staleness": staleness
+            })
+
+    avg_health = round(sum(health_scores) / len(health_scores)) if health_scores else 0
+    return {
+        "global": {
+            "totalCommits7d": total_commits_7d,
+            "totalCommits30d": total_commits_30d,
+            "activeProjects7d": active_7d,
+            "totalProjects": total_projects,
+            "rulesCoverage": f"{rules_count}/{total_projects}",
+            "totalMemories": total_memories,
+            "avgMemoriesPerProject": round(total_memories / total_projects) if total_projects else 0,
+            "projectsWithGit": projects_with_git,
+            "avgHealth": avg_health,
+            "typeDistribution": global_type_dist
+        },
+        "projects": project_kpis
+    }
+
+
+# ════════════════════════════════════════
+# Página principal
+# ════════════════════════════════════════
+
+@app.get("/")
+async def root():
+    return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+# ════════════════════════════════════════
+# Seed: dados iniciais
+# ════════════════════════════════════════
+
+def _seed_initial_data():
+    """Popula dados iniciais se o banco estiver vazio."""
+    projects = get_projects()
+    if projects:
+        return  # Já tem dados
+
+    # Projeto MyClinicSoft
+    upsert_project(
+        "myclinicsoft", "MyClinicSoft", "🏥",
+        "Sistema de gestão para clínicas. Produção em 187.77.40.102 (bare-metal, sem Coolify). "
+        "App principal na porta 5000 (PM2), WhatsApp Buffer na porta 3001 (Docker)."
+    )
+
+    # Ação: Deploy
+    add_action("myclinicsoft", "Deploy MyClinicSoft",
+        "Valida TypeScript → Build → Git push (main) → rsync servidor → PM2 reload → Health check app + buffer",
+        "deploy", {"script": "devops/deploy_myclinicsoft.py"})
+
+    # Regras do projeto (persistidas no banco, não em arquivo de texto)
+    rules = [
+        ("deploy", "Direção única obrigatória",
+         "O caminho de código é SEMPRE: Local DEV (Mac) → GitHub (main) → Produção (187.77.40.102). "
+         "O caminho inverso é PROIBIDO. Nunca puxar código de produção para local.",
+         "mandatory"),
+
+        ("buffer", "WhatsApp Buffer é intocável",
+         "O WhatsApp Buffer (porta 3001, Docker) NUNCA pode ser derrubado, reiniciado ou sobrescrito durante deploy. "
+         "Se o buffer estiver fora do ar, mensagens de pacientes serão PERDIDAS permanentemente. "
+         "O Meta reenvia webhooks por no máximo ~72h — após isso, a mensagem some.",
+         "mandatory"),
+
+        ("buffer", "Banco whatsapp é intocável",
+         "O banco PostgreSQL 'whatsapp' (separado do 'myclinicsoft') contém conversations, messages, etc. "
+         "NUNCA sobrescrever ou dropar tabelas desse banco. O Buffer popula esse banco em triangulação. "
+         "O DB sync do deploy só toca o banco 'myclinicsoft' — nunca o banco 'whatsapp'.",
+         "mandatory"),
+
+        ("deploy", "Validação obrigatória antes de deploy",
+         "npm run check deve retornar 0 erros. npm run build deve concluir sem erro. "
+         "Se falhar, o deploy NÃO pode continuar.",
+         "mandatory"),
+
+        ("deploy", "Branch obrigatório: main",
+         "Deploy só pode ser feito a partir da branch main. "
+         "Nunca fazer deploy de outra branch.",
+         "mandatory"),
+
+        ("security", "Credenciais nunca no código",
+         "DATABASE_URL de produção NUNCA commitada. Secrets ficam APENAS em "
+         "/opt/myclinicsoft/shared/.env no servidor.",
+         "mandatory"),
+
+        ("buffer", "Ordem do webhook é invariante",
+         "1) res.status(200) PRIMEIRO 2) queueWebhook 3) parseWebhook 4) resolveIdentity 5) INSERT. "
+         "Reordenar causa perda de mensagens.",
+         "mandatory"),
+
+        ("deploy", "Rollback controlado",
+         "Usar make rollback apenas quando health check falha E logs mostram erro crítico. "
+         "Investigar causa ANTES de novo deploy. Buffer geralmente NÃO precisa de rollback.",
+         "warning"),
+
+        ("general", "Dados de pacientes: LGPD",
+         "Nunca puxar dump de produção com dados reais para dev. "
+         "Apenas schema-only ou dados anonimizados. CPF, telefone, nome — tudo substituído.",
+         "mandatory"),
+    ]
+
+    for category, title, content, severity in rules:
+        add_rule("myclinicsoft", category, title, content, severity)
+
+    # Memória inicial
+    save_memory("myclinicsoft",
+        "# MyClinicSoft — Memória Operacional\n\n"
+        "## Arquitetura\n"
+        "- App Principal: Express + React, PM2, porta 5000\n"
+        "- WhatsApp Buffer: Docker, porta 3001 (CRÍTICO)\n"
+        "- Banco: PostgreSQL (myclinicsoft + whatsapp — bancos separados)\n"
+        "- Servidor: 187.77.40.102 (bare-metal, sem Coolify)\n"
+        "- Deploy: rsync + PM2 reload\n\n"
+        "## Decisões Vigentes\n"
+        "- Caminho único: Local → GitHub → Produção\n"
+        "- Buffer nunca pode cair\n"
+        "- Branch de deploy: main\n\n"
+        "## Estado Atual\n"
+        "- Sistema em produção estável\n"
+        "- ~13.400 pacientes, 464 conversas WhatsApp\n"
+        "- 140 tabelas no banco\n"
+    )
+
+
+# ════════════════════════════════════════
+# Main
+# ════════════════════════════════════════
+
+if __name__ == "__main__":
+    port = CONFIG.get("server", {}).get("port", 3000)
+    host = CONFIG.get("server", {}).get("host", "127.0.0.1")
+    print(f"\n🎛️  Controler rodando em http://{host}:{port}\n")
+    uvicorn.run(app, host=host, port=port, log_level="info")

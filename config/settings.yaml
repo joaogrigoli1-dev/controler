@@ -1,0 +1,22 @@
+# ============================================================
+# Controler — Configurações
+# ============================================================
+# API key da Anthropic fica no banco SQLite (segurança).
+# Aqui ficam apenas configurações não-sensíveis.
+
+server:
+  host: "127.0.0.1"
+  port: 3001
+
+myclinicsoft:
+  local_path: "/Users/jhgm/Documents/DEV/myclinicsoft"
+  # Chave SSH para acessar o servidor de produção (bare-metal).
+  # Se a chave do novo servidor for diferente, atualize aqui.
+  ssh_key: "~/.ssh/coolify_server"
+  server_ip: "187.77.40.102"
+  server_user: "root"
+  app_port: 5000
+  buffer_port: 3001
+  # Deploy: rsync + PM2 (sem Coolify)
+  remote_base: "/app/myclinicsoft"
+  github_branch: "main"
