@@ -10,13 +10,19 @@ server:
 
 myclinicsoft:
   local_path: "/Users/jhgm/Documents/DEV/myclinicsoft"
-  # Chave SSH para acessar o servidor de produção (bare-metal).
-  # Se a chave do novo servidor for diferente, atualize aqui.
-  ssh_key: "~/.ssh/coolify_server"
-  server_ip: "187.77.40.102"
-  server_user: "root"
+  github_branch: "main"
+
+  # ── Coolify (srv1) ─────────────────────────────────────────
+  # Deploy agora é via Coolify API — sem SSH/rsync/PM2.
+  coolify_url: "http://62.72.63.18:8000"
+  coolify_token: "2|PACNSa1HBN0AkS5LKsp4x5YeNS95QirqOYyAsLg30ef58ece"
+  coolify_app_uuid: "jckc0ccwssowwc0oocw80ogs"
+  coolify_buffer_uuid: "nw48cggkk4ss4g00s08s8wkw"
+  coolify_server_uuid: "j4ws844wcg400kwsc0sswocg"
+  server_ip: "62.72.63.18"
   app_port: 5000
   buffer_port: 3001
-  # Deploy: rsync + PM2 (sem Coolify)
-  remote_base: "/app/myclinicsoft"
-  github_branch: "main"
+
+  # ── SSH (para comandos diretos no servidor quando necessário) ──
+  ssh_key: "~/.ssh/coolify_server"
+  server_user: "root"

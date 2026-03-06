@@ -91,8 +91,8 @@ def list_directory(path: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def ssh_command(command: str, host: str = "187.77.40.102", user: str = "root",
-                key: str = "~/.ssh/prod_server", timeout: int = 30) -> dict:
+def ssh_command(command: str, host: str = "62.72.63.18", user: str = "root",
+                key: str = "~/.ssh/coolify_server", timeout: int = 30) -> dict:
     """Executa comando via SSH no servidor remoto."""
     key_path = os.path.expanduser(key)
     ssh_opts = f"-i {key_path} -o StrictHostKeyChecking=no -o ConnectTimeout=10"
@@ -179,7 +179,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "ssh_command",
-        "description": "Executa comando via SSH no servidor de produção (187.77.40.102). ATENÇÃO: respeitar regra de direção única — comandos de leitura/diagnóstico apenas, nunca alterar dados ou código diretamente no servidor.",
+        "description": "Executa comando via SSH no servidor de produção (62.72.63.18 — Coolify/srv1). ATENÇÃO: respeitar regra de direção única — comandos de leitura/diagnóstico apenas, nunca alterar dados ou código diretamente no servidor.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -189,17 +189,64 @@ TOOL_DEFINITIONS = [
                 },
                 "host": {
                     "type": "string",
-                    "description": "IP do servidor (padrão: 187.77.40.102)",
-                    "default": "187.77.40.102"
+                    "description": "IP do servidor (padrão: 62.72.63.18)",
+                    "default": "62.72.63.18"
                 }
             },
             "required": ["command"]
+        }
+    },
+    {
+        "name": "coolify_api",
+        "description": "Faz requisição para a Coolify API (62.72.63.18:8000). Permite gerenciar deploys, verificar status de aplicações, e executar operações no servidor Coolify.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "method": {
+                    "type": "string",
+                    "description": "Método HTTP: GET, POST, PUT, DELETE",
+                    "default": "GET"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Caminho da API (ex: /applications/UUID, /applications/UUID/restart)"
+                }
+            },
+            "required": ["path"]
         }
     }
 ]
 
 
 # ── Executor: recebe o tool_use da API e executa ──
+
+def coolify_api(path: str, method: str = "GET") -> dict:
+    """Faz requisição para a Coolify API."""
+    import urllib.request
+    import urllib.error
+    COOLIFY_URL = "http://62.72.63.18:8000"
+    COOLIFY_TOKEN = "2|PACNSa1HBN0AkS5LKsp4x5YeNS95QirqOYyAsLg30ef58ece"
+    url = f"{COOLIFY_URL}/api/v1{path}"
+    headers = {
+        "Authorization": f"Bearer {COOLIFY_TOKEN}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    req = urllib.request.Request(url, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read().decode()
+            return {"success": True, "status": resp.status, "data": json.loads(data) if data else {}}
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode()[:500]
+        except Exception:
+            pass
+        return {"success": False, "status": e.code, "error": f"HTTP {e.code}: {body}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)[:300]}
+
 
 TOOL_EXECUTORS = {
     "execute_command": lambda args: execute_command(
@@ -215,7 +262,10 @@ TOOL_EXECUTORS = {
         args["path"]
     ),
     "ssh_command": lambda args: ssh_command(
-        args["command"], args.get("host", "187.77.40.102")
+        args["command"], args.get("host", "62.72.63.18")
+    ),
+    "coolify_api": lambda args: coolify_api(
+        args["path"], args.get("method", "GET")
     ),
 }
 

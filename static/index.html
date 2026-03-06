@@ -735,7 +735,7 @@ function ProjectView() {
     <div>
       <div className="main-header">
         <h2>Deploy MyClinicSoft</h2>
-        <p>Deploy local DEV \u2192 Produ\u00e7\u00e3o (187.77.40.102)</p>
+        <p>Deploy local DEV \u2192 Produ\u00e7\u00e3o (62.72.63.18 (Coolify))</p>
       </div>
 
       <div className="cards" style={{gridTemplateColumns:'repeat(auto-fill, minmax(180px, 1fr))'}}>
@@ -744,7 +744,7 @@ function ProjectView() {
           <div className={`card-value ${statusLoading ? '' : status?.ssh ? 'green' : 'orange'}`} style={{fontSize:20}}>
             {statusLoading ? '...' : status?.ssh ? '\u25CF Conectado' : '\u25CF Offline'}
           </div>
-          <div className="card-sub">187.77.40.102</div>
+          <div className="card-sub">62.72.63.18 (Coolify)</div>
         </div>
         <div className="card">
           <div className="card-label">App (porta 5000)</div>
@@ -849,10 +849,9 @@ function ProjectView() {
             <div>1. Valida TypeScript (npx tsc --noEmit)</div>
             <div>2. Build do projeto (npm run build)</div>
             <div>3. Git push \u2192 main</div>
-            <div>4. Rsync dist/ \u2192 servidor (187.77.40.102:/app/myclinicsoft/)</div>
-            <div>5. DB sync: pg_dump dev \u2192 pg_restore prod</div>
-            <div>6. PM2 reload</div>
-            <div>7. Health check app (porta 5000) + buffer (porta 3001)</div>
+            <div>4. Coolify API restart (build Nixpacks + container)</div>
+            <div>5. Aguarda build + health check</div>
+            <div>6. Health check app + buffer</div>
             <div style={{marginTop:12, color:'var(--yw)', fontSize:11}}>
               {'\u26A0'} O Buffer WhatsApp (Docker, porta 3001) NUNCA \u00e9 afetado pelo deploy.
             </div>

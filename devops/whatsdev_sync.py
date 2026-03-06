@@ -19,7 +19,7 @@ from datetime import datetime
 from core.tools import execute_command, ssh_command
 
 LOCAL_PATH  = "/Users/jhgm/Documents/DEV/myclinicsoft"
-SERVER_IP   = "187.77.40.102"
+SERVER_IP   = "62.72.63.18"
 SSH_KEY     = os.path.expanduser("~/.ssh/coolify_server")
 SSH_OPTS    = f"-i {SSH_KEY} -o StrictHostKeyChecking=no -o ConnectTimeout=10"
 SSH_PREFIX  = f"ssh {SSH_OPTS} root@{SERVER_IP}"

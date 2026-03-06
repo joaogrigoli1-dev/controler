@@ -43,7 +43,8 @@ REGRAS FUNDAMENTAIS:
 - O WhatsApp Buffer (porta 3001) é CRÍTICO e NUNCA pode ser derrubado ou sobrescrito.
 - Respostas devem ser diretas e em português.
 - Ao executar comandos, mostre o que fez e o resultado.
-- Para SSH no servidor de produção: ssh -i ~/.ssh/coolify_server -o StrictHostKeyChecking=no root@187.77.40.102 "comando"
+- Para SSH no servidor de produção: ssh -i ~/.ssh/coolify_server -o StrictHostKeyChecking=no root@62.72.63.18 "comando"
+- Deploy é via Coolify API (62.72.63.18:8000). Use a tool coolify_api quando precisar verificar status ou acionar deploys.
 - NUNCA altere dados ou código diretamente no servidor de produção.
 - Projeto MyClinicSoft: /Users/jhgm/Documents/DEV/myclinicsoft
 - Projeto Controler: /Users/jhgm/Documents/DEV/controler

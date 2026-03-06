@@ -294,38 +294,52 @@ async def api_last_update():
 
 @app.get("/api/myclinicsoft/status")
 async def api_status():
-    from core.tools import ssh_command
+    from core.tools import ssh_command, coolify_api
 
-    # Primeiro testa se SSH funciona
+    mcs_cfg = CONFIG.get("myclinicsoft", {})
+    app_uuid = mcs_cfg.get("coolify_app_uuid", "jckc0ccwssowwc0oocw80ogs")
+    buf_uuid = mcs_cfg.get("coolify_buffer_uuid", "nw48cggkk4ss4g00s08s8wkw")
+
+    # Tenta Coolify API primeiro
+    app_r = coolify_api(f"/applications/{app_uuid}")
+    buf_r = coolify_api(f"/applications/{buf_uuid}")
+
+    if app_r["success"] and buf_r["success"]:
+        app_status = app_r["data"].get("status", "unknown")
+        buf_status = buf_r["data"].get("status", "unknown")
+        app_online = "healthy" in app_status or "running" in app_status
+        buf_online = "healthy" in buf_status or "running" in buf_status
+        return {
+            "app": {"online": app_online, "response": app_status},
+            "buffer": {"online": buf_online, "response": buf_status},
+            "coolify": True,
+            "ssh": None,
+            "checked_at": datetime.now().isoformat()
+        }
+
+    # Fallback: SSH direto
     ssh_ok = ssh_command("echo ok", timeout=10)
     if not ssh_ok["success"] or "ok" not in ssh_ok.get("stdout", ""):
         return {
-            "app": {"online": False, "response": "SSH inacessível"},
-            "buffer": {"online": False, "response": "SSH inacessível"},
+            "app": {"online": False, "response": "Coolify API e SSH inacessiveis"},
+            "buffer": {"online": False, "response": "Coolify API e SSH inacessiveis"},
+            "coolify": False,
             "ssh": False,
             "checked_at": datetime.now().isoformat()
         }
 
-    # App check — aceita qualquer resposta HTTP
     app_r = ssh_command("curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ --max-time 5", timeout=15)
     app_code = app_r.get("stdout", "").strip().strip("'")
     app_online = app_r["success"] and app_code and app_code != "000"
 
-    # Buffer check — aceita qualquer resposta HTTP
     buf_r = ssh_command("curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/ --max-time 5", timeout=15)
     buf_code = buf_r.get("stdout", "").strip().strip("'")
     buf_online = buf_r["success"] and buf_code and buf_code != "000"
 
-    # Fallback buffer: docker ps
-    if not buf_online:
-        docker_r = ssh_command("docker ps --format '{{.Names}}' 2>/dev/null | grep -i buffer", timeout=10)
-        if docker_r["success"] and docker_r.get("stdout", "").strip():
-            buf_online = True
-            buf_code = "docker:running"
-
     return {
         "app": {"online": app_online, "response": f"HTTP {app_code}" if app_online else app_code},
         "buffer": {"online": buf_online, "response": f"HTTP {buf_code}" if buf_online else buf_code},
+        "coolify": False,
         "ssh": True,
         "checked_at": datetime.now().isoformat()
     }
@@ -737,19 +751,19 @@ def _seed_initial_data():
     # Projeto MyClinicSoft
     upsert_project(
         "myclinicsoft", "MyClinicSoft", "🏥",
-        "Sistema de gestão para clínicas. Produção em 187.77.40.102 (bare-metal, sem Coolify). "
-        "App principal na porta 5000 (PM2), WhatsApp Buffer na porta 3001 (Docker)."
+        "Sistema de gestao para clinicas. Producao em 62.72.63.18 (Coolify/Docker). "
+        "App principal na porta 5000 (Nixpacks), WhatsApp Buffer na porta 3001 (Docker)."
     )
 
     # Ação: Deploy
     add_action("myclinicsoft", "Deploy MyClinicSoft",
-        "Valida TypeScript → Build → Git push (main) → rsync servidor → PM2 reload → Health check app + buffer",
+        "Valida TypeScript → Build local → Git push (main) → Coolify restart → Health check app + buffer",
         "deploy", {"script": "devops/deploy_myclinicsoft.py"})
 
     # Regras do projeto (persistidas no banco, não em arquivo de texto)
     rules = [
         ("deploy", "Direção única obrigatória",
-         "O caminho de código é SEMPRE: Local DEV (Mac) → GitHub (main) → Produção (187.77.40.102). "
+         "O caminho de codigo e SEMPRE: Local DEV (Mac) → GitHub (main) → Coolify (62.72.63.18). "
          "O caminho inverso é PROIBIDO. Nunca puxar código de produção para local.",
          "mandatory"),
 
@@ -777,7 +791,7 @@ def _seed_initial_data():
 
         ("security", "Credenciais nunca no código",
          "DATABASE_URL de produção NUNCA commitada. Secrets ficam APENAS em "
-         "/opt/myclinicsoft/shared/.env no servidor.",
+         "nas env vars do Coolify (nunca em código).",
          "mandatory"),
 
         ("buffer", "Ordem do webhook é invariante",
@@ -803,11 +817,11 @@ def _seed_initial_data():
     save_memory("myclinicsoft",
         "# MyClinicSoft — Memória Operacional\n\n"
         "## Arquitetura\n"
-        "- App Principal: Express + React, PM2, porta 5000\n"
+        "- App Principal: Express + React, Coolify/Docker, porta 5000\n"
         "- WhatsApp Buffer: Docker, porta 3001 (CRÍTICO)\n"
         "- Banco: PostgreSQL (myclinicsoft + whatsapp — bancos separados)\n"
-        "- Servidor: 187.77.40.102 (bare-metal, sem Coolify)\n"
-        "- Deploy: rsync + PM2 reload\n\n"
+        "- Servidor: 62.72.63.18 (Coolify/Docker)\n"
+        "- Deploy: GitHub push → Coolify API restart\n\n"
         "## Decisões Vigentes\n"
         "- Caminho único: Local → GitHub → Produção\n"
         "- Buffer nunca pode cair\n"

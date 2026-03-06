@@ -1,247 +1,125 @@
 """
-Deploy MyClinicSoft — Workflow Profissional
-============================================
-Fluxo: develop (dev) → PR → main (GitHub) → deploy (prod)
-
-Regras do workflow profissional:
-  1. Desenvolvimento acontece na branch 'develop'
-  2. Deploy para produção SOMENTE via merge da 'develop' na 'main'
-  3. O deploy lê a branch 'main' e envia para produção
-  4. Rollback automático se health check falhar
-  5. Banco de dados: migrations via Drizzle (nunca sync dev→prod)
-  6. WhatsApp Buffer NUNCA pode ser afetado pelo deploy
+Deploy MyClinicSoft — via Coolify API
+======================================
+Fluxo: develop (dev) → PR → main (GitHub) → Coolify auto-build → prod
 
 Servidores:
-  - srv2 (prod): 187.77.40.102 — myclinicsoft produção (PM2 + PostgreSQL)
-  - srv1 (dev):  62.72.63.18   — projetos SaaS novos (Coolify)
+  - srv1 (prod): 62.72.63.18 — Coolify (Docker/Nixpacks)
   - Mac local:   desenvolvimento
 
-Arquitetura de deploy (atomic releases):
-  /app/myclinicsoft/
-    ├── releases/
-    │   ├── 20260304-191500/
-    │   └── 20260304-193000/  ← release atual
-    ├── current → releases/20260304-193000  (symlink)
-    └── shared/
-        ├── .env
-        ├── uploads/
-        └── .storage/
+Arquitetura de deploy (Coolify):
+  - GitHub push → Coolify detecta (ou API trigger) → build Nixpacks → container restart
+  - Sem rsync, sem PM2, sem atomic releases manuais
+  - Coolify gerencia volumes, env vars, health checks, rollback
 
-  NOTA: Na migração inicial, o conteúdo flat existente em /app/myclinicsoft
-  será reorganizado automaticamente para a estrutura de atomic releases.
+Regras do workflow:
+  1. Desenvolvimento acontece na branch 'develop'
+  2. Deploy para produção SOMENTE via merge da 'develop' na 'main'
+  3. O deploy faz push para GitHub main e aciona Coolify via API
+  4. Rollback via Coolify API (re-deploy commit anterior)
+  5. Banco de dados: migrations via Drizzle
+  6. WhatsApp Buffer NUNCA pode ser afetado pelo deploy
 """
 
 import os
-import re
 import json
 import time
+import urllib.request
+import urllib.error
 from datetime import datetime
 from core.tools import execute_command, ssh_command
 from core.database import log_execution, get_rules
 
 # ─── Configuração ────────────────────────────────────────────────────────────
 
-LOCAL_PATH  = "/Users/jhgm/Documents/DEV/myclinicsoft"
-SERVER_IP   = "187.77.40.102"
-SSH_KEY     = "~/.ssh/prod_server"
-REMOTE_BASE = "/app/myclinicsoft"
-GITHUB_REPO = "joaogrigoli1-dev/myclinicsoft"
-HEALTH_URL  = "http://localhost:5000/api/health"
-MAX_RELEASES = 5
+LOCAL_PATH   = "/Users/jhgm/Documents/DEV/myclinicsoft"
+GITHUB_REPO  = "joaogrigoli1-dev/myclinicsoft"
 
-# ─── Deploy Script (executado no servidor) ───────────────────────────────────
+# Coolify
+COOLIFY_URL       = "http://62.72.63.18:8000"
+COOLIFY_TOKEN     = "2|PACNSa1HBN0AkS5LKsp4x5YeNS95QirqOYyAsLg30ef58ece"
+COOLIFY_APP_UUID  = "jckc0ccwssowwc0oocw80ogs"
+COOLIFY_BUF_UUID  = "nw48cggkk4ss4g00s08s8wkw"
 
-REMOTE_DEPLOY_SCRIPT = r"""#!/bin/bash
-set -eo pipefail
+# SSH (para health checks diretos e diagnóstico)
+SERVER_IP = "62.72.63.18"
+SSH_KEY   = "~/.ssh/coolify_server"
 
-RELEASE_DIR="$1"
-SHARED_DIR="$2"
-CURRENT_LINK="$3"
-REMOTE_BASE="$4"
-MAX_RELEASES="$5"
 
-echo "=== MyClinicSoft Deploy: Atomic Release ==="
-echo "Release: $RELEASE_DIR"
+# ─── Coolify API helpers ─────────────────────────────────────────────────────
 
-# Symlink shared resources
-ln -sfn "$SHARED_DIR/.env" "$RELEASE_DIR/.env"
-ln -sfn "$SHARED_DIR/uploads" "$RELEASE_DIR/uploads" 2>/dev/null || true
-ln -sfn "$SHARED_DIR/.storage" "$RELEASE_DIR/.storage" 2>/dev/null || true
-echo "  Shared resources linked"
+def _coolify_request(method: str, path: str, body: dict = None, timeout: int = 30) -> dict:
+    """Faz requisição para a Coolify API."""
+    url = f"{COOLIFY_URL}/api/v1{path}"
+    data = json.dumps(body).encode() if body else None
+    headers = {
+        "Authorization": f"Bearer {COOLIFY_TOKEN}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp_data = resp.read().decode()
+            return {
+                "success": True,
+                "status": resp.status,
+                "data": json.loads(resp_data) if resp_data else {}
+            }
+    except urllib.error.HTTPError as e:
+        body_err = ""
+        try:
+            body_err = e.read().decode()[:500]
+        except Exception:
+            pass
+        return {"success": False, "status": e.code, "error": f"HTTP {e.code}: {body_err}"}
+    except Exception as e:
+        return {"success": False, "status": 0, "error": str(e)[:300]}
 
-# Install dependencies
-PREV_RELEASE=$(readlink -f "$CURRENT_LINK" 2>/dev/null || echo "")
-LOCK_CHANGED=true
 
-if [ -n "$PREV_RELEASE" ] && [ -f "$PREV_RELEASE/package-lock.json" ]; then
-  if diff -q "$RELEASE_DIR/package-lock.json" "$PREV_RELEASE/package-lock.json" &>/dev/null; then
-    LOCK_CHANGED=false
-  fi
-fi
+def _coolify_get_app(uuid: str) -> dict:
+    """Retorna info de uma application Coolify."""
+    return _coolify_request("GET", f"/applications/{uuid}")
 
-if [ "$LOCK_CHANGED" = true ]; then
-  echo "  package-lock.json changed — npm ci..."
-  cd "$RELEASE_DIR"
-  npm ci --omit=dev --ignore-scripts 2>&1 | tail -5
-else
-  echo "  package-lock.json unchanged — copying node_modules..."
-  cp -al "$PREV_RELEASE/node_modules" "$RELEASE_DIR/node_modules" 2>/dev/null || {
-    echo "  cp -al failed, falling back to npm ci..."
-    cd "$RELEASE_DIR"
-    npm ci --omit=dev --ignore-scripts 2>&1 | tail -5
-  }
-fi
 
-# Atomic symlink switch
-ln -sfn "$RELEASE_DIR" "${CURRENT_LINK}.tmp"
-mv -fT "${CURRENT_LINK}.tmp" "$CURRENT_LINK"
-echo "  Symlink: current -> $RELEASE_DIR"
+def _coolify_restart(uuid: str) -> dict:
+    """Aciona restart/redeploy de uma application Coolify."""
+    return _coolify_request("POST", f"/applications/{uuid}/restart")
 
-# PM2 reload (zero-downtime)
-if pm2 describe myclinicsoft &>/dev/null; then
-  pm2 reload myclinicsoft --update-env
-  echo "  PM2: reloaded"
-else
-  cd "$REMOTE_BASE"
-  pm2 start "$CURRENT_LINK/dist/index.cjs" --name myclinicsoft
-  echo "  PM2: started"
-fi
 
-# Cleanup old releases
-cd "$REMOTE_BASE/releases"
-RELEASES=($(ls -1d */ 2>/dev/null | sort))
-TOTAL=${#RELEASES[@]}
-if [ "$TOTAL" -gt "$MAX_RELEASES" ]; then
-  TO_DELETE=$((TOTAL - MAX_RELEASES))
-  for ((i=0; i<TO_DELETE; i++)); do
-    echo "  Removing old release: ${RELEASES[$i]}"
-    rm -rf "${RELEASES[$i]}"
-  done
-fi
-
-echo "=== DEPLOY_OK ==="
-"""
-
-REMOTE_ROLLBACK_SCRIPT = r"""#!/bin/bash
-set -eo pipefail
-
-CURRENT_LINK="$1"
-REMOTE_BASE="$2"
-
-echo "=== ROLLBACK ==="
-RELEASES=($(ls -1d "$REMOTE_BASE/releases"/*/ 2>/dev/null | sort))
-TOTAL=${#RELEASES[@]}
-
-if [ "$TOTAL" -lt 2 ]; then
-  echo "ERROR: No previous release to rollback to"
-  exit 1
-fi
-
-PREV="${RELEASES[$((TOTAL-2))]}"
-PREV_DIR="${PREV%/}"
-ln -sfn "$PREV_DIR" "${CURRENT_LINK}.tmp"
-mv -fT "${CURRENT_LINK}.tmp" "$CURRENT_LINK"
-pm2 reload myclinicsoft --update-env
-echo "Rolled back to: $(basename $PREV_DIR)"
-echo "=== ROLLBACK_OK ==="
-"""
+def _coolify_app_status(uuid: str) -> str:
+    """Retorna status de uma application: running:healthy, exited, etc."""
+    r = _coolify_get_app(uuid)
+    if r["success"]:
+        return r["data"].get("status", "unknown")
+    return "unknown"
 
 
 # ─── Funções auxiliares ──────────────────────────────────────────────────────
 
 def _ssh(cmd, timeout=30):
-    """Executa comando SSH no servidor de produção."""
+    """Executa comando SSH no servidor (para health checks diretos)."""
     return ssh_command(cmd, host=SERVER_IP, key=SSH_KEY, timeout=timeout)
-
-
-def _check_ssh():
-    """Testa se a conexão SSH está funcional."""
-    r = _ssh("echo ok", timeout=15)
-    return r["success"] and "ok" in r.get("stdout", "")
-
-
-def _ensure_atomic_structure(log):
-    """
-    Garante que a estrutura de atomic releases existe no servidor.
-    Se o servidor ainda usa a estrutura flat (sem releases/), faz a migração:
-      1. Cria releases/ e shared/
-      2. Move .env para shared/
-      3. Move .storage e uploads para shared/
-      4. Não toca nos arquivos da app (serão recriados no deploy)
-    """
-    r = _ssh(f"test -d {REMOTE_BASE}/releases && echo EXISTS || echo MISSING", timeout=10)
-    if "EXISTS" in r.get("stdout", ""):
-        log("structure", "ok", "Estrutura de atomic releases já existe")
-        return True
-
-    log("structure", "running", "Migrando para atomic releases...")
-
-    # Cria diretórios
-    _ssh(f"mkdir -p {REMOTE_BASE}/releases {REMOTE_BASE}/shared", timeout=10)
-
-    # Move .env para shared (se existir na raiz e não existir em shared)
-    _ssh(
-        f'test -f {REMOTE_BASE}/.env && ! test -f {REMOTE_BASE}/shared/.env && '
-        f'cp {REMOTE_BASE}/.env {REMOTE_BASE}/shared/.env || true',
-        timeout=10
-    )
-
-    # Move .storage para shared (se existir na raiz)
-    _ssh(
-        f'test -d {REMOTE_BASE}/.storage && ! test -d {REMOTE_BASE}/shared/.storage && '
-        f'mv {REMOTE_BASE}/.storage {REMOTE_BASE}/shared/.storage || true',
-        timeout=15
-    )
-
-    # Move uploads para shared (se existir na raiz)
-    _ssh(
-        f'test -d {REMOTE_BASE}/uploads && ! test -d {REMOTE_BASE}/shared/uploads && '
-        f'mv {REMOTE_BASE}/uploads {REMOTE_BASE}/shared/uploads || true',
-        timeout=15
-    )
-
-    # Atualiza ecosystem.config.js para usar current/ (symlink)
-    _ssh(
-        f"sed -i \"s|{REMOTE_BASE}/dist/index.cjs|{REMOTE_BASE}/current/dist/index.cjs|g\" "
-        f"/app/ecosystem.config.js 2>/dev/null || true",
-        timeout=10
-    )
-    _ssh(
-        f"sed -i \"s|cwd: '{REMOTE_BASE}'|cwd: '{REMOTE_BASE}/current'|\" "
-        f"/app/ecosystem.config.js 2>/dev/null || true",
-        timeout=10
-    )
-
-    # Verifica
-    r = _ssh(f"test -d {REMOTE_BASE}/releases && test -d {REMOTE_BASE}/shared && echo OK", timeout=10)
-    if "OK" in r.get("stdout", ""):
-        log("structure", "ok", "Estrutura de atomic releases criada com sucesso")
-        return True
-
-    log("structure", "error", "Falha ao criar estrutura de atomic releases")
-    return False
 
 
 def _check_buffer_health():
     """
-    Verifica se o WhatsApp Buffer está UP no servidor.
-    Tenta: 1) curl porta 3001  2) docker ps  3) ss porta 3001
+    Verifica se o WhatsApp Buffer está UP.
+    Tenta: 1) Coolify status  2) SSH curl porta 3001
     """
+    # Via Coolify API
+    status = _coolify_app_status(COOLIFY_BUF_UUID)
+    if "healthy" in status or "running" in status:
+        return {"up": True, "method": "coolify", "detail": status}
+
+    # Fallback: SSH + curl
     r = _ssh("curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/ --max-time 5", timeout=15)
     if r["success"]:
         code = r.get("stdout", "").strip().strip("'")
         if code and code != "000":
             return {"up": True, "method": "http", "detail": f"HTTP {code}"}
 
-    r = _ssh("docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null | grep -i buffer", timeout=15)
-    if r["success"] and r.get("stdout", "").strip():
-        return {"up": True, "method": "docker", "detail": r["stdout"].strip()}
-
-    r = _ssh("ss -tlnp 2>/dev/null | grep ':3001 ' || netstat -tlnp 2>/dev/null | grep ':3001 '", timeout=15)
-    if r["success"] and r.get("stdout", "").strip():
-        return {"up": True, "method": "port", "detail": "Porta 3001 em LISTEN"}
-
-    return {"up": False, "method": "all_failed", "detail": "Nenhum método detectou o buffer ativo"}
+    return {"up": False, "method": "all_failed", "detail": "Buffer não detectado"}
 
 
 def _get_current_branch():
@@ -269,7 +147,6 @@ def _ensure_main_branch(log):
             log("git-branch", "error", f"Falha ao trocar para main: {r.get('stderr', '')[:200]}")
             return False
 
-    # Pull para garantir que temos o último merge da develop
     log("git-pull", "running", "Atualizando main com GitHub...")
     r = execute_command("git pull origin main", cwd=LOCAL_PATH, timeout=60)
     if not r["success"]:
@@ -289,6 +166,7 @@ def _restore_branch(original_branch):
 
 _LEADS_TABLES = ["partners", "leads", "lead_interactions"]
 
+import re
 
 def _parse_db_url(url: str):
     """Extrai componentes de uma DATABASE_URL postgresql://user:pass@host:port/db."""
@@ -317,7 +195,7 @@ def _get_local_db_url():
 async def sync_leads_from_prod(log_callback=None):
     """
     Puxa novos leads/interações do servidor de produção para o banco local.
-    Fluxo: prod → dump → SCP → patch ON CONFLICT → import local
+    Fluxo: prod (SSH) → pg_dump → SCP → patch ON CONFLICT → import local
     """
     logs = []
     started = datetime.now()
@@ -341,27 +219,29 @@ async def sync_leads_from_prod(log_callback=None):
         return {"success": False, "logs": logs}
     log("ssh", "ok", "SSH OK")
 
-    # 1: DATABASE_URL do servidor
-    log("db-url", "running", "Lendo DATABASE_URL do servidor...")
+    # 1: DATABASE_URL do servidor (via container exec ou env var)
+    log("db-url", "running", "Lendo DATABASE_URL do container Coolify...")
     r = _ssh(
-        f"grep '^DATABASE_URL=' {REMOTE_BASE}/shared/.env | cut -d'=' -f2- | tr -d '\"' | tr -d \"'\"",
+        f"docker exec $(docker ps -qf 'name={COOLIFY_APP_UUID}' | head -1) printenv DATABASE_URL 2>/dev/null",
         timeout=15
     )
     prod_url = r.get("stdout", "").strip()
     if not prod_url:
-        # Fallback: tenta no current (ou .env direto na raiz)
-        r = _ssh(
-            f"grep '^DATABASE_URL=' {REMOTE_BASE}/current/.env 2>/dev/null || "
-            f"grep '^DATABASE_URL=' {REMOTE_BASE}/.env 2>/dev/null | cut -d'=' -f2- | tr -d '\"' | tr -d \"'\"",
-            timeout=15
-        )
-        prod_url = r.get("stdout", "").strip()
+        # Fallback: ler do Coolify API
+        app_r = _coolify_get_app(COOLIFY_APP_UUID)
+        if app_r["success"]:
+            # Try to find in environment variables
+            envs = app_r["data"].get("environment_variables", [])
+            for env in envs:
+                if env.get("key") == "DATABASE_URL":
+                    prod_url = env.get("value", "")
+                    break
     if not prod_url:
         log("db-url", "error", "DATABASE_URL não encontrada no servidor")
         return {"success": False, "logs": logs}
     creds = _parse_db_url(prod_url)
     if not creds:
-        log("db-url", "error", f"Formato de DATABASE_URL inesperado")
+        log("db-url", "error", "Formato de DATABASE_URL inesperado")
         return {"success": False, "logs": logs}
     log("db-url", "ok", "Banco prod localizado")
 
@@ -427,37 +307,37 @@ async def sync_leads_from_prod(log_callback=None):
     count_r = execute_command(f'psql "{local_db_url}" -t -A -c "SELECT COUNT(*) FROM leads"', timeout=15)
     total_local = count_r.get("stdout", "?").strip()
 
-    log("import", "ok", f"✓ Leads sincronizados | Total local: {total_local} leads")
+    log("import", "ok", f"Leads sincronizados | Total local: {total_local} leads")
 
     elapsed = (datetime.now() - started).total_seconds()
     success = all(l["status"] != "error" for l in logs)
     log("done", "ok" if success else "error",
-        f"{'✓ Sync concluído' if success else '✗ Sync com problemas'} em {elapsed:.0f}s")
+        f"{'Sync concluido' if success else 'Sync com problemas'} em {elapsed:.0f}s")
 
     log_execution("myclinicsoft", "leads_sync", "success" if success else "failed", logs, elapsed)
     return {"success": success, "logs": logs, "elapsed_seconds": elapsed}
 
 
-# ─── Pipeline de Deploy Profissional ─────────────────────────────────────────
+# ─── Pipeline de Deploy via Coolify ──────────────────────────────────────────
 
 async def deploy(log_callback=None):
     """
-    Deploy profissional do MyClinicSoft.
+    Deploy profissional do MyClinicSoft via Coolify.
     log_callback(entry) — para atualizar interface em tempo real.
 
-    Sequência:
-      0. SSH check
-      1. Buffer check (pré-deploy) — cancela se offline
+    Sequencia:
+      0. Coolify API check
+      1. Buffer check (pre-deploy)
       2. Git: garantir branch main atualizada
       3. TypeScript check (npm run check)
-      4. Build local (npm run build)
-      5. rsync dist/ → servidor (release atômica)
-      6. npm ci + PM2 reload no servidor
-      7. Health check app
-      8. Health check buffer (pós-deploy)
+      4. Build local (npm run build) — validacao apenas
+      5. Git push origin main (Coolify faz pull + build)
+      6. Trigger Coolify restart via API
+      7. Aguardar build + health check
+      8. Health check buffer (pos-deploy)
       9. Volta para branch develop
 
-    Em caso de falha no health check: rollback automático.
+    Em caso de falha: Coolify mantém container anterior.
     """
     logs = []
     started = datetime.now()
@@ -469,21 +349,18 @@ async def deploy(log_callback=None):
         if log_callback:
             log_callback(entry)
 
-    # ── 0: SSH ──
-    log("ssh", "running", f"Testando conexão SSH com srv2 ({SERVER_IP})...")
-    if not _check_ssh():
-        log("ssh", "error",
-            f"Sem acesso SSH ao servidor {SERVER_IP}. "
-            "Verifique: 1) chave ~/.ssh/prod_server  "
-            "2) servidor acessível  3) permissões da chave")
+    # ── 0: Coolify API check ──
+    log("coolify", "running", "Testando conexao com Coolify API...")
+    r = _coolify_get_app(COOLIFY_APP_UUID)
+    if not r["success"]:
+        log("coolify", "error",
+            f"Coolify API inacessivel: {r.get('error', 'unknown')}. "
+            f"Verifique: 1) URL {COOLIFY_URL}  2) Token valido  3) Servidor online")
         log_execution("myclinicsoft", "deploy", "failed", logs)
-        return {"success": False, "logs": logs, "error": "SSH inacessível"}
-    log("ssh", "ok", f"SSH OK → srv2 ({SERVER_IP})")
+        return {"success": False, "logs": logs, "error": "Coolify inacessivel"}
 
-    # ── 0.5: Estrutura atômica ──
-    if not _ensure_atomic_structure(log):
-        log_execution("myclinicsoft", "deploy", "failed", logs)
-        return {"success": False, "logs": logs, "error": "Estrutura atômica falhou"}
+    app_status = r["data"].get("status", "unknown")
+    log("coolify", "ok", f"Coolify OK — App status: {app_status}")
 
     # ── 1: Buffer check ──
     log("buffer-pre", "running", "Verificando WhatsApp Buffer...")
@@ -500,11 +377,11 @@ async def deploy(log_callback=None):
     uncommitted = _get_git_status()
     if uncommitted:
         log("git", "error",
-            f"Há alterações não commitadas na branch '{original_branch}'! "
+            f"Ha alteracoes nao commitadas na branch '{original_branch}'! "
             f"Commit ou stash antes de deployar.\n"
             f"Arquivos: {uncommitted[:300]}")
         log_execution("myclinicsoft", "deploy", "failed", logs)
-        return {"success": False, "logs": logs, "error": "Alterações não commitadas"}
+        return {"success": False, "logs": logs, "error": "Alteracoes nao commitadas"}
 
     if not _ensure_main_branch(log):
         _restore_branch(original_branch)
@@ -522,152 +399,88 @@ async def deploy(log_callback=None):
         return {"success": False, "logs": logs, "error": "TypeScript check falhou"}
     log("check", "ok", "0 erros TypeScript")
 
-    # ── 4: Build ──
-    log("build", "running", "npm run build...")
+    # ── 4: Build local (validacao) ──
+    log("build", "running", "npm run build (validacao local)...")
     r = execute_command("npm run build", cwd=LOCAL_PATH, timeout=180)
     if not r["success"]:
         log("build", "error", f"Build falhou:\n{(r.get('stderr') or r.get('stdout', ''))[:500]}")
         _restore_branch(original_branch)
         log_execution("myclinicsoft", "deploy", "failed", logs)
         return {"success": False, "logs": logs, "error": "Build falhou"}
+    log("build", "ok", "Build local OK")
 
-    size_r = execute_command(f"du -sh {LOCAL_PATH}/dist/")
-    size_str = size_r.get("stdout", "").split()[0] if size_r["success"] else "?"
-    log("build", "ok", f"Build OK ({size_str})")
-
-    # ── 5: rsync dist/ → servidor (release atômica) ──
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    release_dir = f"{REMOTE_BASE}/releases/{timestamp}"
-    shared_dir = f"{REMOTE_BASE}/shared"
-    current_link = f"{REMOTE_BASE}/current"
-    key_path = os.path.expanduser(SSH_KEY)
-
-    log("rsync", "running", f"Criando release {timestamp} no servidor...")
-    _ssh(f"mkdir -p {release_dir}", timeout=15)
-
-    r = execute_command(
-        f'rsync -az --delete '
-        f'-e "ssh -i {key_path} -o StrictHostKeyChecking=no" '
-        f'{LOCAL_PATH}/dist/ '
-        f'root@{SERVER_IP}:{release_dir}/dist/',
-        cwd=LOCAL_PATH,
-        timeout=120
-    )
+    # ── 5: Git push ──
+    log("push", "running", "git push origin main...")
+    r = execute_command("git push origin main", cwd=LOCAL_PATH, timeout=60)
     if not r["success"]:
-        log("rsync", "error", f"rsync falhou: {(r.get('stderr') or r.get('stdout', ''))[:300]}")
+        stderr = r.get("stderr", "")
+        # "Everything up-to-date" is success
+        if "up-to-date" not in stderr and "Everything" not in stderr:
+            log("push", "error", f"Git push falhou: {stderr[:300]}")
+            _restore_branch(original_branch)
+            log_execution("myclinicsoft", "deploy", "failed", logs)
+            return {"success": False, "logs": logs, "error": "Git push falhou"}
+    log("push", "ok", "Codigo enviado para GitHub")
+
+    # ── 6: Trigger Coolify restart ──
+    log("deploy", "running", "Acionando deploy no Coolify...")
+    r = _coolify_restart(COOLIFY_APP_UUID)
+    if not r["success"]:
+        log("deploy", "error", f"Coolify restart falhou: {r.get('error', '')[:300]}")
         _restore_branch(original_branch)
         log_execution("myclinicsoft", "deploy", "failed", logs)
-        return {"success": False, "logs": logs, "error": "rsync falhou"}
+        return {"success": False, "logs": logs, "error": "Coolify restart falhou"}
 
-    # Envia package.json + package-lock.json
-    r2 = execute_command(
-        f'scp -i {key_path} -o StrictHostKeyChecking=no '
-        f'{LOCAL_PATH}/package.json {LOCAL_PATH}/package-lock.json '
-        f'root@{SERVER_IP}:{release_dir}/',
-        timeout=30
-    )
-    if not r2["success"]:
-        log("rsync", "error", f"scp package files falhou")
-        _restore_branch(original_branch)
-        log_execution("myclinicsoft", "deploy", "failed", logs)
-        return {"success": False, "logs": logs, "error": "scp package files falhou"}
-    log("rsync", "ok", f"Release {timestamp} sincronizada ({size_str})")
+    deploy_uuid = r["data"].get("deployment_uuid", "unknown")
+    log("deploy", "ok", f"Deploy acionado (UUID: {deploy_uuid})")
 
-    # ── 6: Ativar release (npm ci + symlink + PM2) ──
-    log("activate", "running", "Ativando release no servidor...")
-
-    # Envia script
-    script_local = "/tmp/myclinicsoft_deploy.sh"
-    try:
-        with open(script_local, "w") as f:
-            f.write(REMOTE_DEPLOY_SCRIPT)
-    except Exception as e:
-        log("activate", "error", f"Falha ao criar script: {e}")
-        _restore_branch(original_branch)
-        return {"success": False, "logs": logs}
-
-    execute_command(
-        f'scp -i {key_path} -o StrictHostKeyChecking=no '
-        f'{script_local} root@{SERVER_IP}:/tmp/myclinicsoft_deploy.sh',
-        timeout=15
-    )
-    execute_command(f'rm -f {script_local}')
-
-    r = _ssh(
-        f'bash /tmp/myclinicsoft_deploy.sh '
-        f'"{release_dir}" "{shared_dir}" "{current_link}" "{REMOTE_BASE}" "{MAX_RELEASES}" 2>&1',
-        timeout=180
-    )
-    output = (r.get("stdout", "") + r.get("stderr", "")).strip()
-    _ssh('rm -f /tmp/myclinicsoft_deploy.sh 2>/dev/null || true')
-
-    if not r["success"] or "DEPLOY_OK" not in output:
-        error_lines = [l for l in output.split('\n') if 'ERROR' in l.upper() or 'failed' in l.lower()]
-        detail = '\n'.join(error_lines[:5]) if error_lines else output[-400:]
-        log("activate", "error", f"Ativação falhou:\n{detail or '(sem saída)'}")
-        _restore_branch(original_branch)
-        log_execution("myclinicsoft", "deploy", "failed", logs)
-        return {"success": False, "logs": logs, "error": "Ativação falhou"}
-    log("activate", "ok", f"Release {timestamp} ativada")
-
-    # ── 7: Health check app ──
-    log("health-app", "running", "Health check...")
-    MAX_WAIT = 60
-    INTERVAL = 5
+    # ── 7: Aguardar build + health check ──
+    log("health-app", "running", "Aguardando Coolify build + restart...")
+    MAX_WAIT = 180  # Coolify build pode demorar
+    INTERVAL = 10
     elapsed_w = 0
     app_ok = False
-    code = "000"
+
+    # Espera inicial para build iniciar
+    time.sleep(15)
+    elapsed_w += 15
 
     while elapsed_w < MAX_WAIT:
+        status = _coolify_app_status(COOLIFY_APP_UUID)
+        if "healthy" in status:
+            app_ok = True
+            break
+        if "exited" in status or "error" in status:
+            log("health-app", "error",
+                f"Container com problema: {status}. Verifique logs no Coolify.")
+            break
+
+        time.sleep(INTERVAL)
+        elapsed_w += INTERVAL
+        log("health-app", "running", f"Aguardando... {elapsed_w}s/{MAX_WAIT}s (status: {status})")
+
+    if not app_ok:
+        # Fallback: tenta HTTP direto
         r = _ssh(
-            f"curl -sf -o /dev/null -w '%{{http_code}}' {HEALTH_URL} --max-time 8",
+            "curl -sf -o /dev/null -w '%{http_code}' http://localhost:5000/api/health --max-time 8",
             timeout=15
         )
         code = r.get("stdout", "").strip().strip("'")
         if r["success"] and code == "200":
             app_ok = True
-            break
-        time.sleep(INTERVAL)
-        elapsed_w += INTERVAL
-        log("health-app", "running", f"Aguardando app... {elapsed_w}s/{MAX_WAIT}s (HTTP {code or '?'})")
 
     if not app_ok:
         log("health-app", "error",
-            f"App não respondeu após {MAX_WAIT}s (HTTP {code or '?'}) — ROLLBACK!")
-
-        # ── ROLLBACK automático ──
-        log("rollback", "running", "Executando rollback para release anterior...")
-        script_rb = "/tmp/myclinicsoft_rollback.sh"
-        try:
-            with open(script_rb, "w") as f:
-                f.write(REMOTE_ROLLBACK_SCRIPT)
-            execute_command(
-                f'scp -i {key_path} -o StrictHostKeyChecking=no '
-                f'{script_rb} root@{SERVER_IP}:/tmp/myclinicsoft_rollback.sh',
-                timeout=15
-            )
-            execute_command(f'rm -f {script_rb}')
-            r_rb = _ssh(
-                f'bash /tmp/myclinicsoft_rollback.sh "{current_link}" "{REMOTE_BASE}" 2>&1',
-                timeout=60
-            )
-            rb_out = r_rb.get("stdout", "")
-            _ssh('rm -f /tmp/myclinicsoft_rollback.sh')
-            if "ROLLBACK_OK" in rb_out:
-                log("rollback", "ok", f"Rollback concluído: {rb_out.strip()}")
-            else:
-                log("rollback", "error", f"Rollback falhou: {rb_out[:300]}")
-        except Exception as e:
-            log("rollback", "error", f"Rollback exception: {e}")
-
+            f"App nao respondeu apos {MAX_WAIT}s. "
+            "Coolify mantém container anterior — verifique logs no painel.")
         _restore_branch(original_branch)
         log_execution("myclinicsoft", "deploy", "failed", logs)
-        return {"success": False, "logs": logs, "error": "Health check falhou + rollback"}
+        return {"success": False, "logs": logs, "error": "Health check falhou"}
 
-    log("health-app", "ok", f"App UP (HTTP {code})")
+    log("health-app", "ok", f"App UP e saudavel ({elapsed_w}s)")
 
-    # ── 8: Buffer check pós-deploy ──
-    log("buffer-post", "running", "Verificando buffer pós-deploy...")
+    # ── 8: Buffer check pos-deploy ──
+    log("buffer-post", "running", "Verificando buffer pos-deploy...")
     buf = _check_buffer_health()
     log("buffer-post", "ok" if buf["up"] else "error",
         f"Buffer {'UP' if buf['up'] else 'CAIU!'} ({buf['detail']})")
@@ -681,8 +494,8 @@ async def deploy(log_callback=None):
     elapsed = (datetime.now() - started).total_seconds()
     success = all(l["status"] != "error" for l in logs)
     log("done", "ok" if success else "error",
-        f"{'✓ Deploy concluído' if success else '✗ Deploy com problemas'} em {elapsed:.0f}s | "
-        f"Release: {timestamp}")
+        f"{'Deploy concluido' if success else 'Deploy com problemas'} em {elapsed:.0f}s | "
+        f"Coolify deployment: {deploy_uuid}")
 
     log_execution("myclinicsoft", "deploy", "success" if success else "failed", logs, elapsed)
-    return {"success": success, "logs": logs, "elapsed_seconds": elapsed, "release": timestamp}
+    return {"success": success, "logs": logs, "elapsed_seconds": elapsed, "deployment": deploy_uuid}
