@@ -96,7 +96,8 @@ async def security_headers_middleware(request: Request, call_next):
         "connect-src 'self'"
     )
     # Remove cabeçalho que expõe tecnologia do servidor
-    response.headers.pop("server", None)
+    if "server" in response.headers:
+        del response.headers["server"]
     return response
 
 
