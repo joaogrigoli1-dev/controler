@@ -29,6 +29,6 @@ myclinicsoft:
 
 controler:
   # ── Coolify deploy do próprio Controler ──────────────────────
-  coolify_app_uuid: "hs8c0csogg4008o44k8w008g"
+  coolify_app_uuid: "hksw4kg8owgs0wwg0o8k4kk0"
   domain: "controler.net.br"
   app_port: 3001

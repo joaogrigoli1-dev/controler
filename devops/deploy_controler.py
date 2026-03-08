@@ -34,7 +34,7 @@ GITHUB_BRANCH  = "main"
 COOLIFY_URL    = "http://62.72.63.18:8000"
 COOLIFY_TOKEN  = "2|PACNSa1HBN0AkS5LKsp4x5YeNS95QirqOYyAsLg30ef58ece"
 SERVER_UUID    = "j4ws844wcg400kwsc0sswocg"   # mesmo servidor do myclinicsoft
-APP_UUID       = "hs8c0csogg4008o44k8w008g"  # UUID do app no Coolify (já criado)
+APP_UUID       = "hksw4kg8owgs0wwg0o8k4kk0"  # UUID do app no Coolify (público)
 
 DOMAIN         = "controler.net.br"
 APP_PORT       = 3001
