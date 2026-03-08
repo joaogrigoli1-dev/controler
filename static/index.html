@@ -1022,7 +1022,7 @@ function ProjectView() {
     };
     es.onerror = () => {
       setDeploying(false);
-      setResult({ success: false, error: gotMessage ? 'Conex\u00e3o SSE perdida' : 'N\u00e3o conectou ao endpoint' });
+      setResult({ success: false, error: gotMessage ? 'Conexão SSE perdida' : 'Não conectou ao endpoint' });
       es.close();
     };
   };
@@ -1056,7 +1056,7 @@ function ProjectView() {
     <div>
       <div className="main-header">
         <h2>Deploy MyClinicSoft</h2>
-        <p>Deploy local DEV \u2192 Produ\u00e7\u00e3o (62.72.63.18 (Coolify))</p>
+        <p>Deploy local DEV → Produção (62.72.63.18 (Coolify))</p>
       </div>
 
       <div className="cards" style={{gridTemplateColumns:'repeat(auto-fill, minmax(180px, 1fr))'}}>
@@ -1072,19 +1072,19 @@ function ProjectView() {
           <div className={`card-value ${statusLoading ? '' : status?.app?.online ? 'green' : 'orange'}`} style={{fontSize:20}}>
             {statusLoading ? '...' : status?.app?.online ? '\u25CF Online' : '\u25CF Offline'}
           </div>
-          <div className="card-sub">{status?.app?.response || '\u2014'}</div>
+          <div className="card-sub">{status?.app?.response || '—'}</div>
         </div>
         <div className="card">
           <div className="card-label">Buffer WhatsApp (3001)</div>
           <div className={`card-value ${statusLoading ? '' : status?.buffer?.online ? 'green' : 'orange'}`} style={{fontSize:20}}>
             {statusLoading ? '...' : status?.buffer?.online ? '\u25CF Online' : '\u25CF Offline'}
           </div>
-          <div className="card-sub">{status?.buffer?.response || '\u2014'}</div>
+          <div className="card-sub">{status?.buffer?.response || '—'}</div>
         </div>
         <div className="card">
-          <div className="card-label">\u00DAltima Altera\u00e7\u00e3o Local</div>
+          <div className="card-label">Última Alteração Local</div>
           <div className="card-value cyan" style={{fontSize:18}}>
-            {lastUpdate?.last_update || '\u2014'}
+            {lastUpdate?.last_update || '—'}
           </div>
           <div className="card-sub" style={{fontSize:10, wordBreak:'break-all'}}>{lastUpdate?.file || ''}</div>
         </div>
@@ -1093,11 +1093,11 @@ function ProjectView() {
       <div style={{display:'flex', gap:12, marginBottom:24}}>
         <button className="btn btn-primary" onClick={startDeploy} disabled={deploying}
                 style={{padding:'10px 24px', fontSize:14, opacity: deploying ? 0.6 : 1}}>
-          <Icon.Rocket /> {deploying ? 'Deploy em andamento...' : 'Deploy \u2192 Produ\u00e7\u00e3o'}
+          <Icon.Rocket /> {deploying ? 'Deploy em andamento...' : 'Deploy → Produção'}
         </button>
         <button className="btn" onClick={startSync} disabled={syncing}
                 style={{padding:'10px 24px', fontSize:14, opacity: syncing ? 0.6 : 1}}>
-          <Icon.Refresh /> {syncing ? 'Sincronizando...' : 'Sync WhatsApp Prod \u2192 Dev'}
+          <Icon.Refresh /> {syncing ? 'Sincronizando...' : 'Sync WhatsApp Prod → Dev'}
         </button>
         <button className="btn btn-sm" onClick={fetchStatus} style={{marginLeft:'auto'}}>
           <Icon.Refresh /> Atualizar Status
@@ -1107,7 +1107,7 @@ function ProjectView() {
       {(logs.length > 0 || result) && (
         <div className="table-wrap" style={{marginBottom:24}}>
           <div className="table-header">
-            <h3>Deploy \u2014 Log de Execu\u00e7\u00e3o</h3>
+            <h3>Deploy — Log de Execução</h3>
             {result && (
               <span className={`badge ${result.success ? 'badge-context' : 'badge-error'}`}>
                 {result.success ? 'SUCESSO' : 'FALHOU'}
@@ -1126,7 +1126,7 @@ function ProjectView() {
               </div>
             ))}
             {deploying && (
-              <div style={{color:'var(--ac2)', marginTop:8}}>{'\u27F3'} Deploy em execu\u00e7\u00e3o...</div>
+              <div style={{color:'var(--ac2)', marginTop:8}}>{'\u27F3'} Deploy em execução...</div>
             )}
             {result && !result.success && result.error && (
               <div style={{marginTop:12, padding:12, background:'rgba(239,68,68,.1)', borderRadius:6, border:'1px solid var(--rd)', fontSize:12, color:'var(--rd)'}}>
@@ -1140,7 +1140,7 @@ function ProjectView() {
       {(syncLogs.length > 0 || syncResult) && (
         <div className="table-wrap">
           <div className="table-header">
-            <h3>WhatsApp Sync \u2014 Log</h3>
+            <h3>WhatsApp Sync — Log</h3>
             {syncResult && (
               <span className={`badge ${syncResult.success ? 'badge-context' : 'badge-error'}`}>
                 {syncResult.success ? 'SUCESSO' : 'FALHOU'}
@@ -1169,12 +1169,12 @@ function ProjectView() {
             <div style={{marginBottom:8}}><strong style={{color:'var(--tx)'}}>Etapas do Deploy:</strong></div>
             <div>1. Valida TypeScript (npx tsc --noEmit)</div>
             <div>2. Build do projeto (npm run build)</div>
-            <div>3. Git push \u2192 main</div>
+            <div>3. Git push → main</div>
             <div>4. Coolify API restart (build Nixpacks + container)</div>
             <div>5. Aguarda build + health check</div>
             <div>6. Health check app + buffer</div>
             <div style={{marginTop:12, color:'var(--yw)', fontSize:11}}>
-              {'\u26A0'} O Buffer WhatsApp (Docker, porta 3001) NUNCA \u00e9 afetado pelo deploy.
+              {'\u26A0'} O Buffer WhatsApp (Docker, porta 3001) NUNCA é afetado pelo deploy.
             </div>
           </div>
         </div>
