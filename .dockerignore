@@ -1,0 +1,38 @@
+# Controle de versão
+.git
+.gitignore
+
+# Caches e bytecode Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Ambientes virtuais
+venv/
+.venv/
+
+# Banco de dados local (gerado em runtime, não deve ir na imagem)
+bd/
+*.db
+*.db-shm
+*.db-wal
+
+# Sistema operacional
+.DS_Store
+*.log
+
+# Documentação
+*.md
+README*
+
+# Testes e CI
+.github/
+tests/
+*.test.*
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo

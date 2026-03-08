@@ -14,8 +14,10 @@ myclinicsoft:
 
   # ── Coolify (srv1) ─────────────────────────────────────────
   # Deploy agora é via Coolify API — sem SSH/rsync/PM2.
+  # SEGURANÇA: coolify_token e ssh_key devem ser definidos como
+  # variáveis de ambiente (COOLIFY_TOKEN, COOLIFY_URL) no Coolify.
+  # NÃO commitar segredos neste arquivo.
   coolify_url: "http://62.72.63.18:8000"
-  coolify_token: "2|PACNSa1HBN0AkS5LKsp4x5YeNS95QirqOYyAsLg30ef58ece"
   coolify_app_uuid: "jckc0ccwssowwc0oocw80ogs"
   coolify_buffer_uuid: "nw48cggkk4ss4g00s08s8wkw"
   coolify_server_uuid: "j4ws844wcg400kwsc0sswocg"

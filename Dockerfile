@@ -7,6 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
+# Cria usuário sem privilégios para rodar a aplicação
+RUN useradd -m -u 1001 -s /bin/sh appuser
+
 # Instala dependências Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -14,8 +17,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia o projeto
 COPY . .
 
-# Cria o diretório do banco de dados
-RUN mkdir -p bd
+# Cria o diretório do banco de dados e ajusta permissões
+RUN mkdir -p bd && chown -R appuser:appuser /app
+
+# Troca para usuário sem privilégios
+USER appuser
 
 # Expõe a porta
 EXPOSE 3001

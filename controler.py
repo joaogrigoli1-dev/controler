@@ -64,9 +64,41 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # ── Basic Auth (ativo quando BASIC_AUTH_USER e BASIC_AUTH_PASS estão definidos) ──
 import base64 as _b64
+import hmac as _hmac
 
 _BASIC_USER = os.getenv("BASIC_AUTH_USER", "")
 _BASIC_PASS = os.getenv("BASIC_AUTH_PASS", "")
+
+
+def _check_credentials(username: str, password: str) -> bool:
+    """Comparação timing-safe para evitar timing attacks."""
+    if not _BASIC_USER or not _BASIC_PASS:
+        return False
+    user_ok = _hmac.compare_digest(username.encode(), _BASIC_USER.encode())
+    pass_ok = _hmac.compare_digest(password.encode(), _BASIC_PASS.encode())
+    return user_ok and pass_ok
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Adiciona cabeçalhos de segurança em todas as respostas."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self' data:; "
+        "connect-src 'self'"
+    )
+    # Remove cabeçalho que expõe tecnologia do servidor
+    response.headers.pop("server", None)
+    return response
+
 
 @app.middleware("http")
 async def basic_auth_middleware(request: Request, call_next):
@@ -83,7 +115,7 @@ async def basic_auth_middleware(request: Request, call_next):
         try:
             decoded = _b64.b64decode(auth_header[6:]).decode("utf-8")
             username, _, password = decoded.partition(":")
-            if username == _BASIC_USER and password == _BASIC_PASS:
+            if _check_credentials(username, password):
                 return await call_next(request)
         except Exception:
             pass

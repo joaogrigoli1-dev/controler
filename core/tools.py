@@ -224,8 +224,8 @@ def coolify_api(path: str, method: str = "GET") -> dict:
     """Faz requisição para a Coolify API."""
     import urllib.request
     import urllib.error
-    COOLIFY_URL = "http://62.72.63.18:8000"
-    COOLIFY_TOKEN = "2|PACNSa1HBN0AkS5LKsp4x5YeNS95QirqOYyAsLg30ef58ece"
+    COOLIFY_URL = os.getenv("COOLIFY_URL", "http://62.72.63.18:8000")
+    COOLIFY_TOKEN = os.getenv("COOLIFY_TOKEN", "")
     url = f"{COOLIFY_URL}/api/v1{path}"
     headers = {
         "Authorization": f"Bearer {COOLIFY_TOKEN}",
