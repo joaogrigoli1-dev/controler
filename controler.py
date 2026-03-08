@@ -1035,4 +1035,4 @@ if __name__ == "__main__":
     print(f"\n🎛️  Controler rodando em http://{host}:{port}\n")
     if _BASIC_USER:
         print(f"🔒  Basic Auth ATIVO — usuário: {_BASIC_USER}\n")
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info", server_header=False)
