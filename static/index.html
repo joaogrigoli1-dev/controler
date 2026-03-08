@@ -158,13 +158,57 @@
     .empty { text-align: center; padding: 40px; color: var(--dim); }
     .empty svg { width: 40px; height: 40px; margin-bottom: 12px; opacity: .5; }
     .empty p { font-size: 13px; }
+
+    /* ── Hardware Dashboard ─────────────────────────────────── */
+    .hw-section { background: var(--s1); border: 1px solid var(--bd); border-radius: var(--radius);
+                  padding: 18px; margin-bottom: 18px; }
+    .hw-section-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                        letter-spacing: 1px; color: var(--dim); margin-bottom: 14px;
+                        display: flex; align-items: center; gap: 8px; }
+    .hw-section-title svg { width: 14px; height: 14px; }
+    .gauge-bar { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+    .gauge-bar-row { display: flex; align-items: center; gap: 10px; }
+    .gauge-bar-label { font-size: 11px; color: var(--dim); width: 90px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .gauge-bar-track { flex: 1; height: 8px; background: var(--s3); border-radius: 4px; overflow: hidden; }
+    .gauge-bar-fill  { height: 100%; border-radius: 4px; transition: width .4s ease; }
+    .gauge-bar-pct  { font-size: 11px; font-weight: 600; width: 38px; text-align: right; flex-shrink: 0; }
+    .gauge-big { display: flex; align-items: center; gap: 16px; }
+    .gauge-big-ring { position: relative; flex-shrink: 0; }
+    .gauge-big-ring svg { display: block; }
+    .gauge-big-ring .pct-label { position: absolute; inset: 0; display: flex; align-items: center;
+                                 justify-content: center; font-size: 13px; font-weight: 700; }
+    .hw-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .hw-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .hw-stat { display: flex; flex-direction: column; gap: 3px; }
+    .hw-stat-label { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .6px; }
+    .hw-stat-value { font-size: 20px; font-weight: 700; }
+    .hw-stat-sub   { font-size: 10px; color: var(--dim); }
+    .hw-badge-ok   { color: var(--gn); }
+    .hw-badge-warn { color: var(--yw); }
+    .hw-badge-crit { color: var(--rd); }
+    .hw-suggest-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0;
+                      border-bottom: 1px solid rgba(42,53,69,.5); }
+    .hw-suggest-row:last-child { border-bottom: none; }
+    .hw-suggest-icon { font-size: 18px; flex-shrink: 0; width: 26px; text-align: center; }
+    .hw-suggest-body { flex: 1; }
+    .hw-suggest-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+    .hw-suggest-desc  { font-size: 11px; color: var(--dim); line-height: 1.5; }
+    .hw-suggest-tag   { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 9px;
+                        font-weight: 700; text-transform: uppercase; letter-spacing: .5px; margin-left: 8px; }
+    .hw-suggest-tag.easy   { background: rgba(34,197,94,.15); color: var(--gn); }
+    .hw-suggest-tag.medium { background: rgba(234,179,8,.15);  color: var(--yw); }
+    .hw-suggest-tag.hard   { background: rgba(239,68,68,.15);  color: var(--rd); }
+    .hw-refresh-btn { margin-left: auto; }
+    .hw-ts { font-size: 10px; color: var(--muted); margin-left: auto; }
   </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect, useCallback, useMemo } = React;
-const API = 'http://localhost:3001/api';
+const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? `http://${window.location.hostname}:3001/api`
+  : `${window.location.origin}/api`;
 
 // ── Icons (inline SVG) ─────────────────────────────────────────────────────
 const Icon = {
@@ -181,6 +225,11 @@ const Icon = {
   Rocket: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>,
   Refresh: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>,
   Database: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>,
+  Server: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>,
+  Cpu:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>,
+  HardDrive: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></svg>,
+  Wifi:   () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12.55a11 11 0 0114.08 0"/><path d="M1.42 9a16 16 0 0121.16 0"/><path d="M8.53 16.11a6 6 0 016.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>,
+  Zap:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
 };
 
 // ── API hooks ───────────────────────────────────────────────────────────────
@@ -653,6 +702,278 @@ function KPIs() {
   );
 }
 
+// ── Hardware Dashboard ───────────────────────────────────────────────────────
+function Hardware() {
+  const [hw, setHw] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastTs, setLastTs] = useState(null);
+
+  const fetchHw = useCallback(() => {
+    setLoading(true);
+    fetch(API + '/hardware')
+      .then(r => r.json())
+      .then(d => { setHw(d); setLastTs(new Date().toLocaleTimeString('pt-BR')); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { fetchHw(); }, []);
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const t = setInterval(fetchHw, 4000);
+    return () => clearInterval(t);
+  }, [autoRefresh, fetchHw]);
+
+  const fmt = (b) => {
+    if (b >= 1e9) return (b/1e9).toFixed(1) + ' GB';
+    if (b >= 1e6) return (b/1e6).toFixed(1) + ' MB';
+    return (b/1e3).toFixed(0) + ' KB';
+  };
+  const pctColor = (p) => p >= 85 ? 'var(--rd)' : p >= 65 ? 'var(--yw)' : 'var(--gn)';
+  const pctClass = (p) => p >= 85 ? 'hw-badge-crit' : p >= 65 ? 'hw-badge-warn' : 'hw-badge-ok';
+  const pctGrad = (p) => ({
+    width: p + '%',
+    background: pctColor(p),
+  });
+
+  const GaugeRing = ({ pct, size=72, label }) => {
+    const r = size * 0.37, circ = 2 * Math.PI * r;
+    return (
+      <div className="gauge-big-ring" style={{width:size, height:size}}>
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{transform:'rotate(-90deg)'}}>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="var(--s3)" strokeWidth={size*0.1}/>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={pctColor(pct)}
+            strokeWidth={size*0.1} strokeLinecap="round"
+            strokeDasharray={circ} strokeDashoffset={circ*(1-pct/100)}
+            style={{transition:'stroke-dashoffset .5s'}}/>
+        </svg>
+        <div className="pct-label" style={{fontSize:size*0.18, color:pctColor(pct)}}>{pct}%</div>
+      </div>
+    );
+  };
+
+  const BarRow = ({ label, pct, sub }) => (
+    <div className="gauge-bar">
+      <div className="gauge-bar-row">
+        <div className="gauge-bar-label" title={label}>{label}</div>
+        <div className="gauge-bar-track">
+          <div className="gauge-bar-fill" style={pctGrad(pct)} />
+        </div>
+        <div className={`gauge-bar-pct ${pctClass(pct)}`}>{pct}%</div>
+      </div>
+      {sub && <div style={{fontSize:10,color:'var(--muted)',paddingLeft:100}}>{sub}</div>}
+    </div>
+  );
+
+  const SUGGESTIONS = [
+    { icon:'🌡️', title:'Temperatura da CPU', desc:'Monitorar temperatura dos núcleos (requer lm-sensors no Linux ou smc no macOS). Alertar acima de 80°C.', tag:'easy', tagLabel:'Fácil' },
+    { icon:'📶', title:'Latência de Rede (Ping)', desc:'Ping periódico para o servidor de produção (62.72.63.18) e para 8.8.8.8. Detectar degradação antes do usuário.', tag:'easy', tagLabel:'Fácil' },
+    { icon:'💾', title:'I/O de Disco em Tempo Real', desc:'Bytes lidos/escritos por segundo com psutil.disk_io_counters(). Identificar processos abusando de I/O.', tag:'easy', tagLabel:'Fácil' },
+    { icon:'🔌', title:'Conexões TCP Ativas', desc:'psutil.net_connections() por estado (ESTABLISHED, TIME_WAIT, CLOSE_WAIT). Detectar vazamento de conexões.', tag:'medium', tagLabel:'Médio' },
+    { icon:'📊', title:'Histórico de 24h (Sparkline)', desc:'Armazenar amostras de CPU/RAM em SQLite a cada minuto e exibir mini-gráfico de tendência nas últimas 24h.', tag:'medium', tagLabel:'Médio' },
+    { icon:'🚨', title:'Alertas de Threshold', desc:'Notificação (email/webhook) quando CPU>85%, RAM>90% ou Disco>95%. Integrar com o sistema de logs existente.', tag:'medium', tagLabel:'Médio' },
+    { icon:'🐳', title:'Status de Containers Docker', desc:'docker stats via subprocess: CPU, RAM e status de cada container (app, buffer, postgres). Mostrar ao lado do deploy.', tag:'medium', tagLabel:'Médio' },
+    { icon:'📈', title:'Métricas de App (APM)', desc:'Instrumentar o Express/Flask com métricas de requisição: latência p50/p95/p99, throughput e taxa de erros HTTP.', tag:'hard', tagLabel:'Avançado' },
+    { icon:'🔍', title:'Log Tail em Tempo Real', desc:'Endpoint SSE que faz tail dos logs da aplicação em produção via SSH, exibindo em streaming no dashboard.', tag:'hard', tagLabel:'Avançado' },
+    { icon:'🧵', title:'Uso por Thread/Processo', desc:'Detalhar threads ativas do Python e Node.js (gcstats, event loop lag). Detectar event loop blocado no Buffer WhatsApp.', tag:'hard', tagLabel:'Avançado' },
+  ];
+
+  if (loading && !hw) return <div className="empty"><p>Carregando hardware...</p></div>;
+  if (hw?.error) return <div className="empty"><p style={{color:'var(--rd)'}}>Erro: {hw.error}</p></div>;
+  if (!hw) return null;
+
+  const { cpu, memory, disk, network, system, top_processes } = hw;
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="main-header" style={{display:'flex', alignItems:'flex-start', justifyContent:'space-between'}}>
+        <div>
+          <h2>Hardware — KPIs do Servidor</h2>
+          <p>Consumo em tempo real · auto-refresh a cada 4s · {system.platform.split(' ').slice(0,3).join(' ')}</p>
+        </div>
+        <div style={{display:'flex', gap:8, alignItems:'center', marginTop:4}}>
+          <span className="hw-ts">{lastTs ? `Atualizado às ${lastTs}` : ''}</span>
+          <button className={`btn btn-sm ${autoRefresh?'btn-primary':''}`}
+                  onClick={() => setAutoRefresh(a => !a)}>
+            {autoRefresh ? '⏸ Auto' : '▶ Auto'}
+          </button>
+          <button className="btn btn-sm" onClick={fetchHw}><Icon.Refresh /> Refresh</button>
+        </div>
+      </div>
+
+      {/* KPI cards top */}
+      <div className="cards" style={{gridTemplateColumns:'repeat(auto-fill, minmax(160px, 1fr))', marginBottom:20}}>
+        <div className="card">
+          <div className="card-label">CPU Total</div>
+          <div className={`card-value ${pctClass(cpu.percent).replace('hw-badge-','')}`} style={{fontSize:32}}>{cpu.percent}%</div>
+          <div className="card-sub">{cpu.count_physical}C/{cpu.count_logical}T · {cpu.freq_current ? (cpu.freq_current/1000).toFixed(1)+'GHz' : '—'}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">RAM</div>
+          <div className={`card-value ${pctClass(memory.percent).replace('hw-badge-','')}`} style={{fontSize:32}}>{memory.percent}%</div>
+          <div className="card-sub">{fmt(memory.used)} / {fmt(memory.total)}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Disco Principal</div>
+          {disk.length > 0
+            ? <><div className={`card-value ${pctClass(disk[0].percent).replace('hw-badge-','')}`} style={{fontSize:32}}>{disk[0].percent}%</div>
+                <div className="card-sub">{fmt(disk[0].used)} / {fmt(disk[0].total)}</div></>
+            : <div className="card-value blue" style={{fontSize:20}}>—</div>}
+        </div>
+        <div className="card">
+          <div className="card-label">Uptime</div>
+          <div className="card-value cyan" style={{fontSize:24}}>{system.uptime_hours}h</div>
+          <div className="card-sub">Boot: {system.boot_time}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Processos</div>
+          <div className="card-value blue" style={{fontSize:32}}>{system.process_count}</div>
+          <div className="card-sub">Ativos no sistema</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Load Avg</div>
+          <div className="card-value orange" style={{fontSize:20}}>{cpu.load_avg_1m}</div>
+          <div className="card-sub">{cpu.load_avg_5m} (5m) · {cpu.load_avg_15m} (15m)</div>
+        </div>
+      </div>
+
+      {/* CPU + Memory gauges */}
+      <div className="hw-grid2" style={{marginBottom:18}}>
+        {/* CPU */}
+        <div className="hw-section">
+          <div className="hw-section-title"><Icon.Cpu /> CPU</div>
+          <div className="gauge-big" style={{marginBottom:16}}>
+            <GaugeRing pct={cpu.percent} size={80} />
+            <div style={{flex:1}}>
+              <div className="hw-stat-label">Uso Global</div>
+              <div className="hw-stat-value" style={{color:pctColor(cpu.percent)}}>{cpu.percent}%</div>
+              <div className="hw-stat-sub">{cpu.freq_current ? `${(cpu.freq_current/1000).toFixed(2)} GHz atual / ${(cpu.freq_max/1000).toFixed(2)} GHz max` : 'Freq. não disponível'}</div>
+            </div>
+          </div>
+          <div>
+            {(cpu.per_core || []).map((p, i) => (
+              <BarRow key={i} label={`Core ${i}`} pct={Math.round(p)} />
+            ))}
+          </div>
+          <div style={{marginTop:10, display:'flex', gap:16, fontSize:11, color:'var(--dim)'}}>
+            <span>Load 1m: <strong style={{color:'var(--tx)'}}>{cpu.load_avg_1m}</strong></span>
+            <span>5m: <strong style={{color:'var(--tx)'}}>{cpu.load_avg_5m}</strong></span>
+            <span>15m: <strong style={{color:'var(--tx)'}}>{cpu.load_avg_15m}</strong></span>
+          </div>
+        </div>
+
+        {/* Memory */}
+        <div className="hw-section">
+          <div className="hw-section-title"><Icon.Database /> Memória</div>
+          <div className="gauge-big" style={{marginBottom:16}}>
+            <GaugeRing pct={memory.percent} size={80} />
+            <div style={{flex:1}}>
+              <div className="hw-stat-label">RAM Usada</div>
+              <div className="hw-stat-value" style={{color:pctColor(memory.percent)}}>{fmt(memory.used)}</div>
+              <div className="hw-stat-sub">Disponível: {fmt(memory.available)} · Total: {fmt(memory.total)}</div>
+            </div>
+          </div>
+          <BarRow label="RAM" pct={memory.percent} sub={`${fmt(memory.used)} usada de ${fmt(memory.total)}`} />
+          {memory.swap_total > 0 && (
+            <BarRow label="Swap" pct={Math.round(memory.swap_percent)} sub={`${fmt(memory.swap_used)} usada de ${fmt(memory.swap_total)}`} />
+          )}
+          <div style={{marginTop:10, display:'flex', gap:16, fontSize:11, color:'var(--dim)'}}>
+            <span>Total: <strong style={{color:'var(--tx)'}}>{fmt(memory.total)}</strong></span>
+            <span>Livre: <strong style={{color:'var(--gn)'}}>{fmt(memory.available)}</strong></span>
+          </div>
+        </div>
+      </div>
+
+      {/* Disco */}
+      <div className="hw-section" style={{marginBottom:18}}>
+        <div className="hw-section-title"><Icon.HardDrive /> Disco</div>
+        <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))', gap:16}}>
+          {disk.map((d, i) => (
+            <div key={i}>
+              <div style={{display:'flex', justifyContent:'space-between', fontSize:12, marginBottom:6}}>
+                <span style={{fontWeight:600, color:'var(--tx)'}}>{d.mountpoint}</span>
+                <span style={{color:'var(--dim)', fontSize:11}}>{d.device} · {d.fstype}</span>
+              </div>
+              <BarRow label={`${fmt(d.used)} / ${fmt(d.total)}`} pct={Math.round(d.percent)}
+                      sub={`${fmt(d.free)} livres`} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Rede + Processos */}
+      <div className="hw-grid2" style={{marginBottom:18}}>
+        {/* Rede */}
+        <div className="hw-section">
+          <div className="hw-section-title"><Icon.Wifi /> Rede</div>
+          <div className="hw-grid2" style={{marginBottom:14}}>
+            <div className="hw-stat">
+              <div className="hw-stat-label">↓ Recebido</div>
+              <div className="hw-stat-value" style={{color:'var(--ac2)'}}>{fmt(network.bytes_recv)}</div>
+              <div className="hw-stat-sub">{(network.packets_recv||0).toLocaleString('pt-BR')} pacotes</div>
+            </div>
+            <div className="hw-stat">
+              <div className="hw-stat-label">↑ Enviado</div>
+              <div className="hw-stat-value" style={{color:'var(--gn)'}}>{fmt(network.bytes_sent)}</div>
+              <div className="hw-stat-sub">{(network.packets_sent||0).toLocaleString('pt-BR')} pacotes</div>
+            </div>
+          </div>
+          <div style={{display:'flex', gap:20, fontSize:11, color:'var(--dim)'}}>
+            <span>Erros Entrada: <strong style={{color: network.errin>0?'var(--rd)':'var(--gn)'}}>{network.errin}</strong></span>
+            <span>Erros Saída: <strong style={{color: network.errout>0?'var(--rd)':'var(--gn)'}}>{network.errout}</strong></span>
+          </div>
+        </div>
+
+        {/* Top Processos */}
+        <div className="hw-section">
+          <div className="hw-section-title"><Icon.Zap /> Top 5 Processos (CPU)</div>
+          <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
+            <thead>
+              <tr>
+                <th style={{textAlign:'left',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>Processo</th>
+                <th style={{textAlign:'right',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>CPU</th>
+                <th style={{textAlign:'right',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>MEM</th>
+                <th style={{textAlign:'right',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>PID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(top_processes||[]).map((p, i) => (
+                <tr key={i}>
+                  <td style={{paddingBottom:6, maxWidth:120, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={p.name}>{p.name}</td>
+                  <td style={{textAlign:'right', fontWeight:700, color:pctColor(p.cpu)}}>{p.cpu}%</td>
+                  <td style={{textAlign:'right', color:'var(--ac2)'}}>{p.mem}%</td>
+                  <td style={{textAlign:'right', color:'var(--muted)', fontSize:11}}>{p.pid}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Sugestões */}
+      <div className="hw-section">
+        <div className="hw-section-title"><Icon.Chart /> Outros Índices Recomendados</div>
+        <p style={{fontSize:12, color:'var(--dim)', marginBottom:16, lineHeight:1.6}}>
+          Métricas adicionais que podem ser integradas ao dashboard para monitoramento mais completo:
+        </p>
+        {SUGGESTIONS.map((s, i) => (
+          <div key={i} className="hw-suggest-row">
+            <div className="hw-suggest-icon">{s.icon}</div>
+            <div className="hw-suggest-body">
+              <div className="hw-suggest-title">
+                {s.title}
+                <span className={`hw-suggest-tag ${s.tag}`}>{s.tagLabel}</span>
+              </div>
+              <div className="hw-suggest-desc">{s.desc}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Project Page (MyClinicSoft) ──────────────────────────────────────────────
 function ProjectView() {
   const [status, setStatus] = useState(null);
@@ -897,6 +1218,9 @@ function App() {
           <div className={`nav-item ${page==='kpis'?'active':''}`} onClick={() => setPage('kpis')}>
             <Icon.Chart /> KPIs
           </div>
+          <div className={`nav-item ${page==='hardware'?'active':''}`} onClick={() => setPage('hardware')}>
+            <Icon.Server /> Hardware
+          </div>
 
           <div className="nav-section" style={{marginTop:24}}>DevOps</div>
           <div className={`nav-item ${page==='deploy'?'active':''}`} onClick={() => setPage('deploy')}>
@@ -921,6 +1245,7 @@ function App() {
         {page === 'memories' && <Memories selectedProject={selectedProject} />}
         {page === 'rules' && <Rules />}
         {page === 'kpis' && <KPIs />}
+        {page === 'hardware' && <Hardware />}
         {page === 'deploy' && <ProjectView />}
       </div>
     </div>

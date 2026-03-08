@@ -16,7 +16,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 # Auto-install
-DEPS = ["fastapi", "uvicorn", "pyyaml"]
+DEPS = ["fastapi", "uvicorn", "pyyaml", "psutil"]
 for dep in DEPS:
     try:
         __import__(dep)
@@ -25,7 +25,7 @@ for dep in DEPS:
 
 from fastapi import FastAPI, Request, Query
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, Response
 import uvicorn
 import yaml
 import subprocess
@@ -61,6 +61,38 @@ async def lifespan(app):
 
 app = FastAPI(title="Controler", version="1.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# ── Basic Auth (ativo quando BASIC_AUTH_USER e BASIC_AUTH_PASS estão definidos) ──
+import base64 as _b64
+
+_BASIC_USER = os.getenv("BASIC_AUTH_USER", "")
+_BASIC_PASS = os.getenv("BASIC_AUTH_PASS", "")
+
+@app.middleware("http")
+async def basic_auth_middleware(request: Request, call_next):
+    # Se as variáveis de ambiente não estiverem definidas, auth desligada (dev local)
+    if not _BASIC_USER or not _BASIC_PASS:
+        return await call_next(request)
+
+    # Health-check interno do Coolify não precisa de auth
+    if request.url.path in ("/health", "/api/health"):
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Basic "):
+        try:
+            decoded = _b64.b64decode(auth_header[6:]).decode("utf-8")
+            username, _, password = decoded.partition(":")
+            if username == _BASIC_USER and password == _BASIC_PASS:
+                return await call_next(request)
+        except Exception:
+            pass
+
+    return Response(
+        content="401 Unauthorized — Acesso restrito",
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="Controler"'},
+    )
 
 # Flag global para evitar deploys simultâneos
 _deploy_running = False
@@ -730,6 +762,122 @@ async def api_kpis():
 
 
 # ════════════════════════════════════════
+# API: Hardware KPIs
+# ════════════════════════════════════════
+
+@app.get("/api/hardware")
+async def api_hardware():
+    """
+    Retorna KPIs de consumo de hardware do servidor:
+    CPU, Memória, Disco, Rede, Processos.
+    """
+    try:
+        import psutil
+        import platform as _plat
+
+        # ── CPU ─────────────────────────────────────────
+        cpu_pct  = psutil.cpu_percent(interval=0.5)
+        per_core = psutil.cpu_percent(interval=None, percpu=True)
+        cpu_freq = psutil.cpu_freq()
+        load_avg = [round(x, 2) for x in psutil.getloadavg()] \
+                   if hasattr(psutil, "getloadavg") else [0, 0, 0]
+
+        # ── Memória ──────────────────────────────────────
+        mem  = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+
+        # ── Disco ────────────────────────────────────────
+        disks = []
+        for part in psutil.disk_partitions(all=False):
+            try:
+                usage = psutil.disk_usage(part.mountpoint)
+                disks.append({
+                    "device":     part.device,
+                    "mountpoint": part.mountpoint,
+                    "fstype":     part.fstype,
+                    "total":      usage.total,
+                    "used":       usage.used,
+                    "free":       usage.free,
+                    "percent":    usage.percent,
+                })
+            except (PermissionError, OSError):
+                continue
+
+        # ── Rede ─────────────────────────────────────────
+        net = psutil.net_io_counters()
+
+        # ── Sistema ──────────────────────────────────────
+        boot_dt      = datetime.fromtimestamp(psutil.boot_time())
+        uptime_secs  = (datetime.now() - boot_dt).total_seconds()
+        process_count = len(psutil.pids())
+
+        # ── Top 5 processos por CPU ───────────────────────
+        top_procs = []
+        for p in sorted(
+            psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent", "status"]),
+            key=lambda x: x.info.get("cpu_percent") or 0,
+            reverse=True
+        )[:5]:
+            top_procs.append({
+                "pid":    p.info["pid"],
+                "name":   p.info["name"],
+                "cpu":    round(p.info.get("cpu_percent") or 0, 1),
+                "mem":    round(p.info.get("memory_percent") or 0, 1),
+                "status": p.info.get("status", "?"),
+            })
+
+        return {
+            "cpu": {
+                "percent":        cpu_pct,
+                "count_logical":  psutil.cpu_count(logical=True),
+                "count_physical": psutil.cpu_count(logical=False),
+                "freq_current":   round(cpu_freq.current, 0) if cpu_freq else None,
+                "freq_max":       round(cpu_freq.max, 0)     if cpu_freq else None,
+                "per_core":       per_core,
+                "load_avg_1m":    load_avg[0],
+                "load_avg_5m":    load_avg[1],
+                "load_avg_15m":   load_avg[2],
+            },
+            "memory": {
+                "total":        mem.total,
+                "used":         mem.used,
+                "available":    mem.available,
+                "percent":      mem.percent,
+                "swap_total":   swap.total,
+                "swap_used":    swap.used,
+                "swap_percent": swap.percent,
+            },
+            "disk":    disks,
+            "network": {
+                "bytes_sent":    net.bytes_sent,
+                "bytes_recv":    net.bytes_recv,
+                "packets_sent":  net.packets_sent,
+                "packets_recv":  net.packets_recv,
+                "errin":         net.errin,
+                "errout":        net.errout,
+            },
+            "system": {
+                "boot_time":      boot_dt.strftime("%d/%m/%Y %H:%M"),
+                "uptime_hours":   round(uptime_secs / 3600, 1),
+                "process_count":  process_count,
+                "platform":       _plat.platform(),
+                "python_version": _plat.python_version(),
+            },
+            "top_processes": top_procs,
+            "timestamp":     datetime.now().isoformat(),
+        }
+    except ImportError:
+        return JSONResponse(
+            {"error": "psutil não instalado. Execute: pip install psutil"},
+            status_code=500
+        )
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+# ════════════════════════════════════════
 # Página principal
 # ════════════════════════════════════════
 
@@ -838,7 +986,10 @@ def _seed_initial_data():
 # ════════════════════════════════════════
 
 if __name__ == "__main__":
-    port = CONFIG.get("server", {}).get("port", 3000)
-    host = CONFIG.get("server", {}).get("host", "127.0.0.1")
+    # Env vars têm prioridade (útil em Docker/Coolify)
+    port = int(os.getenv("PORT", CONFIG.get("server", {}).get("port", 3001)))
+    host = os.getenv("HOST", CONFIG.get("server", {}).get("host", "127.0.0.1"))
     print(f"\n🎛️  Controler rodando em http://{host}:{port}\n")
+    if _BASIC_USER:
+        print(f"🔒  Basic Auth ATIVO — usuário: {_BASIC_USER}\n")
     uvicorn.run(app, host=host, port=port, log_level="info")
