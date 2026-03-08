@@ -37,13 +37,13 @@ GITHUB_REPO  = "joaogrigoli1-dev/myclinicsoft"
 
 # Coolify
 COOLIFY_URL       = "http://62.72.63.18:8000"
-COOLIFY_TOKEN     = "2|PACNSa1HBN0AkS5LKsp4x5YeNS95QirqOYyAsLg30ef58ece"
+COOLIFY_TOKEN     = os.environ.get("COOLIFY_TOKEN", "")
 COOLIFY_APP_UUID  = "jckc0ccwssowwc0oocw80ogs"
 COOLIFY_BUF_UUID  = "nw48cggkk4ss4g00s08s8wkw"
 
 # SSH (para health checks diretos e diagnóstico)
 SERVER_IP = "62.72.63.18"
-SSH_KEY   = "~/.ssh/coolify_server"
+SSH_KEY   = os.environ.get("SSH_KEY_PATH", "~/.ssh/srv1_hostinger")
 
 
 # ─── Coolify API helpers ─────────────────────────────────────────────────────
