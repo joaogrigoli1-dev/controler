@@ -101,6 +101,16 @@ _whatsdev_sync_running = False
 
 
 # ════════════════════════════════════════
+# Health check (para Coolify / load balancers)
+# ════════════════════════════════════════
+
+@app.get("/health")
+@app.get("/api/health")
+async def health_check():
+    return {"status": "ok", "service": "controler"}
+
+
+# ════════════════════════════════════════
 # API: Projetos
 # ════════════════════════════════════════
 

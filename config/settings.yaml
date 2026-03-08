@@ -26,3 +26,9 @@ myclinicsoft:
   # ── SSH (para comandos diretos no servidor quando necessário) ──
   ssh_key: "~/.ssh/coolify_server"
   server_user: "root"
+
+controler:
+  # ── Coolify deploy do próprio Controler ──────────────────────
+  coolify_app_uuid: "hs8c0csogg4008o44k8w008g"
+  domain: "controler.net.br"
+  app_port: 3001

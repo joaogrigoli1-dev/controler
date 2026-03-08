@@ -34,6 +34,7 @@ GITHUB_BRANCH  = "main"
 COOLIFY_URL    = "http://62.72.63.18:8000"
 COOLIFY_TOKEN  = "2|PACNSa1HBN0AkS5LKsp4x5YeNS95QirqOYyAsLg30ef58ece"
 SERVER_UUID    = "j4ws844wcg400kwsc0sswocg"   # mesmo servidor do myclinicsoft
+APP_UUID       = "hs8c0csogg4008o44k8w008g"  # UUID do app no Coolify (já criado)
 
 DOMAIN         = "controler.net.br"
 APP_PORT       = 3001
@@ -117,7 +118,7 @@ def step_git_push():
 
         # Add + commit
         run(["git", "add", "-A"])
-        commit_msg = f"feat: hardware dashboard + Basic Auth + Dockerfile [{datetime.now().strftime('%Y-%m-%d %H:%M')}]"
+        commit_msg = f"deploy: auto-deploy [{datetime.now().strftime('%Y-%m-%d %H:%M')}]"
         run(["git", "commit", "-m", commit_msg])
         ok(f"Commit criado: {commit_msg}")
 
@@ -139,73 +140,32 @@ def step_git_push():
 # ─── Etapa 2: Verificar/Criar app no Coolify ─────────────────────────────────
 
 def step_coolify_app() -> str:
-    """Retorna UUID do app no Coolify (cria se não existir)."""
-    log("ETAPA 2 — Verificar/Criar app no Coolify", "🐳")
+    """Verifica se o app existe no Coolify e retorna o UUID."""
+    log("ETAPA 2 — Verificar app no Coolify", "🐳")
 
-    # Lista applications existentes
+    # Usa o UUID configurado
+    app_resp = coolify("GET", f"/applications/{APP_UUID}")
+    if app_resp["ok"]:
+        name = app_resp["data"].get("name", "controler")
+        ok(f"App encontrado no Coolify: '{name}' (uuid={APP_UUID})")
+        return APP_UUID
+
+    # Fallback: procura por nome
     apps_resp = coolify("GET", "/applications")
-    if not apps_resp["ok"]:
-        raise RuntimeError(f"Não foi possível listar apps Coolify: {apps_resp.get('error')}")
+    if apps_resp["ok"]:
+        apps = apps_resp["data"]
+        if isinstance(apps, dict):
+            apps = apps.get("data", [])
+        for app in (apps or []):
+            if isinstance(app, dict):
+                name = app.get("name", "").lower()
+                fqdn = app.get("fqdn", "").lower()
+                if "controler" in name or DOMAIN in fqdn:
+                    uuid = app.get("uuid", "")
+                    ok(f"App encontrado: '{app.get('name')}' (uuid={uuid})")
+                    return uuid
 
-    apps = apps_resp["data"]
-    if isinstance(apps, dict):
-        apps = apps.get("data", [])
-
-    # Procura por app existente com nome/domínio do controler
-    for app in apps:
-        if isinstance(app, dict):
-            name = app.get("name", "").lower()
-            fqdn = app.get("fqdn", "").lower()
-            if "controler" in name or DOMAIN in fqdn:
-                uuid = app.get("uuid", "")
-                ok(f"App encontrado no Coolify: '{app.get('name')}' (uuid={uuid})")
-                return uuid
-
-    # Não encontrou — criar novo app
-    log("App não encontrado. Criando novo no Coolify...", "🆕")
-
-    # Pega o primeiro projeto disponível
-    projects_resp = coolify("GET", "/projects")
-    if not projects_resp["ok"]:
-        raise RuntimeError(f"Não foi possível listar projetos: {projects_resp.get('error')}")
-
-    projects = projects_resp["data"]
-    if isinstance(projects, dict):
-        projects = projects.get("data", [])
-
-    project_uuid = None
-    if projects:
-        project_uuid = projects[0].get("uuid")
-        info(f"Usando projeto: {projects[0].get('name', project_uuid)}")
-    else:
-        raise RuntimeError("Nenhum projeto encontrado no Coolify. Crie um projeto primeiro.")
-
-    # Criar application (GitHub Public)
-    create_payload = {
-        "project_uuid": project_uuid,
-        "server_uuid": SERVER_UUID,
-        "type": "public",
-        "name": "controler",
-        "git_repository": f"https://github.com/{GITHUB_REPO}",
-        "git_branch": GITHUB_BRANCH,
-        "build_pack": "dockerfile",
-        "dockerfile_location": "/Dockerfile",
-        "ports_exposes": str(APP_PORT),
-        "fqdn": f"https://{DOMAIN}",
-        "install_command": "",
-        "build_command": "",
-        "start_command": "",
-        "description": "Controler — automação de dev com IA",
-    }
-
-    create_resp = coolify("POST", "/applications", body=create_payload)
-    if not create_resp["ok"]:
-        raise RuntimeError(f"Falha ao criar app: {create_resp.get('error')}")
-
-    data = create_resp["data"]
-    uuid = data.get("uuid") or data.get("data", {}).get("uuid", "")
-    ok(f"App criado com sucesso! uuid={uuid}")
-    return uuid
+    raise RuntimeError(f"App não encontrado no Coolify (uuid={APP_UUID}). Crie manualmente.")
 
 # ─── Etapa 3: Configurar env vars ────────────────────────────────────────────
 
@@ -263,7 +223,8 @@ def step_env_vars(app_uuid: str):
 def step_deploy(app_uuid: str):
     log("ETAPA 4 — Acionar deploy", "🚀")
 
-    deploy_resp = coolify("POST", f"/applications/{app_uuid}/deploy")
+    # Endpoint correto: /deploy com uuid no body
+    deploy_resp = coolify("POST", "/deploy", body={"uuid": app_uuid})
     if not deploy_resp["ok"]:
         raise RuntimeError(f"Falha ao acionar deploy: {deploy_resp.get('error')}")
 

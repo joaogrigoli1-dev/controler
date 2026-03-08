@@ -344,7 +344,7 @@ function Overview({ onNavigate }) {
           <tbody>
             <tr>
               <td>Cobertura de Regras</td>
-              <td>{Math.round(rulesCoverage/data.projects.length*100)}%</td>
+              <td>{data.projects.length > 0 ? Math.round(rulesCoverage/data.projects.length*100) : 0}%</td>
               <td>100%</td>
               <td><span className={`badge ${rulesCoverage===data.projects.length?'badge-context':'badge-error'}`}>
                 {rulesCoverage===data.projects.length?'OK':'Pendente'}</span></td>
