@@ -826,33 +826,6 @@ async def _coolify_api(path: str) -> dict:
         return resp.json()
 
 
-@app.get("/api/server/debug/network")
-async def api_debug_network():
-    """Temporary debug endpoint to test network connectivity."""
-    import socket
-    results = {}
-    # Test various addresses
-    for addr in ["172.17.0.1:8000", "62.72.63.18:8000", "coolify:8000"]:
-        host, port = addr.rsplit(":", 1)
-        try:
-            s = socket.create_connection((host, int(port)), timeout=3)
-            s.close()
-            results[addr] = "OK"
-        except Exception as e:
-            results[addr] = str(e)
-    results["COOLIFY_URL"] = _COOLIFY_URL
-    results["COOLIFY_TOKEN_set"] = bool(_COOLIFY_TOKEN)
-    # Try actual httpx request
-    try:
-        async with _httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
-            resp = await client.get(f"{_COOLIFY_URL}/api/v1/version",
-                                    headers={"Authorization": f"Bearer {_COOLIFY_TOKEN}", "Accept": "application/json"})
-            results["api_test"] = f"status={resp.status_code} body={resp.text[:100]}"
-    except Exception as e:
-        results["api_test"] = str(e)
-    return results
-
-
 @app.get("/api/server/coolify/applications")
 async def api_coolify_applications():
     """Retorna lista de aplicações gerenciadas pelo Coolify."""

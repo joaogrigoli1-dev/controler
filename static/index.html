@@ -1056,8 +1056,8 @@ function ContainersTab() {
     if (!status) return '⚪';
     const s = status.toLowerCase();
     if (s.includes('healthy')) return '🟢';
-    if (s.includes('unhealthy')) return '🔴';
-    if (s.includes('up')) return '🟡';
+    if (s.includes('unhealthy') || s.includes('exited')) return '🔴';
+    if (s.includes('running') || s.includes('up')) return '🟡';
     return '⚪';
   };
 
@@ -1076,33 +1076,36 @@ function ContainersTab() {
   (coolifyApps?.applications || []).forEach(a => { coolifyMap[a.name] = a; });
 
   // Totals
+  const hasRealStats = data?.source === 'docker_socket';
   const totalCpu = containers.reduce((s, c) => s + parsePct(c.cpu_percent), 0);
   const healthyCount = containers.filter(c => (c.docker_status||'').toLowerCase().includes('healthy')).length;
-  const upCount = containers.filter(c => (c.docker_status||'').toLowerCase().includes('up')).length;
+  const runningCount = containers.filter(c => (c.docker_status||c.state||'').toLowerCase().includes('running')).length;
 
   return (
     <div>
       {/* KPI cards */}
       <div className="cards" style={{gridTemplateColumns:'repeat(auto-fill, minmax(160px, 1fr))', marginBottom:20}}>
         <div className="card">
-          <div className="card-label">Total Containers</div>
+          <div className="card-label">Aplicações</div>
           <div className="card-value blue" style={{fontSize:32}}>{containers.length}</div>
-          <div className="card-sub">Em execução</div>
+          <div className="card-sub">{runningCount} em execução</div>
         </div>
         <div className="card">
           <div className="card-label">Healthy</div>
           <div className="card-value green" style={{fontSize:32}}>{healthyCount}</div>
-          <div className="card-sub">de {upCount} ativos</div>
+          <div className="card-sub">Health check OK</div>
         </div>
+        {hasRealStats && (
+          <div className="card">
+            <div className="card-label">CPU Total</div>
+            <div className="card-value orange" style={{fontSize:32}}>{totalCpu.toFixed(1)}%</div>
+            <div className="card-sub">Soma de todos containers</div>
+          </div>
+        )}
         <div className="card">
-          <div className="card-label">CPU Total</div>
-          <div className="card-value orange" style={{fontSize:32}}>{totalCpu.toFixed(1)}%</div>
-          <div className="card-sub">Soma de todos containers</div>
-        </div>
-        <div className="card">
-          <div className="card-label">Coolify Apps</div>
-          <div className="card-value purple" style={{fontSize:32}}>{(coolifyApps?.applications||[]).length}</div>
-          <div className="card-sub">Gerenciadas pelo Coolify</div>
+          <div className="card-label">Fonte</div>
+          <div className="card-value" style={{fontSize:14, color:'var(--ac2)'}}>{data?.source === 'docker_socket' ? '🔌 Docker' : '☁️ Coolify API'}</div>
+          <div className="card-sub">{data?.source === 'docker_socket' ? 'Dados em tempo real' : 'Status gerenciado'}</div>
         </div>
       </div>
 
@@ -1151,12 +1154,9 @@ function ContainersTab() {
             <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
               <thead>
                 <tr>
-                  <th style={{textAlign:'left',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>Container</th>
-                  <th style={{textAlign:'left',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>Status</th>
-                  <th style={{textAlign:'right',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>CPU</th>
-                  <th style={{textAlign:'right',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>RAM</th>
-                  <th style={{textAlign:'right',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>Net I/O</th>
-                  <th style={{textAlign:'left',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>Imagem</th>
+                  {['Container','Status',hasRealStats&&'CPU',hasRealStats&&'RAM',hasRealStats&&'Net I/O','Tipo'].filter(Boolean).map(h => (
+                    <th key={h} style={{textAlign:['CPU','RAM','Net I/O'].includes(h)?'right':'left',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -1170,18 +1170,20 @@ function ContainersTab() {
                       <td style={{paddingBottom:6, fontSize:11, color:'var(--dim)'}}>
                         {c.docker_status?.replace(/\s*\(.*\)/, '') || '—'}
                       </td>
-                      <td style={{textAlign:'right', paddingBottom:6, fontWeight:700, color:pctColor(cpuVal)}}>
-                        {c.cpu_percent}
-                      </td>
-                      <td style={{textAlign:'right', paddingBottom:6, color:'var(--ac2)'}}>
-                        {c.mem_usage?.split('/')[0]?.trim() || '—'}
-                        <span style={{fontSize:10, color:'var(--muted)', marginLeft:3}}>{c.mem_percent}</span>
-                      </td>
-                      <td style={{textAlign:'right', paddingBottom:6, fontSize:11, color:'var(--dim)'}}>
-                        {c.net_io || '—'}
-                      </td>
-                      <td style={{paddingBottom:6, fontSize:10, color:'var(--muted)', maxWidth:180, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={c.image}>
-                        {c.image?.split('/').pop()?.split(':')[0] || '—'}
+                      {hasRealStats && <>
+                        <td style={{textAlign:'right', paddingBottom:6, fontWeight:700, color:pctColor(cpuVal)}}>
+                          {c.cpu_percent}
+                        </td>
+                        <td style={{textAlign:'right', paddingBottom:6, color:'var(--ac2)'}}>
+                          {c.mem_usage?.split('/')[0]?.trim() || '—'}
+                          <span style={{fontSize:10, color:'var(--muted)', marginLeft:3}}>{c.mem_percent}</span>
+                        </td>
+                        <td style={{textAlign:'right', paddingBottom:6, fontSize:11, color:'var(--dim)'}}>
+                          {c.net_io || '—'}
+                        </td>
+                      </>}
+                      <td style={{paddingBottom:6, fontSize:10, color:'var(--muted)'}}>
+                        {c.type || (c.image?.split('/').pop()?.split(':')[0]) || '—'}
                       </td>
                     </tr>
                   );
