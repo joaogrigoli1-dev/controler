@@ -230,6 +230,7 @@ const Icon = {
   HardDrive: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></svg>,
   Wifi:   () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12.55a11 11 0 0114.08 0"/><path d="M1.42 9a16 16 0 0121.16 0"/><path d="M8.53 16.11a6 6 0 016.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>,
   Zap:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+  Box:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
 };
 
 // ── API hooks ───────────────────────────────────────────────────────────────
@@ -982,6 +983,363 @@ function Hardware() {
   );
 }
 
+// ── Server Management Page ───────────────────────────────────────────────────
+function ServerPage() {
+  const [tab, setTab] = useState('hardware');
+  return (
+    <div>
+      <div className="main-header">
+        <h2>Servidor — srv1 (62.72.63.18)</h2>
+        <p>Monitoramento completo: hardware, containers Coolify e agente OpenClaws</p>
+      </div>
+      <div className="tabs" style={{marginBottom:20}}>
+        <div className={`tab ${tab==='hardware'?'active':''}`} onClick={() => setTab('hardware')}>🖥 Hardware</div>
+        <div className={`tab ${tab==='containers'?'active':''}`} onClick={() => setTab('containers')}>🐳 Containers</div>
+        <div className={`tab ${tab==='openclaw'?'active':''}`} onClick={() => setTab('openclaw')}>🤖 OpenClaws</div>
+      </div>
+      {tab === 'hardware' && <Hardware />}
+      {tab === 'containers' && <ContainersTab />}
+      {tab === 'openclaw' && <OpenClawTab />}
+    </div>
+  );
+}
+
+// ── Containers Tab ───────────────────────────────────────────────────────────
+function ContainersTab() {
+  const [data, setData] = useState(null);
+  const [coolifyApps, setCoolifyApps] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastTs, setLastTs] = useState(null);
+
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    Promise.all([
+      fetch(API + '/server/docker/stats').then(r => r.json()).catch(() => null),
+      fetch(API + '/server/coolify/applications').then(r => r.json()).catch(() => null),
+    ]).then(([docker, coolify]) => {
+      setData(docker);
+      setCoolifyApps(coolify);
+      setLastTs(new Date().toLocaleTimeString('pt-BR'));
+      setLoading(false);
+    });
+  }, []);
+
+  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const t = setInterval(fetchData, 10000);
+    return () => clearInterval(t);
+  }, [autoRefresh, fetchData]);
+
+  const parsePct = (s) => parseFloat((s||'0%').replace('%','')) || 0;
+  const pctColor = (p) => p >= 85 ? 'var(--rd)' : p >= 65 ? 'var(--yw)' : 'var(--gn)';
+
+  // Container groups
+  const GROUPS = {
+    'Coolify Apps': ['controler','myclinicsoft','whatsapp-buffer'],
+    'XoSpam': ['xospam_web','xospam_admin','xospam_api','xospam_postgres','xospam_redis','xospam_ollama'],
+    'Email': ['stalwart-mail','roundcube-webmail'],
+    'Bancos': ['postgres-main','coolify-db'],
+    'Infra Coolify': ['coolify','coolify-proxy','coolify-sentinel','coolify-redis','coolify-realtime'],
+    'AI Agent': ['openclaw'],
+  };
+
+  const getGroup = (name) => {
+    for (const [group, members] of Object.entries(GROUPS)) {
+      if (members.some(m => name.includes(m) || name.toLowerCase().includes(m.replace('-','')))) return group;
+    }
+    return 'Outros';
+  };
+
+  const statusIcon = (status) => {
+    if (!status) return '⚪';
+    const s = status.toLowerCase();
+    if (s.includes('healthy')) return '🟢';
+    if (s.includes('unhealthy')) return '🔴';
+    if (s.includes('up')) return '🟡';
+    return '⚪';
+  };
+
+  if (loading && !data) return <div className="empty"><p>Carregando containers...</p></div>;
+
+  const containers = data?.containers || [];
+  const grouped = {};
+  containers.forEach(c => {
+    const g = getGroup(c.display_name || c.name);
+    if (!grouped[g]) grouped[g] = [];
+    grouped[g].push(c);
+  });
+
+  // Coolify app status enrichment
+  const coolifyMap = {};
+  (coolifyApps?.applications || []).forEach(a => { coolifyMap[a.name] = a; });
+
+  // Totals
+  const totalCpu = containers.reduce((s, c) => s + parsePct(c.cpu_percent), 0);
+  const healthyCount = containers.filter(c => (c.docker_status||'').toLowerCase().includes('healthy')).length;
+  const upCount = containers.filter(c => (c.docker_status||'').toLowerCase().includes('up')).length;
+
+  return (
+    <div>
+      {/* KPI cards */}
+      <div className="cards" style={{gridTemplateColumns:'repeat(auto-fill, minmax(160px, 1fr))', marginBottom:20}}>
+        <div className="card">
+          <div className="card-label">Total Containers</div>
+          <div className="card-value blue" style={{fontSize:32}}>{containers.length}</div>
+          <div className="card-sub">Em execução</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Healthy</div>
+          <div className="card-value green" style={{fontSize:32}}>{healthyCount}</div>
+          <div className="card-sub">de {upCount} ativos</div>
+        </div>
+        <div className="card">
+          <div className="card-label">CPU Total</div>
+          <div className="card-value orange" style={{fontSize:32}}>{totalCpu.toFixed(1)}%</div>
+          <div className="card-sub">Soma de todos containers</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Coolify Apps</div>
+          <div className="card-value purple" style={{fontSize:32}}>{(coolifyApps?.applications||[]).length}</div>
+          <div className="card-sub">Gerenciadas pelo Coolify</div>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:16}}>
+        <span className="hw-ts">{lastTs ? `Atualizado às ${lastTs}` : ''}</span>
+        <button className={`btn btn-sm ${autoRefresh?'btn-primary':''}`}
+                onClick={() => setAutoRefresh(a => !a)}>
+          {autoRefresh ? '⏸ Auto (10s)' : '▶ Auto'}
+        </button>
+        <button className="btn btn-sm" onClick={fetchData}><Icon.Refresh /> Refresh</button>
+      </div>
+
+      {/* Coolify Managed Apps */}
+      {(coolifyApps?.applications||[]).length > 0 && (
+        <div className="hw-section" style={{marginBottom:18}}>
+          <div className="hw-section-title"><Icon.Rocket /> Aplicações Coolify</div>
+          <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))', gap:12}}>
+            {(coolifyApps.applications||[]).map(a => (
+              <div key={a.uuid} className="card" style={{padding:14}}>
+                <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:8}}>
+                  <span style={{fontSize:14}}>{a.status?.includes('healthy') ? '🟢' : a.status?.includes('running') ? '🟡' : '🔴'}</span>
+                  <strong style={{fontSize:14}}>{a.name}</strong>
+                  <span className="badge badge-decision" style={{marginLeft:'auto'}}>{a.build_pack}</span>
+                </div>
+                <div style={{fontSize:11, color:'var(--dim)', lineHeight:1.8}}>
+                  <div>🌐 {a.fqdn || '—'}</div>
+                  <div>📁 {a.git_repository?.split('/').pop() || '—'} / {a.git_branch}</div>
+                  <div>🔌 Porta: {a.ports_exposes || '—'}</div>
+                  <div>❤️ Health: {a.health_check_path || '—'}</div>
+                  <div>📊 Status: <span style={{color: a.status?.includes('healthy') ? 'var(--gn)' : 'var(--yw)'}}>{a.status}</span></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Grouped container tables */}
+      {Object.entries(GROUPS).map(([group]) => {
+        const items = grouped[group];
+        if (!items || items.length === 0) return null;
+        return (
+          <div key={group} className="hw-section" style={{marginBottom:14}}>
+            <div className="hw-section-title">{group === 'Coolify Apps' ? '📦' : group === 'XoSpam' ? '🛡️' : group === 'Email' ? '✉️' : group === 'Bancos' ? '🗄️' : group === 'Infra Coolify' ? '⚙️' : '🤖'} {group}</div>
+            <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
+              <thead>
+                <tr>
+                  <th style={{textAlign:'left',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>Container</th>
+                  <th style={{textAlign:'left',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>Status</th>
+                  <th style={{textAlign:'right',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>CPU</th>
+                  <th style={{textAlign:'right',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>RAM</th>
+                  <th style={{textAlign:'right',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>Net I/O</th>
+                  <th style={{textAlign:'left',color:'var(--dim)',fontWeight:600,fontSize:10,textTransform:'uppercase',letterSpacing:'.8px',paddingBottom:8}}>Imagem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((c, i) => {
+                  const cpuVal = parsePct(c.cpu_percent);
+                  return (
+                    <tr key={i}>
+                      <td style={{paddingBottom:6, fontWeight:600}}>
+                        {statusIcon(c.docker_status)} {c.display_name || c.name}
+                      </td>
+                      <td style={{paddingBottom:6, fontSize:11, color:'var(--dim)'}}>
+                        {c.docker_status?.replace(/\s*\(.*\)/, '') || '—'}
+                      </td>
+                      <td style={{textAlign:'right', paddingBottom:6, fontWeight:700, color:pctColor(cpuVal)}}>
+                        {c.cpu_percent}
+                      </td>
+                      <td style={{textAlign:'right', paddingBottom:6, color:'var(--ac2)'}}>
+                        {c.mem_usage?.split('/')[0]?.trim() || '—'}
+                        <span style={{fontSize:10, color:'var(--muted)', marginLeft:3}}>{c.mem_percent}</span>
+                      </td>
+                      <td style={{textAlign:'right', paddingBottom:6, fontSize:11, color:'var(--dim)'}}>
+                        {c.net_io || '—'}
+                      </td>
+                      <td style={{paddingBottom:6, fontSize:10, color:'var(--muted)', maxWidth:180, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={c.image}>
+                        {c.image?.split('/').pop()?.split(':')[0] || '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── OpenClaw Tab ──────────────────────────────────────────────────────────────
+function OpenClawTab() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [lastTs, setLastTs] = useState(null);
+
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    fetch(API + '/server/openclaw/status')
+      .then(r => r.json())
+      .then(d => { setData(d); setLastTs(new Date().toLocaleTimeString('pt-BR')); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { fetchData(); }, []);
+
+  if (loading && !data) return <div className="empty"><p>Carregando OpenClaws...</p></div>;
+  if (data?.error) return <div className="empty"><p style={{color:'var(--rd)'}}>Erro: {data.error}</p></div>;
+  if (!data) return null;
+
+  const { container, cron, config } = data;
+  const jobs = cron?.jobs || [];
+  const healthyContainer = container?.health === 'healthy';
+
+  const cronStatusIcon = (job) => {
+    if (!job.state) return '⏳';
+    if (job.state.lastRunStatus === 'error') return '🔴';
+    if (job.state.lastRunStatus === 'ok' || job.state.lastRunStatus === 'success') return '🟢';
+    return '🟡';
+  };
+
+  const fmtMs = (ms) => {
+    if (!ms) return '—';
+    const d = new Date(ms);
+    return d.toLocaleString('pt-BR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+  };
+
+  return (
+    <div>
+      {/* Header controls */}
+      <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:16}}>
+        <span className="hw-ts">{lastTs ? `Atualizado às ${lastTs}` : ''}</span>
+        <button className="btn btn-sm" onClick={fetchData}><Icon.Refresh /> Refresh</button>
+      </div>
+
+      {/* Agent Status */}
+      <div className="cards" style={{gridTemplateColumns:'repeat(auto-fill, minmax(160px, 1fr))', marginBottom:20}}>
+        <div className="card">
+          <div className="card-label">Container</div>
+          <div className={`card-value ${healthyContainer ? 'green' : 'hw-badge-crit'}`} style={{fontSize:20}}>
+            {healthyContainer ? '🟢 Healthy' : '🔴 ' + (container?.health || 'Down')}
+          </div>
+          <div className="card-sub">State: {container?.state || '—'}</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Modelo IA</div>
+          <div className="card-value purple" style={{fontSize:14}}>{config?.model || '—'}</div>
+          <div className="card-sub">Claude Opus 4.5</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Cron Jobs</div>
+          <div className="card-value blue" style={{fontSize:32}}>{jobs.length}</div>
+          <div className="card-sub">{jobs.filter(j => j.enabled).length} ativos</div>
+        </div>
+        <div className="card">
+          <div className="card-label">Erros Cron</div>
+          <div className={`card-value ${jobs.some(j => j.state?.lastRunStatus === 'error') ? 'hw-badge-crit' : 'green'}`} style={{fontSize:32}}>
+            {jobs.filter(j => j.state?.lastRunStatus === 'error').length}
+          </div>
+          <div className="card-sub">de {jobs.length} jobs</div>
+        </div>
+      </div>
+
+      {/* Config Info */}
+      <div className="hw-section" style={{marginBottom:18}}>
+        <div className="hw-section-title">⚙️ Configuração do Agente</div>
+        <div className="hw-grid3" style={{fontSize:12}}>
+          <div className="hw-stat">
+            <div className="hw-stat-label">Gateway</div>
+            <div className="hw-stat-value" style={{fontSize:14}}>:{config?.gateway_port || '—'}</div>
+          </div>
+          <div className="hw-stat">
+            <div className="hw-stat-label">Cron Ativo</div>
+            <div className="hw-stat-value" style={{fontSize:14, color: config?.cron_enabled ? 'var(--gn)' : 'var(--rd)'}}>
+              {config?.cron_enabled ? '✅ Sim' : '❌ Não'}
+            </div>
+          </div>
+          <div className="hw-stat">
+            <div className="hw-stat-label">Max Concorrente</div>
+            <div className="hw-stat-value" style={{fontSize:14}}>{config?.max_concurrent || '—'}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Cron Jobs */}
+      <div className="hw-section">
+        <div className="hw-section-title">⏰ Cron Jobs</div>
+        {jobs.length === 0 ? (
+          <div className="empty"><p>Nenhum cron job configurado</p></div>
+        ) : (
+          <div style={{display:'grid', gap:12}}>
+            {jobs.map(job => (
+              <div key={job.id} className="card" style={{padding:14}}>
+                <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:10}}>
+                  <span style={{fontSize:16}}>{cronStatusIcon(job)}</span>
+                  <strong style={{fontSize:14, flex:1}}>{job.name}</strong>
+                  <span className={`badge ${job.enabled ? 'badge-decision' : 'badge-cleanup'}`}>
+                    {job.enabled ? 'Ativo' : 'Inativo'}
+                  </span>
+                </div>
+                <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, fontSize:11, color:'var(--dim)', marginBottom:8}}>
+                  <div>
+                    <div style={{textTransform:'uppercase', letterSpacing:'.5px', fontSize:9, marginBottom:2}}>Schedule</div>
+                    <div style={{color:'var(--tx)', fontFamily:'monospace'}}>{job.schedule?.expr || '—'}</div>
+                    <div>{job.schedule?.tz || '—'}</div>
+                  </div>
+                  <div>
+                    <div style={{textTransform:'uppercase', letterSpacing:'.5px', fontSize:9, marginBottom:2}}>Última Exec</div>
+                    <div style={{color:'var(--tx)'}}>{fmtMs(job.state?.lastRunAtMs)}</div>
+                    <div>{job.state?.lastDurationMs ? (job.state.lastDurationMs/1000).toFixed(1) + 's' : '—'}</div>
+                  </div>
+                  <div>
+                    <div style={{textTransform:'uppercase', letterSpacing:'.5px', fontSize:9, marginBottom:2}}>Próxima Exec</div>
+                    <div style={{color:'var(--ac2)'}}>{fmtMs(job.state?.nextRunAtMs)}</div>
+                  </div>
+                </div>
+                {job.state?.lastError && (
+                  <div style={{background:'rgba(239,68,68,.1)', border:'1px solid rgba(239,68,68,.2)', borderRadius:6, padding:'8px 10px', fontSize:11, color:'var(--rd)', marginTop:6}}>
+                    <strong>Erro:</strong> {job.state.lastError}
+                  </div>
+                )}
+                {job.state?.consecutiveErrors > 0 && (
+                  <div style={{fontSize:10, color:'var(--rd)', marginTop:4}}>
+                    ⚠️ {job.state.consecutiveErrors} erros consecutivos
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Project Page (MyClinicSoft) ──────────────────────────────────────────────
 function ProjectView() {
   const [status, setStatus] = useState(null);
@@ -1226,8 +1584,8 @@ function App() {
           <div className={`nav-item ${page==='kpis'?'active':''}`} onClick={() => setPage('kpis')}>
             <Icon.Chart /> KPIs
           </div>
-          <div className={`nav-item ${page==='hardware'?'active':''}`} onClick={() => setPage('hardware')}>
-            <Icon.Server /> Hardware
+          <div className={`nav-item ${page==='server'?'active':''}`} onClick={() => setPage('server')}>
+            <Icon.Server /> Servidor
           </div>
 
           <div className="nav-section" style={{marginTop:24}}>DevOps</div>
@@ -1253,7 +1611,7 @@ function App() {
         {page === 'memories' && <Memories selectedProject={selectedProject} />}
         {page === 'rules' && <Rules />}
         {page === 'kpis' && <KPIs />}
-        {page === 'hardware' && <Hardware />}
+        {page === 'server' && <ServerPage />}
         {page === 'deploy' && <ProjectView />}
       </div>
     </div>

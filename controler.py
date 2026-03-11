@@ -16,7 +16,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 # Auto-install
-DEPS = ["fastapi", "uvicorn", "pyyaml", "psutil"]
+DEPS = ["fastapi", "uvicorn", "pyyaml", "psutil", "httpx"]
 for dep in DEPS:
     try:
         __import__(dep)
@@ -93,7 +93,7 @@ async def security_headers_middleware(request: Request, call_next):
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "font-src 'self' data:; "
-        "connect-src 'self'"
+        "connect-src 'self' https://controler.net.br"
     )
     # Remove cabeçalho que expõe tecnologia do servidor
     if "server" in response.headers:
@@ -802,6 +802,194 @@ async def api_kpis():
         },
         "projects": project_kpis
     }
+
+
+# ════════════════════════════════════════
+# API: Coolify Container Monitoring
+# ════════════════════════════════════════
+
+import httpx as _httpx
+
+_COOLIFY_URL = os.getenv("COOLIFY_URL", "http://62.72.63.18:8000")
+_COOLIFY_TOKEN = os.getenv("COOLIFY_TOKEN", "")
+
+
+async def _coolify_api(path: str) -> dict:
+    """Helper para chamadas à API do Coolify."""
+    headers = {
+        "Authorization": f"Bearer {_COOLIFY_TOKEN}",
+        "Accept": "application/json",
+    }
+    async with _httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(f"{_COOLIFY_URL}/api/v1{path}", headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
+@app.get("/api/server/coolify/applications")
+async def api_coolify_applications():
+    """Retorna lista de aplicações gerenciadas pelo Coolify."""
+    try:
+        apps = await _coolify_api("/applications")
+        result = []
+        for a in apps:
+            result.append({
+                "uuid": a.get("uuid"),
+                "name": a.get("name"),
+                "status": a.get("status", "unknown"),
+                "fqdn": a.get("fqdn", ""),
+                "build_pack": a.get("build_pack", ""),
+                "git_repository": a.get("git_repository", ""),
+                "git_branch": a.get("git_branch", ""),
+                "ports_exposes": a.get("ports_exposes", ""),
+                "health_check_path": a.get("health_check_path", ""),
+            })
+        return {"applications": result, "timestamp": datetime.now().isoformat()}
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/server/coolify/resources")
+async def api_coolify_resources():
+    """Retorna todos os recursos do servidor Coolify (apps, DBs, services)."""
+    try:
+        servers = await _coolify_api("/servers")
+        server_uuid = servers[0]["uuid"] if servers else None
+        resources = []
+        if server_uuid:
+            resources = await _coolify_api(f"/servers/{server_uuid}/resources")
+        return {"resources": resources, "server": servers[0] if servers else None,
+                "timestamp": datetime.now().isoformat()}
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/server/docker/stats")
+async def api_docker_stats():
+    """Retorna docker stats de todos os containers via SSH."""
+    try:
+        ssh_key = os.getenv("SSH_KEY_PATH", os.path.expanduser("~/.ssh/srv1_hostinger"))
+        server_ip = CONFIG.get("devops", {}).get("server_ip", "62.72.63.18")
+        cmd = (
+            f'ssh -i {ssh_key} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 '
+            f'root@{server_ip} '
+            '"docker stats --no-stream --format \'{{{{.Names}}}}|{{{{.CPUPerc}}}}|{{{{.MemUsage}}}}|{{{{.MemPerc}}}}|{{{{.NetIO}}}}|{{{{.BlockIO}}}}|{{{{.PIDs}}}}\'"'
+        )
+        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=20)
+        containers = []
+        if proc.returncode == 0:
+            for line in proc.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                parts = line.split("|")
+                if len(parts) >= 7:
+                    name = parts[0].strip()
+                    # Simplify Coolify container names
+                    display_name = name
+                    # Map Coolify container UUIDs to readable names
+                    _COOLIFY_NAME_MAP = {
+                        "hksw4kg8owgs0wwg0o8k4kk0": "controler",
+                        "jckc0ccwssowwc0oocw80ogs": "myclinicsoft",
+                        "nw48cggkk4ss4g00s08s8wkw": "whatsapp-buffer",
+                    }
+                    for uuid_prefix, app_name in _COOLIFY_NAME_MAP.items():
+                        if name.startswith(uuid_prefix):
+                            display_name = app_name
+                            break
+                    containers.append({
+                        "name": name,
+                        "display_name": display_name,
+                        "cpu_percent": parts[1].strip(),
+                        "mem_usage": parts[2].strip(),
+                        "mem_percent": parts[3].strip(),
+                        "net_io": parts[4].strip(),
+                        "block_io": parts[5].strip(),
+                        "pids": parts[6].strip(),
+                    })
+        # Also get container status
+        cmd2 = (
+            f'ssh -i {ssh_key} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 '
+            f'root@{server_ip} '
+            '"docker ps --format \'{{{{.Names}}}}|{{{{.Status}}}}|{{{{.Image}}}}|{{{{.Ports}}}}\'"'
+        )
+        proc2 = subprocess.run(cmd2, shell=True, capture_output=True, text=True, timeout=20)
+        status_map = {}
+        if proc2.returncode == 0:
+            for line in proc2.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                parts = line.split("|")
+                if len(parts) >= 4:
+                    status_map[parts[0].strip()] = {
+                        "status": parts[1].strip(),
+                        "image": parts[2].strip(),
+                        "ports": parts[3].strip(),
+                    }
+        # Merge
+        for c in containers:
+            info = status_map.get(c["name"], {})
+            c["docker_status"] = info.get("status", "")
+            c["image"] = info.get("image", "")
+            c["ports"] = info.get("ports", "")
+        return {"containers": containers, "total": len(containers),
+                "timestamp": datetime.now().isoformat()}
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/server/openclaw/status")
+async def api_openclaw_status():
+    """Retorna status do agente OpenClaws e seus cron jobs."""
+    try:
+        ssh_key = os.getenv("SSH_KEY_PATH", os.path.expanduser("~/.ssh/srv1_hostinger"))
+        server_ip = CONFIG.get("devops", {}).get("server_ip", "62.72.63.18")
+        # Get cron jobs
+        cmd_cron = (
+            f'ssh -i {ssh_key} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 '
+            f'root@{server_ip} "cat /opt/openclaw/cron/jobs.json 2>/dev/null"'
+        )
+        proc_cron = subprocess.run(cmd_cron, shell=True, capture_output=True, text=True, timeout=15)
+        cron_data = {}
+        if proc_cron.returncode == 0 and proc_cron.stdout.strip():
+            cron_data = json.loads(proc_cron.stdout)
+        # Get container health
+        cmd_health = (
+            f'ssh -i {ssh_key} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 '
+            f'root@{server_ip} '
+            '"docker inspect openclaw --format \'{{{{.State.Health.Status}}}}|{{{{.State.Status}}}}|{{{{.State.StartedAt}}}}\' 2>/dev/null"'
+        )
+        proc_health = subprocess.run(cmd_health, shell=True, capture_output=True, text=True, timeout=15)
+        health_info = {"health": "unknown", "state": "unknown", "started_at": ""}
+        if proc_health.returncode == 0 and proc_health.stdout.strip():
+            parts = proc_health.stdout.strip().split("|")
+            if len(parts) >= 3:
+                health_info = {"health": parts[0], "state": parts[1], "started_at": parts[2]}
+        # Get config
+        cmd_config = (
+            f'ssh -i {ssh_key} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 '
+            f'root@{server_ip} "cat /opt/openclaw/config.yml 2>/dev/null"'
+        )
+        proc_config = subprocess.run(cmd_config, shell=True, capture_output=True, text=True, timeout=15)
+        config_info = {}
+        if proc_config.returncode == 0 and proc_config.stdout.strip():
+            config_info = yaml.safe_load(proc_config.stdout) or {}
+        return {
+            "container": health_info,
+            "cron": cron_data,
+            "config": {
+                "model": config_info.get("agents", {}).get("default", {}).get("model", "unknown"),
+                "cron_enabled": config_info.get("cron", {}).get("enabled", False),
+                "max_concurrent": config_info.get("cron", {}).get("maxConcurrentRuns", 0),
+                "gateway_port": config_info.get("gateway", {}).get("port", 0),
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 # ════════════════════════════════════════
