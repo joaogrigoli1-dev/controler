@@ -20,8 +20,8 @@ COPY . .
 # Cria o diretório do banco de dados e ajusta permissões
 RUN mkdir -p bd && chown -R appuser:appuser /app
 
-# Troca para usuário sem privilégios
-USER appuser
+# Nota: Roda como root para acesso ao Docker socket (/var/run/docker.sock)
+# O socket é montado como read-only via custom_docker_run_options no Coolify
 
 # Expõe a porta
 EXPOSE 3001

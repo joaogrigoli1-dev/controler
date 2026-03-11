@@ -864,73 +864,97 @@ async def api_coolify_resources():
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+_DOCKER_SOCKET = "/var/run/docker.sock"
+_COOLIFY_NAME_MAP = {
+    "hksw4kg8owgs0wwg0o8k4kk0": "controler",
+    "jckc0ccwssowwc0oocw80ogs": "myclinicsoft",
+    "nw48cggkk4ss4g00s08s8wkw": "whatsapp-buffer",
+}
+
+
+def _friendly_name(name: str) -> str:
+    """Resolve Coolify UUID-based names to human-readable ones."""
+    for uuid_prefix, app_name in _COOLIFY_NAME_MAP.items():
+        if name.startswith(uuid_prefix):
+            return app_name
+    return name
+
+
+async def _docker_api(path: str, method: str = "GET") -> dict | list:
+    """Call Docker Engine API via Unix socket."""
+    import httpx as _hx
+    transport = _hx.AsyncHTTPTransport(uds=_DOCKER_SOCKET)
+    async with _hx.AsyncClient(transport=transport, base_url="http://localhost", timeout=15.0) as client:
+        resp = await client.request(method, path)
+        resp.raise_for_status()
+        return resp.json()
+
+
 @app.get("/api/server/docker/stats")
 async def api_docker_stats():
-    """Retorna docker stats de todos os containers via SSH."""
+    """Retorna docker stats de todos os containers via Docker Engine API."""
     try:
-        ssh_key = os.getenv("SSH_KEY_PATH", os.path.expanduser("~/.ssh/srv1_hostinger"))
-        server_ip = CONFIG.get("devops", {}).get("server_ip", "62.72.63.18")
-        cmd = (
-            f'ssh -i {ssh_key} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 '
-            f'root@{server_ip} '
-            '"docker stats --no-stream --format \'{{{{.Names}}}}|{{{{.CPUPerc}}}}|{{{{.MemUsage}}}}|{{{{.MemPerc}}}}|{{{{.NetIO}}}}|{{{{.BlockIO}}}}|{{{{.PIDs}}}}\'"'
-        )
-        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=20)
+        # List all running containers
+        raw = await _docker_api("/containers/json?all=false")
         containers = []
-        if proc.returncode == 0:
-            for line in proc.stdout.strip().split("\n"):
-                if not line.strip():
-                    continue
-                parts = line.split("|")
-                if len(parts) >= 7:
-                    name = parts[0].strip()
-                    # Simplify Coolify container names
-                    display_name = name
-                    # Map Coolify container UUIDs to readable names
-                    _COOLIFY_NAME_MAP = {
-                        "hksw4kg8owgs0wwg0o8k4kk0": "controler",
-                        "jckc0ccwssowwc0oocw80ogs": "myclinicsoft",
-                        "nw48cggkk4ss4g00s08s8wkw": "whatsapp-buffer",
-                    }
-                    for uuid_prefix, app_name in _COOLIFY_NAME_MAP.items():
-                        if name.startswith(uuid_prefix):
-                            display_name = app_name
-                            break
-                    containers.append({
-                        "name": name,
-                        "display_name": display_name,
-                        "cpu_percent": parts[1].strip(),
-                        "mem_usage": parts[2].strip(),
-                        "mem_percent": parts[3].strip(),
-                        "net_io": parts[4].strip(),
-                        "block_io": parts[5].strip(),
-                        "pids": parts[6].strip(),
-                    })
-        # Also get container status
-        cmd2 = (
-            f'ssh -i {ssh_key} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 '
-            f'root@{server_ip} '
-            '"docker ps --format \'{{{{.Names}}}}|{{{{.Status}}}}|{{{{.Image}}}}|{{{{.Ports}}}}\'"'
-        )
-        proc2 = subprocess.run(cmd2, shell=True, capture_output=True, text=True, timeout=20)
-        status_map = {}
-        if proc2.returncode == 0:
-            for line in proc2.stdout.strip().split("\n"):
-                if not line.strip():
-                    continue
-                parts = line.split("|")
-                if len(parts) >= 4:
-                    status_map[parts[0].strip()] = {
-                        "status": parts[1].strip(),
-                        "image": parts[2].strip(),
-                        "ports": parts[3].strip(),
-                    }
-        # Merge
+        for c in raw:
+            name = (c.get("Names") or ["/unknown"])[0].lstrip("/")
+            display_name = _friendly_name(name)
+            state = c.get("State", "unknown")
+            status = c.get("Status", "")
+            image = c.get("Image", "")
+            ports_raw = c.get("Ports") or []
+            ports_str = ", ".join(
+                f"{p.get('PublicPort','')}->{p.get('PrivatePort','')}/{p.get('Type','')}"
+                for p in ports_raw if p.get("PublicPort")
+            ) or ""
+            containers.append({
+                "name": name,
+                "display_name": display_name,
+                "state": state,
+                "docker_status": status,
+                "image": image,
+                "ports": ports_str,
+                "container_id": c.get("Id", "")[:12],
+            })
+
+        # Get stats for each container (one-shot, no stream)
+        import asyncio as _aio
+        async def _get_stats(cid: str):
+            try:
+                s = await _docker_api(f"/containers/{cid}/stats?stream=false&one-shot=true")
+                cpu_delta = s.get("cpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0) - \
+                            s.get("precpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0)
+                sys_delta = s.get("cpu_stats", {}).get("system_cpu_usage", 0) - \
+                            s.get("precpu_stats", {}).get("system_cpu_usage", 0)
+                n_cpus = s.get("cpu_stats", {}).get("online_cpus", 1) or 1
+                cpu_pct = round((cpu_delta / sys_delta) * n_cpus * 100, 2) if sys_delta > 0 else 0.0
+                mem = s.get("memory_stats", {})
+                mem_usage = mem.get("usage", 0) - mem.get("stats", {}).get("cache", 0)
+                mem_limit = mem.get("limit", 1)
+                mem_pct = round((mem_usage / mem_limit) * 100, 2) if mem_limit > 0 else 0.0
+                net = s.get("networks", {})
+                rx = sum(v.get("rx_bytes", 0) for v in net.values())
+                tx = sum(v.get("tx_bytes", 0) for v in net.values())
+                pids = s.get("pids_stats", {}).get("current", 0)
+                return cid[:12], {
+                    "cpu_percent": f"{cpu_pct}%",
+                    "mem_usage": f"{mem_usage / 1048576:.1f}MiB / {mem_limit / 1048576:.0f}MiB",
+                    "mem_percent": f"{mem_pct}%",
+                    "net_io": f"{rx / 1048576:.1f}MB / {tx / 1048576:.1f}MB",
+                    "pids": str(pids),
+                }
+            except Exception:
+                return cid[:12], {}
+
+        tasks = [_get_stats(c["container_id"]) for c in containers]
+        results = await _aio.gather(*tasks)
+        stats_map = {cid: stats for cid, stats in results}
+
         for c in containers:
-            info = status_map.get(c["name"], {})
-            c["docker_status"] = info.get("status", "")
-            c["image"] = info.get("image", "")
-            c["ports"] = info.get("ports", "")
+            s = stats_map.get(c["container_id"], {})
+            c.update(s)
+
         return {"containers": containers, "total": len(containers),
                 "timestamp": datetime.now().isoformat()}
     except Exception as exc:
@@ -941,40 +965,36 @@ async def api_docker_stats():
 
 @app.get("/api/server/openclaw/status")
 async def api_openclaw_status():
-    """Retorna status do agente OpenClaws e seus cron jobs."""
+    """Retorna status do agente OpenClaws e seus cron jobs.
+    Uses mounted volumes (/opt/openclaw/cron, /opt/openclaw/config.yml)
+    and Docker Engine API for container health.
+    """
     try:
-        ssh_key = os.getenv("SSH_KEY_PATH", os.path.expanduser("~/.ssh/srv1_hostinger"))
-        server_ip = CONFIG.get("devops", {}).get("server_ip", "62.72.63.18")
-        # Get cron jobs
-        cmd_cron = (
-            f'ssh -i {ssh_key} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 '
-            f'root@{server_ip} "cat /opt/openclaw/cron/jobs.json 2>/dev/null"'
-        )
-        proc_cron = subprocess.run(cmd_cron, shell=True, capture_output=True, text=True, timeout=15)
+        # Read cron jobs from mounted volume
         cron_data = {}
-        if proc_cron.returncode == 0 and proc_cron.stdout.strip():
-            cron_data = json.loads(proc_cron.stdout)
-        # Get container health
-        cmd_health = (
-            f'ssh -i {ssh_key} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 '
-            f'root@{server_ip} '
-            '"docker inspect openclaw --format \'{{{{.State.Health.Status}}}}|{{{{.State.Status}}}}|{{{{.State.StartedAt}}}}\' 2>/dev/null"'
-        )
-        proc_health = subprocess.run(cmd_health, shell=True, capture_output=True, text=True, timeout=15)
+        cron_path = Path("/opt/openclaw/cron/jobs.json")
+        if cron_path.exists():
+            cron_data = json.loads(cron_path.read_text())
+
+        # Get container health via Docker API
         health_info = {"health": "unknown", "state": "unknown", "started_at": ""}
-        if proc_health.returncode == 0 and proc_health.stdout.strip():
-            parts = proc_health.stdout.strip().split("|")
-            if len(parts) >= 3:
-                health_info = {"health": parts[0], "state": parts[1], "started_at": parts[2]}
-        # Get config
-        cmd_config = (
-            f'ssh -i {ssh_key} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 '
-            f'root@{server_ip} "cat /opt/openclaw/config.yml 2>/dev/null"'
-        )
-        proc_config = subprocess.run(cmd_config, shell=True, capture_output=True, text=True, timeout=15)
+        try:
+            inspect = await _docker_api("/containers/openclaw/json")
+            state = inspect.get("State", {})
+            health_info = {
+                "health": state.get("Health", {}).get("Status", "none"),
+                "state": state.get("Status", "unknown"),
+                "started_at": state.get("StartedAt", ""),
+            }
+        except Exception:
+            pass
+
+        # Read config from mounted volume
         config_info = {}
-        if proc_config.returncode == 0 and proc_config.stdout.strip():
-            config_info = yaml.safe_load(proc_config.stdout) or {}
+        config_path = Path("/opt/openclaw/config.yml")
+        if config_path.exists():
+            config_info = yaml.safe_load(config_path.read_text()) or {}
+
         return {
             "container": health_info,
             "cron": cron_data,
