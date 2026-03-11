@@ -820,7 +820,7 @@ async def _coolify_api(path: str) -> dict:
         "Authorization": f"Bearer {_COOLIFY_TOKEN}",
         "Accept": "application/json",
     }
-    async with _httpx.AsyncClient(timeout=15.0) as client:
+    async with _httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
         resp = await client.get(f"{_COOLIFY_URL}/api/v1{path}", headers=headers)
         resp.raise_for_status()
         return resp.json()
