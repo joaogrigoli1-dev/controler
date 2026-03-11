@@ -870,6 +870,7 @@ _COOLIFY_NAME_MAP = {
     "jckc0ccwssowwc0oocw80ogs": "myclinicsoft",
     "nw48cggkk4ss4g00s08s8wkw": "whatsapp-buffer",
 }
+_COOLIFY_SERVER_UUID = "j4ws844wcg400kwsc0sswocg"
 
 
 def _friendly_name(name: str) -> str:
@@ -881,7 +882,7 @@ def _friendly_name(name: str) -> str:
 
 
 async def _docker_api(path: str, method: str = "GET") -> dict | list:
-    """Call Docker Engine API via Unix socket."""
+    """Call Docker Engine API via Unix socket (if available)."""
     import httpx as _hx
     transport = _hx.AsyncHTTPTransport(uds=_DOCKER_SOCKET)
     async with _hx.AsyncClient(transport=transport, base_url="http://localhost", timeout=15.0) as client:
@@ -890,73 +891,99 @@ async def _docker_api(path: str, method: str = "GET") -> dict | list:
         return resp.json()
 
 
+def _has_docker_socket() -> bool:
+    return os.path.exists(_DOCKER_SOCKET)
+
+
+async def _docker_stats_via_socket() -> list:
+    """Get container stats via Docker Engine API (Unix socket)."""
+    raw = await _docker_api("/containers/json?all=false")
+    containers = []
+    for c in raw:
+        name = (c.get("Names") or ["/unknown"])[0].lstrip("/")
+        containers.append({
+            "name": name,
+            "display_name": _friendly_name(name),
+            "state": c.get("State", "unknown"),
+            "docker_status": c.get("Status", ""),
+            "image": c.get("Image", ""),
+            "container_id": c.get("Id", "")[:12],
+        })
+    # Get stats for each container
+    import asyncio as _aio
+
+    async def _get_stats(cid: str):
+        try:
+            s = await _docker_api(f"/containers/{cid}/stats?stream=false&one-shot=true")
+            cpu_delta = s.get("cpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0) - \
+                        s.get("precpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0)
+            sys_delta = s.get("cpu_stats", {}).get("system_cpu_usage", 0) - \
+                        s.get("precpu_stats", {}).get("system_cpu_usage", 0)
+            n_cpus = s.get("cpu_stats", {}).get("online_cpus", 1) or 1
+            cpu_pct = round((cpu_delta / sys_delta) * n_cpus * 100, 2) if sys_delta > 0 else 0.0
+            mem = s.get("memory_stats", {})
+            mem_usage = mem.get("usage", 0) - mem.get("stats", {}).get("cache", 0)
+            mem_limit = mem.get("limit", 1)
+            mem_pct = round((mem_usage / mem_limit) * 100, 2) if mem_limit > 0 else 0.0
+            net = s.get("networks", {})
+            rx = sum(v.get("rx_bytes", 0) for v in net.values())
+            tx = sum(v.get("tx_bytes", 0) for v in net.values())
+            pids = s.get("pids_stats", {}).get("current", 0)
+            return cid, {
+                "cpu_percent": f"{cpu_pct}%",
+                "mem_usage": f"{mem_usage / 1048576:.1f}MiB / {mem_limit / 1048576:.0f}MiB",
+                "mem_percent": f"{mem_pct}%",
+                "net_io": f"{rx / 1048576:.1f}MB / {tx / 1048576:.1f}MB",
+                "pids": str(pids),
+            }
+        except Exception:
+            return cid, {}
+
+    results = await _aio.gather(*[_get_stats(c["container_id"]) for c in containers])
+    stats_map = dict(results)
+    for c in containers:
+        c.update(stats_map.get(c["container_id"], {}))
+    return containers
+
+
+async def _docker_stats_via_coolify() -> list:
+    """Get container info via Coolify API (fallback, no CPU/MEM data)."""
+    resources = await _coolify_api(f"/servers/{_COOLIFY_SERVER_UUID}/resources")
+    containers = []
+    for r in resources:
+        containers.append({
+            "name": r.get("uuid", ""),
+            "display_name": r.get("name", "unknown"),
+            "state": "running" if "running" in r.get("status", "") else r.get("status", "unknown"),
+            "docker_status": r.get("status", ""),
+            "image": "",
+            "container_id": r.get("uuid", "")[:12],
+            "type": r.get("type", ""),
+            "cpu_percent": "N/A",
+            "mem_usage": "N/A",
+            "mem_percent": "N/A",
+            "net_io": "N/A",
+            "pids": "N/A",
+        })
+    return containers
+
+
 @app.get("/api/server/docker/stats")
 async def api_docker_stats():
-    """Retorna docker stats de todos os containers via Docker Engine API."""
+    """Retorna docker stats — via Docker socket se disponível, senão Coolify API."""
     try:
-        # List all running containers
-        raw = await _docker_api("/containers/json?all=false")
-        containers = []
-        for c in raw:
-            name = (c.get("Names") or ["/unknown"])[0].lstrip("/")
-            display_name = _friendly_name(name)
-            state = c.get("State", "unknown")
-            status = c.get("Status", "")
-            image = c.get("Image", "")
-            ports_raw = c.get("Ports") or []
-            ports_str = ", ".join(
-                f"{p.get('PublicPort','')}->{p.get('PrivatePort','')}/{p.get('Type','')}"
-                for p in ports_raw if p.get("PublicPort")
-            ) or ""
-            containers.append({
-                "name": name,
-                "display_name": display_name,
-                "state": state,
-                "docker_status": status,
-                "image": image,
-                "ports": ports_str,
-                "container_id": c.get("Id", "")[:12],
-            })
-
-        # Get stats for each container (one-shot, no stream)
-        import asyncio as _aio
-        async def _get_stats(cid: str):
-            try:
-                s = await _docker_api(f"/containers/{cid}/stats?stream=false&one-shot=true")
-                cpu_delta = s.get("cpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0) - \
-                            s.get("precpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0)
-                sys_delta = s.get("cpu_stats", {}).get("system_cpu_usage", 0) - \
-                            s.get("precpu_stats", {}).get("system_cpu_usage", 0)
-                n_cpus = s.get("cpu_stats", {}).get("online_cpus", 1) or 1
-                cpu_pct = round((cpu_delta / sys_delta) * n_cpus * 100, 2) if sys_delta > 0 else 0.0
-                mem = s.get("memory_stats", {})
-                mem_usage = mem.get("usage", 0) - mem.get("stats", {}).get("cache", 0)
-                mem_limit = mem.get("limit", 1)
-                mem_pct = round((mem_usage / mem_limit) * 100, 2) if mem_limit > 0 else 0.0
-                net = s.get("networks", {})
-                rx = sum(v.get("rx_bytes", 0) for v in net.values())
-                tx = sum(v.get("tx_bytes", 0) for v in net.values())
-                pids = s.get("pids_stats", {}).get("current", 0)
-                return cid[:12], {
-                    "cpu_percent": f"{cpu_pct}%",
-                    "mem_usage": f"{mem_usage / 1048576:.1f}MiB / {mem_limit / 1048576:.0f}MiB",
-                    "mem_percent": f"{mem_pct}%",
-                    "net_io": f"{rx / 1048576:.1f}MB / {tx / 1048576:.1f}MB",
-                    "pids": str(pids),
-                }
-            except Exception:
-                return cid[:12], {}
-
-        tasks = [_get_stats(c["container_id"]) for c in containers]
-        results = await _aio.gather(*tasks)
-        stats_map = {cid: stats for cid, stats in results}
-
-        for c in containers:
-            s = stats_map.get(c["container_id"], {})
-            c.update(s)
-
-        return {"containers": containers, "total": len(containers),
-                "timestamp": datetime.now().isoformat()}
+        if _has_docker_socket():
+            containers = await _docker_stats_via_socket()
+            source = "docker_socket"
+        else:
+            containers = await _docker_stats_via_coolify()
+            source = "coolify_api"
+        return {
+            "containers": containers,
+            "total": len(containers),
+            "source": source,
+            "timestamp": datetime.now().isoformat(),
+        }
     except Exception as exc:
         import traceback
         traceback.print_exc()
@@ -966,34 +993,39 @@ async def api_docker_stats():
 @app.get("/api/server/openclaw/status")
 async def api_openclaw_status():
     """Retorna status do agente OpenClaws e seus cron jobs.
-    Uses mounted volumes (/opt/openclaw/cron, /opt/openclaw/config.yml)
-    and Docker Engine API for container health.
+    Tries: mounted volumes → Docker API → Coolify API (fallback chain).
     """
     try:
-        # Read cron jobs from mounted volume
+        # ── Cron jobs ──────────────────────────────────────
         cron_data = {}
         cron_path = Path("/opt/openclaw/cron/jobs.json")
         if cron_path.exists():
             cron_data = json.loads(cron_path.read_text())
 
-        # Get container health via Docker API
+        # ── Container health ──────────────────────────────
         health_info = {"health": "unknown", "state": "unknown", "started_at": ""}
-        try:
-            inspect = await _docker_api("/containers/openclaw/json")
-            state = inspect.get("State", {})
-            health_info = {
-                "health": state.get("Health", {}).get("Status", "none"),
-                "state": state.get("Status", "unknown"),
-                "started_at": state.get("StartedAt", ""),
-            }
-        except Exception:
-            pass
+        if _has_docker_socket():
+            try:
+                inspect = await _docker_api("/containers/openclaw/json")
+                state = inspect.get("State", {})
+                health_info = {
+                    "health": state.get("Health", {}).get("Status", "none"),
+                    "state": state.get("Status", "unknown"),
+                    "started_at": state.get("StartedAt", ""),
+                }
+            except Exception:
+                pass
 
-        # Read config from mounted volume
+        # ── Config ─────────────────────────────────────────
         config_info = {}
         config_path = Path("/opt/openclaw/config.yml")
         if config_path.exists():
             config_info = yaml.safe_load(config_path.read_text()) or {}
+
+        # Determine data source
+        source = "mounted_volume" if cron_path.exists() else "unavailable"
+        if _has_docker_socket():
+            source = "docker_socket+" + source
 
         return {
             "container": health_info,
@@ -1004,6 +1036,7 @@ async def api_openclaw_status():
                 "max_concurrent": config_info.get("cron", {}).get("maxConcurrentRuns", 0),
                 "gateway_port": config_info.get("gateway", {}).get("port", 0),
             },
+            "source": source,
             "timestamp": datetime.now().isoformat(),
         }
     except Exception as exc:
