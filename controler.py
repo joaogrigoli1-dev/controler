@@ -16,12 +16,12 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 # Auto-install
-DEPS = ["fastapi", "uvicorn", "pyyaml", "psutil", "httpx"]
+DEPS = ["fastapi", "uvicorn", "pyyaml", "psutil", "httpx", "boto3"]
 for dep in DEPS:
     try:
         __import__(dep)
     except ImportError:
-        os.system(f"{sys.executable} -m pip install {dep} -q")
+        os.system(f"{sys.executable} -m pip install {dep} --break-system-packages --user -q")
 
 from fastapi import FastAPI, Request, Query
 from fastapi.staticfiles import StaticFiles
@@ -39,6 +39,9 @@ from core.database import (
     add_memory_entry, delete_memory_entry,
     get_rules_text, save_rules_text
 )
+
+# SSM Parameter Store (carregado após auto-install do boto3)
+from core.ssm import get_ssm_param
 
 # Configurações
 CONFIG_PATH = Path(__file__).parent / "config" / "settings.yaml"
@@ -811,7 +814,7 @@ async def api_kpis():
 import httpx as _httpx
 
 _COOLIFY_URL = os.getenv("COOLIFY_URL", "http://62.72.63.18:8000")
-_COOLIFY_TOKEN = os.getenv("COOLIFY_TOKEN", "")
+_COOLIFY_TOKEN = os.getenv("COOLIFY_TOKEN") or get_ssm_param("/controler/coolify_token")
 
 
 async def _coolify_api(path: str) -> dict:
@@ -990,8 +993,9 @@ async def api_docker_stats():
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-OPENCLAW_BRIDGE_URL = os.getenv("OPENCLAW_BRIDGE_URL", "https://openclaw.controler.net.br")
-OPENCLAW_TOKEN     = os.getenv("OPENCLAW_TOKEN", "adc40e2b5f53fa51fca689a5697bad83f3bf802e281befa4")
+OPENCLAW_BRIDGE_URL          = os.getenv("OPENCLAW_BRIDGE_URL", "https://openclaw.controler.net.br")
+OPENCLAW_BRIDGE_INTERNAL_URL = os.getenv("OPENCLAW_BRIDGE_INTERNAL_URL", "http://openclaw:18790")
+OPENCLAW_TOKEN               = os.getenv("OPENCLAW_TOKEN") or get_ssm_param("/openclaws/controler/gateway_token")
 
 
 @app.get("/api/server/openclaw/status")
@@ -1001,20 +1005,22 @@ async def api_openclaw_status():
     """
     import httpx
     try:
-        # ── Cron jobs via bridge HTTPS API (real-time) ──────
+        # ── Cron jobs via bridge internal URL (Docker DNS, preferred) ──────
         cron_data = {}
         source = "unavailable"
-        try:
-            async with httpx.AsyncClient(timeout=8) as client:
-                r = await client.get(
-                    f"{OPENCLAW_BRIDGE_URL}/api/crons",
-                    headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}"},
-                )
-                if r.status_code == 200:
-                    cron_data = r.json()
-                    source = "bridge_api"
-        except Exception:
-            pass
+        for bridge_url in [OPENCLAW_BRIDGE_INTERNAL_URL, OPENCLAW_BRIDGE_URL]:
+            try:
+                async with httpx.AsyncClient(timeout=8) as client:
+                    r = await client.get(
+                        f"{bridge_url}/api/crons",
+                        headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}"},
+                    )
+                    if r.status_code == 200:
+                        cron_data = r.json()
+                        source = "bridge_api"
+                        break
+            except Exception:
+                pass
 
         # ── Fallback: mounted volume ────────────────────────
         if source == "unavailable":
@@ -1064,12 +1070,15 @@ async def api_openclaw_status():
 
 @app.post("/api/server/openclaw/crons/{job_id}/run")
 async def api_openclaw_run_cron(job_id: str):
-    """Dispara manualmente um cron job do OpenClaw."""
+    """Dispara manualmente um cron job do OpenClaw.
+    Usa a URL interna (Docker DNS) para evitar 404 ao chamar pelo domínio externo
+    de dentro da rede coolify.
+    """
     import httpx
     try:
         async with httpx.AsyncClient(timeout=40) as client:
             r = await client.post(
-                f"{OPENCLAW_BRIDGE_URL}/api/crons/{job_id}/run",
+                f"{OPENCLAW_BRIDGE_INTERNAL_URL}/api/crons/{job_id}/run",
                 headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}"},
             )
             return JSONResponse(r.json(), status_code=r.status_code)
@@ -1191,6 +1200,120 @@ async def api_hardware():
         import traceback
         traceback.print_exc()
         return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+# ════════════════════════════════════════
+# Credenciais (AWS SSM Parameter Store)
+# ════════════════════════════════════════
+
+_SSM_CACHE = {"data": None, "ts": 0}
+_SSM_CACHE_TTL = 300  # 5 minutos
+
+def _fetch_ssm_parameters():
+    """Busca todos os parâmetros do SSM e organiza por projeto."""
+    import time
+    now = time.time()
+    if _SSM_CACHE["data"] and (now - _SSM_CACHE["ts"]) < _SSM_CACHE_TTL:
+        return _SSM_CACHE["data"]
+
+    try:
+        import boto3
+    except ImportError:
+        os.system(f"{sys.executable} -m pip install boto3 -q")
+        import boto3
+
+    # Tenta perfil cowork-admin, senão usa default
+    try:
+        session = boto3.Session(profile_name="cowork-admin", region_name="us-east-1")
+    except Exception:
+        session = boto3.Session(region_name="us-east-1")
+
+    ssm = session.client("ssm")
+    params = []
+    next_token = None
+
+    while True:
+        kwargs = {
+            "Path": "/",
+            "Recursive": True,
+            "WithDecryption": True,
+            "MaxResults": 10,
+        }
+        if next_token:
+            kwargs["NextToken"] = next_token
+        resp = ssm.get_parameters_by_path(**kwargs)
+        params.extend(resp.get("Parameters", []))
+        next_token = resp.get("NextToken")
+        if not next_token:
+            break
+
+    # Organiza por serviço (primeiro segmento do path)
+    PROJECT_MAP = {
+        "srv1": {"name": "Servidor (srv1)", "icon": "🖥️", "project": "infraestrutura"},
+        "claude_api": {"name": "Claude API", "icon": "🤖", "project": "controler"},
+        "cloudflare": {"name": "Cloudflare", "icon": "☁️", "project": "infraestrutura"},
+        "smtp": {"name": "SMTP / Email", "icon": "📧", "project": "infraestrutura"},
+        "openclaws": {"name": "OpenClaws", "icon": "🦞", "project": "openclaws"},
+        "credentials": {"name": "AWS Credentials", "icon": "🔑", "project": "infraestrutura"},
+    }
+
+    services = {}
+    for p in params:
+        parts = p["Name"].strip("/").split("/")
+        svc = parts[0] if parts else "other"
+        key = "/".join(parts[1:]) if len(parts) > 1 else parts[0]
+
+        if svc not in services:
+            meta = PROJECT_MAP.get(svc, {"name": svc.title(), "icon": "📦", "project": "outros"})
+            services[svc] = {
+                "service": svc,
+                "name": meta["name"],
+                "icon": meta["icon"],
+                "project": meta["project"],
+                "params": [],
+            }
+
+        services[svc]["params"].append({
+            "key": key,
+            "value": p["Value"],
+            "type": p["Type"],
+            "version": p.get("Version", 1),
+            "lastModified": p["LastModifiedDate"].isoformat() if p.get("LastModifiedDate") else None,
+        })
+
+    result = {
+        "services": list(services.values()),
+        "total": len(params),
+        "cached": False,
+    }
+
+    _SSM_CACHE["data"] = result
+    _SSM_CACHE["ts"] = now
+    return result
+
+
+@app.get("/api/credentials")
+async def get_credentials():
+    """Retorna todas as credenciais do SSM organizadas por serviço."""
+    try:
+        data = _fetch_ssm_parameters()
+        return JSONResponse(data)
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(exc), "services": [], "total": 0}, status_code=500)
+
+
+@app.post("/api/credentials/refresh")
+async def refresh_credentials():
+    """Força refresh do cache de credenciais."""
+    _SSM_CACHE["data"] = None
+    _SSM_CACHE["ts"] = 0
+    try:
+        data = _fetch_ssm_parameters()
+        return JSONResponse(data)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc), "services": [], "total": 0}, status_code=500)
 
 
 # ════════════════════════════════════════
