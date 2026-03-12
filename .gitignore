@@ -20,3 +20,9 @@ node_modules/
 credentials.json
 service-account.json
 bd/
+
+# Arquivos locais / não versionáveis
+credentials-book.html
+implementa.md
+openclaw-audit.md
+MELHORIAS.md
