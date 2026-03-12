@@ -990,19 +990,40 @@ async def api_docker_stats():
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+OPENCLAW_BRIDGE_URL = os.getenv("OPENCLAW_BRIDGE_URL", "https://openclaw.controler.net.br")
+OPENCLAW_TOKEN     = os.getenv("OPENCLAW_TOKEN", "adc40e2b5f53fa51fca689a5697bad83f3bf802e281befa4")
+
+
 @app.get("/api/server/openclaw/status")
 async def api_openclaw_status():
     """Retorna status do agente OpenClaws e seus cron jobs.
-    Tries: mounted volumes → Docker API → Coolify API (fallback chain).
+    Tries: HTTPS bridge API → mounted volumes → Docker API (fallback chain).
     """
+    import httpx
     try:
-        # ── Cron jobs ──────────────────────────────────────
+        # ── Cron jobs via bridge HTTPS API (real-time) ──────
         cron_data = {}
-        cron_path = Path("/opt/openclaw/cron/jobs.json")
-        if cron_path.exists():
-            cron_data = json.loads(cron_path.read_text())
+        source = "unavailable"
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                r = await client.get(
+                    f"{OPENCLAW_BRIDGE_URL}/api/crons",
+                    headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}"},
+                )
+                if r.status_code == 200:
+                    cron_data = r.json()
+                    source = "bridge_api"
+        except Exception:
+            pass
 
-        # ── Container health ──────────────────────────────
+        # ── Fallback: mounted volume ────────────────────────
+        if source == "unavailable":
+            cron_path = Path("/opt/openclaw/cron/jobs.json")
+            if cron_path.exists():
+                cron_data = json.loads(cron_path.read_text())
+                source = "mounted_volume"
+
+        # ── Container health ───────────────────────────────
         health_info = {"health": "unknown", "state": "unknown", "started_at": ""}
         if _has_docker_socket():
             try:
@@ -1013,6 +1034,7 @@ async def api_openclaw_status():
                     "state": state.get("Status", "unknown"),
                     "started_at": state.get("StartedAt", ""),
                 }
+                source = "docker_socket+" + source
             except Exception:
                 pass
 
@@ -1021,11 +1043,6 @@ async def api_openclaw_status():
         config_path = Path("/opt/openclaw/config.yml")
         if config_path.exists():
             config_info = yaml.safe_load(config_path.read_text()) or {}
-
-        # Determine data source
-        source = "mounted_volume" if cron_path.exists() else "unavailable"
-        if _has_docker_socket():
-            source = "docker_socket+" + source
 
         return {
             "container": health_info,
@@ -1042,6 +1059,21 @@ async def api_openclaw_status():
     except Exception as exc:
         import traceback
         traceback.print_exc()
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/server/openclaw/crons/{job_id}/run")
+async def api_openclaw_run_cron(job_id: str):
+    """Dispara manualmente um cron job do OpenClaw."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=40) as client:
+            r = await client.post(
+                f"{OPENCLAW_BRIDGE_URL}/api/crons/{job_id}/run",
+                headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}"},
+            )
+            return JSONResponse(r.json(), status_code=r.status_code)
+    except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 

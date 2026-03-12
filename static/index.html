@@ -1202,6 +1202,8 @@ function OpenClawTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastTs, setLastTs] = useState(null);
+  const [runningJob, setRunningJob] = useState(null);
+  const [runResult, setRunResult] = useState({});
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -1210,6 +1212,15 @@ function OpenClawTab() {
       .then(d => { setData(d); setLastTs(new Date().toLocaleTimeString('pt-BR')); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
+
+  const runJob = useCallback((jobId) => {
+    setRunningJob(jobId);
+    setRunResult(prev => ({...prev, [jobId]: null}));
+    fetch(API + `/server/openclaw/crons/${jobId}/run`, {method:'POST'})
+      .then(r => r.json())
+      .then(d => { setRunResult(prev => ({...prev, [jobId]: d})); setRunningJob(null); setTimeout(fetchData, 3000); })
+      .catch(e => { setRunResult(prev => ({...prev, [jobId]: {error: e.message}})); setRunningJob(null); });
+  }, [fetchData]);
 
   useEffect(() => { fetchData(); }, []);
 
@@ -1306,7 +1317,20 @@ function OpenClawTab() {
                   <span className={`badge ${job.enabled ? 'badge-decision' : 'badge-cleanup'}`}>
                     {job.enabled ? 'Ativo' : 'Inativo'}
                   </span>
+                  <button
+                    className="btn btn-sm"
+                    style={{fontSize:11, padding:'2px 8px', opacity: runningJob === job.id ? 0.6 : 1}}
+                    disabled={runningJob === job.id}
+                    onClick={() => runJob(job.id)}
+                  >
+                    {runningJob === job.id ? '⏳' : '▶ Run'}
+                  </button>
                 </div>
+                {runResult[job.id] && (
+                  <div style={{background: runResult[job.id].error ? 'rgba(239,68,68,.1)' : 'rgba(34,197,94,.1)', border:'1px solid', borderColor: runResult[job.id].error ? 'rgba(239,68,68,.3)' : 'rgba(34,197,94,.3)', borderRadius:6, padding:'6px 10px', fontSize:11, marginBottom:8}}>
+                    {runResult[job.id].error ? '❌ ' + runResult[job.id].error : '✅ Enfileirado: ' + (runResult[job.id].output || JSON.stringify(runResult[job.id]))}
+                  </div>
+                )}
                 <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, fontSize:11, color:'var(--dim)', marginBottom:8}}>
                   <div>
                     <div style={{textTransform:'uppercase', letterSpacing:'.5px', fontSize:9, marginBottom:2}}>Schedule</div>
