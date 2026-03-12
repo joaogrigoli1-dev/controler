@@ -117,6 +117,16 @@ def init_db():
         updated_at  TEXT DEFAULT (datetime('now'))
     );
 
+    -- Uso do agente IA (custo por conversa)
+    CREATE TABLE IF NOT EXISTS agent_usage (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id  TEXT,
+        cost_usd    REAL NOT NULL DEFAULT 0,
+        num_turns   INTEGER DEFAULT 0,
+        duration_ms INTEGER DEFAULT 0,
+        created_at  TEXT DEFAULT (datetime('now'))
+    );
+
     """)
     conn.commit()
     conn.close()
@@ -411,3 +421,54 @@ def save_rules_text(project_id, content):
             )
     conn.commit()
     conn.close()
+
+# ── Agent Usage (custo diário) ──
+
+def log_agent_usage(project_id: str, cost_usd: float, num_turns: int = 0, duration_ms: int = 0):
+    """Registra uso do agente IA (custo por chamada)."""
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO agent_usage (project_id, cost_usd, num_turns, duration_ms) VALUES (?,?,?,?)",
+        (project_id or "geral", round(cost_usd, 6), num_turns, duration_ms)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_daily_cost(days: int = 7):
+    """Retorna custo agrupado por dia nos últimos N dias."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT
+            date(created_at) AS day,
+            round(sum(cost_usd), 6) AS total_cost,
+            count(*) AS num_calls,
+            sum(num_turns) AS total_turns
+        FROM agent_usage
+        WHERE created_at >= date('now', ?)
+        GROUP BY date(created_at)
+        ORDER BY day DESC
+    """, (f"-{days} days",)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_today_cost():
+    """Retorna custo total de hoje."""
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT
+            round(sum(cost_usd), 4) AS total_cost,
+            count(*) AS num_calls,
+            sum(num_turns) AS total_turns
+        FROM agent_usage
+        WHERE date(created_at) = date('now')
+    """).fetchone()
+    conn.close()
+    if row:
+        return {
+            "total_cost": row["total_cost"] or 0.0,
+            "num_calls": row["num_calls"] or 0,
+            "total_turns": row["total_turns"] or 0,
+        }
+    return {"total_cost": 0.0, "num_calls": 0, "total_turns": 0}

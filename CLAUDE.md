@@ -35,3 +35,39 @@ Ao iniciar: `memory_search` com o tema da tarefa. Ao terminar: `memory_save` com
 **Configuração:**
 - SCAN_DIRS em `controler.py`: `["/Users/jhgm/Documents/DEV/myclinicsoft", "/Users/jhgm/Documents/DEV/controler"]`
 - Chaves de API em variáveis de ambiente ou `config/settings.yaml`
+
+---
+
+## Regra de Deploy — Triangulação Obrigatória
+
+**NUNCA editar diretamente no servidor (srv1/Coolify/prod).**
+
+O fluxo correto é sempre:
+
+```
+Mac (dev local) → GitHub (main) → Coolify (prod)
+```
+
+1. **Mac (dev local)** — todas as edições de código acontecem aqui
+2. **GitHub** — `git push origin main` — Coolify detecta e inicia o build
+3. **Coolify (prod)** — deploy automático via webhook GitHub
+
+**Script padrão:** `python3 devops/deploy_controler.py`
+- Valida ausência de credenciais hardcoded (`devops/validate_no_secrets.sh`) antes de `git add`
+- Faz commit + push para o GitHub
+- Aciona o deploy no Coolify via API
+- Aguarda status `running:healthy` e verifica HTTPS
+
+**Segredos:** nunca no código. Ficam no **AWS SSM Parameter Store** (`/controler/*`).
+- Em prod: IAM role do container busca automaticamente
+- Em dev local: `aws ssm get-parameter --profile cowork-admin`
+
+---
+
+## Credenciais no SSM
+
+| Parâmetro SSM | Variável de Ambiente |
+|---|---|
+| `/controler/coolify_token` | `COOLIFY_TOKEN` |
+| `/controler/auth_user` | `BASIC_AUTH_USER` |
+| `/controler/auth_pass` | `BASIC_AUTH_PASS` |

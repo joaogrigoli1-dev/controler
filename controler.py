@@ -37,7 +37,8 @@ from core.database import (
     upsert_project, add_action, add_rule,
     get_memories, get_memories_count_by_type, get_memories_total,
     add_memory_entry, delete_memory_entry,
-    get_rules_text, save_rules_text
+    get_rules_text, save_rules_text,
+    log_agent_usage, get_daily_cost, get_today_cost
 )
 
 # SSM Parameter Store (carregado após auto-install do boto3)
@@ -481,15 +482,26 @@ async def api_agent_chat(request: Request):
         from core.agent import chat
         result = await chat(message, history, project_id, cli_session_id)
 
+        cost_usd   = result.get("cost_usd", 0)
+        num_turns  = result.get("num_turns", 0)
+        duration_ms = result.get("duration_ms", 0)
+
+        # Registra custo no banco para histórico diário
+        if cost_usd and cost_usd > 0:
+            try:
+                log_agent_usage(project_id, cost_usd, num_turns, duration_ms)
+            except Exception:
+                pass  # não bloqueia a resposta
+
         # Ensure all data is JSON-serializable before returning
         response_data = {
             "response": result.get("response", ""),
             "tool_calls": result.get("tool_calls", []),
             "messages": _serialize_messages(result.get("messages", [])),
             "cli_session_id": result.get("cli_session_id"),
-            "cost_usd": result.get("cost_usd", 0),
-            "num_turns": result.get("num_turns", 0),
-            "duration_ms": result.get("duration_ms", 0)
+            "cost_usd": cost_usd,
+            "num_turns": num_turns,
+            "duration_ms": duration_ms
         }
         return JSONResponse(response_data, 200)
 
@@ -687,6 +699,21 @@ async def api_overview():
         "projects": projects,
         "totalMemories": total_memories,
         "lastGlobalActivity": last_global_activity
+    }
+
+
+# ════════════════════════════════════════
+# API: Uso diário do agente IA (custo)
+# ════════════════════════════════════════
+
+@app.get("/api/usage/daily")
+async def api_usage_daily(days: int = 7):
+    """Retorna custo diário do agente IA nos últimos N dias."""
+    today = get_today_cost()
+    history = get_daily_cost(days)
+    return {
+        "today": today,
+        "history": history,
     }
 
 
@@ -1425,6 +1452,15 @@ def _seed_initial_data():
 # ════════════════════════════════════════
 
 if __name__ == "__main__":
+    import signal
+
+    # Handler de SIGTERM para graceful shutdown (rolling deploy do Coolify)
+    def _handle_sigterm(signum, frame):
+        print("\n[controler] Recebeu SIGTERM — encerrando gracefully...", flush=True)
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     # Env vars têm prioridade (útil em Docker/Coolify)
     port = int(os.getenv("PORT", CONFIG.get("server", {}).get("port", 3001)))
     host = os.getenv("HOST", CONFIG.get("server", {}).get("host", "127.0.0.1"))

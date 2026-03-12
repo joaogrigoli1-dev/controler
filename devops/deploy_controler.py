@@ -140,6 +140,27 @@ def step_git_push():
         for f in changed_files[:10]:
             print(f"      {f}")
 
+        # ── Validação de segredos ANTES de qualquer git add ──────────────────
+        log("Verificando credenciais hardcoded antes do commit...", "🔒")
+        validate_script = os.path.join(REPO_PATH, "devops", "validate_no_secrets.sh")
+        if os.path.exists(validate_script):
+            val_result = subprocess.run(
+                ["bash", validate_script],
+                cwd=REPO_PATH,
+                capture_output=True, text=True
+            )
+            print(val_result.stdout)
+            if val_result.returncode != 0:
+                print(val_result.stderr)
+                raise RuntimeError(
+                    "❌ COMMIT BLOQUEADO: credenciais hardcoded detectadas!\n"
+                    "Remova as credenciais antes de fazer deploy.\n"
+                    f"Detalhes:\n{val_result.stdout}"
+                )
+            ok("Nenhuma credencial hardcoded encontrada.")
+        else:
+            warn(f"Script validate_no_secrets.sh não encontrado em {validate_script}. Pulando validação.")
+
         # Garante branch main
         branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
         if branch != GITHUB_BRANCH:
