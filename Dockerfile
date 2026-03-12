@@ -5,6 +5,7 @@ WORKDIR /app
 # Dependências do sistema (necessário para psutil em alguns ambientes)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Cria usuário sem privilégios para rodar a aplicação
