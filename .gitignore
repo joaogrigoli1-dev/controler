@@ -10,6 +10,13 @@ venv/
 .venv/
 node_modules/
 
-# Segredos — nunca commitar
-# (tokens, senhas, chaves de API ficam APENAS em env vars do Coolify)
+# Segredos — NUNCA commitar (credenciais ficam no AWS SSM Parameter Store)
+.env.local
+.env.production
+.env.staging
+.env.*.local
+*.pem
+*.key
+credentials.json
+service-account.json
 bd/

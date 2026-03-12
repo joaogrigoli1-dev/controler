@@ -231,6 +231,10 @@ const Icon = {
   Wifi:   () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12.55a11 11 0 0114.08 0"/><path d="M1.42 9a16 16 0 0121.16 0"/><path d="M8.53 16.11a6 6 0 016.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>,
   Zap:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
   Box:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
+  Key:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>,
+  Eye:    () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+  EyeOff: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>,
+  Copy:   () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>,
 };
 
 // ── API hooks ───────────────────────────────────────────────────────────────
@@ -1265,7 +1269,7 @@ function OpenClawTab() {
         <div className="card">
           <div className="card-label">Modelo IA</div>
           <div className="card-value purple" style={{fontSize:14}}>{config?.model || '—'}</div>
-          <div className="card-sub">Claude Opus 4.5</div>
+          <div className="card-sub">{config?.model ? (config.model.includes('opus') ? 'Claude Opus' : config.model.includes('sonnet') ? 'Claude Sonnet' : config.model.includes('haiku') ? 'Claude Haiku' : 'Claude') : '—'}</div>
         </div>
         <div className="card">
           <div className="card-label">Cron Jobs</div>
@@ -1575,6 +1579,213 @@ function ProjectView() {
   );
 }
 
+// ── Credenciais Page ─────────────────────────────────────────────────────────
+function Credenciais() {
+  // String constants to avoid Babel standalone mangling UTF-8 chars
+  const STR = {
+    title: 'Credenciais',
+    subtitle: 'AWS Systems Manager \u2014 Parameter Store (SecureString / KMS)',
+    totalParams: 'Total Par\u00e2metros',
+    servicos: 'Servi\u00e7os',
+    projetos: 'Projetos',
+    encSub: 'SecureString \u2014 AES-256',
+    gruposCred: 'Grupos de credenciais',
+    orgProjeto: 'Organizados por projeto',
+    placeholder: 'Buscar credencial, servi\u00e7o ou chave...',
+    carregando: 'Carregando do SSM...',
+    parametro: 'par\u00e2metro',
+    parametros: 'par\u00e2metros',
+    dash: '\u2014',
+  };
+  const [services, setServices] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState('');
+  const [revealed, setRevealed] = useState({});
+  const [copied, setCopied] = useState(null);
+  const [filterProject, setFilterProject] = useState('all');
+  const [expandedSvc, setExpandedSvc] = useState({});
+
+  const loadData = (forceRefresh) => {
+    setLoading(true);
+    setError(null);
+    const url = forceRefresh ? API + '/credentials/refresh' : API + '/credentials';
+    const opts = forceRefresh ? { method: 'POST' } : {};
+    fetch(url, opts).then(r => r.json()).then(d => {
+      if (d.error) { setError(d.error); setServices([]); setTotal(0); }
+      else { setServices(d.services || []); setTotal(d.total || 0); }
+      setLoading(false);
+    }).catch(e => { setError(e.message); setLoading(false); });
+  };
+
+  useEffect(() => { loadData(false); }, []);
+
+  const mask = (v) => v ? '\u2022'.repeat(Math.min(v.length, 32)) : STR.dash;
+
+  const toggleReveal = (svc, key) => {
+    const id = svc + '/' + key;
+    setRevealed(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const copyVal = (val, svc, key) => {
+    navigator.clipboard.writeText(val);
+    const id = svc + '/' + key;
+    setCopied(id);
+    setTimeout(() => setCopied(null), 1500);
+  };
+
+  const toggleExpand = (svc) => {
+    setExpandedSvc(prev => ({ ...prev, [svc]: !prev[svc] }));
+  };
+
+  const projects = [...new Set(services.map(s => s.project))].sort();
+
+  const filtered = services.filter(s => {
+    if (filterProject !== 'all' && s.project !== filterProject) return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    if (s.name.toLowerCase().includes(q) || s.service.toLowerCase().includes(q)) return true;
+    return s.params.some(p => p.key.toLowerCase().includes(q));
+  });
+
+  const grouped = {};
+  filtered.forEach(s => {
+    if (!grouped[s.project]) grouped[s.project] = [];
+    grouped[s.project].push(s);
+  });
+
+  const projectLabels = {
+    infraestrutura: { label: 'Infraestrutura', icon: '🏗️', color: 'var(--cy)' },
+    controler: { label: 'Controler', icon: '🤖', color: 'var(--ac2)' },
+    openclaws: { label: 'OpenClaws', icon: '🦞', color: 'var(--or)' },
+    outros: { label: 'Outros', icon: '📦', color: 'var(--dim)' },
+  };
+
+  return (
+    <div>
+      <div className="main-header">
+        <h2>{'\uD83D\uDD10'} {STR.title}</h2>
+        <p>{STR.subtitle}</p>
+      </div>
+
+      <div className="cards">
+        <KPICard label={STR.totalParams} value={total} color="blue" sub="SSM Parameter Store" />
+        <KPICard label={STR.servicos} value={services.length} color="purple" sub={STR.gruposCred} />
+        <KPICard label={STR.projetos} value={projects.length} color="cyan" sub={STR.orgProjeto} />
+        <KPICard label="Encryption" value="KMS" color="green" sub={STR.encSub} />
+      </div>
+
+      <div style={{display:'flex', gap:10, marginBottom:18, alignItems:'center', flexWrap:'wrap'}}>
+        <div style={{position:'relative', flex:1, minWidth:200}}>
+          <input value={search} onChange={e => setSearch(e.target.value)}
+                 placeholder={STR.placeholder}
+                 style={{width:'100%', padding:'8px 12px 8px 12px', borderRadius:6, fontSize:13}} />
+        </div>
+        <select value={filterProject} onChange={e => setFilterProject(e.target.value)}
+                style={{padding:'8px 12px', borderRadius:6, fontSize:12}}>
+          <option value="all">Todos os Projetos</option>
+          {projects.map(p => <option key={p} value={p}>{(projectLabels[p]||{}).label || p}</option>)}
+        </select>
+        <button className="btn" onClick={() => loadData(true)} title="Refresh do SSM">
+          <Icon.Refresh /> Refresh
+        </button>
+      </div>
+
+      {loading && <div style={{textAlign:'center', padding:40, color:'var(--dim)'}}>{STR.carregando}</div>}
+      {error && <div style={{textAlign:'center', padding:40, color:'var(--rd)'}}>Erro: {error}</div>}
+
+      {!loading && !error && Object.keys(grouped).sort().map(proj => {
+        const meta = projectLabels[proj] || { label: proj, icon: '📦', color: 'var(--dim)' };
+        return (
+          <div key={proj} style={{marginBottom:24}}>
+            <div style={{fontSize:12, fontWeight:700, color:meta.color, textTransform:'uppercase',
+                         letterSpacing:1, marginBottom:10, display:'flex', alignItems:'center', gap:8}}>
+              <span style={{fontSize:16}}>{meta.icon}</span> {meta.label}
+            </div>
+
+            {grouped[proj].map(svc => {
+              const isOpen = expandedSvc[svc.service] !== false;
+              return (
+                <div key={svc.service} className="table-wrap" style={{marginBottom:12}}>
+                  <div className="table-header" style={{cursor:'pointer'}} onClick={() => toggleExpand(svc.service)}>
+                    <h3 style={{display:'flex', alignItems:'center', gap:8}}>
+                      <span style={{fontSize:18}}>{svc.icon}</span>
+                      {svc.name}
+                      <span style={{fontSize:11, color:'var(--dim)', fontWeight:400}}>
+                        {STR.dash} {svc.params.length} {svc.params.length === 1 ? STR.parametro : STR.parametros}
+                      </span>
+                    </h3>
+                    <span style={{fontSize:18, color:'var(--dim)', transition:'transform .2s',
+                                  transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)'}}>▾</span>
+                  </div>
+
+                  {isOpen && (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{width:'30%'}}>Chave</th>
+                          <th style={{width:'45%'}}>Valor</th>
+                          <th style={{width:'10%'}}>Tipo</th>
+                          <th style={{width:'15%', textAlign:'right'}}>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {svc.params.map(p => {
+                          const rid = svc.service + '/' + p.key;
+                          const isRevealed = revealed[rid];
+                          const isCopied = copied === rid;
+                          const isSensitive = /password|pass|secret|token|key|api|credential/i.test(p.key);
+                          return (
+                            <tr key={p.key}>
+                              <td style={{fontFamily:'monospace', fontSize:12, color:'var(--ac2)'}}>
+                                {p.key}
+                              </td>
+                              <td style={{fontFamily:'monospace', fontSize:12, wordBreak:'break-all',
+                                          color: isRevealed ? 'var(--tx)' : 'var(--dim)'}}>
+                                {isRevealed ? p.value : (isSensitive ? mask(p.value) : p.value)}
+                              </td>
+                              <td>
+                                <span className={'badge ' + (p.type === 'SecureString' ? 'badge-error' : 'badge-context')}>
+                                  {p.type === 'SecureString' ? '🔒 Secure' : p.type}
+                                </span>
+                              </td>
+                              <td style={{textAlign:'right'}}>
+                                <div style={{display:'flex', gap:4, justifyContent:'flex-end'}}>
+                                  {isSensitive && (
+                                    <button className="btn btn-sm" onClick={() => toggleReveal(svc.service, p.key)}
+                                            title={isRevealed ? 'Ocultar' : 'Revelar'}>
+                                      {isRevealed ? <Icon.EyeOff /> : <Icon.Eye />}
+                                    </button>
+                                  )}
+                                  <button className="btn btn-sm" onClick={() => copyVal(p.value, svc.service, p.key)}
+                                          title="Copiar" style={isCopied ? {borderColor:'var(--gn)', color:'var(--gn)'} : {}}>
+                                    {isCopied ? '✓' : <Icon.Copy />}
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+
+      {!loading && !error && filtered.length === 0 && (
+        <div style={{textAlign:'center', padding:40, color:'var(--dim)'}}>
+          Nenhuma credencial encontrada{search ? ' para "' + search + '"' : ''}.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main App ────────────────────────────────────────────────────────────────
 function App() {
   const [page, setPage] = useState('overview');
@@ -1618,6 +1829,9 @@ function App() {
           <div className={`nav-item ${page==='deploy'?'active':''}`} onClick={() => setPage('deploy')}>
             <Icon.Rocket /> Deploy
           </div>
+          <div className={`nav-item ${page==='credentials'?'active':''}`} onClick={() => setPage('credentials')}>
+            <Icon.Key /> Credenciais
+          </div>
 
           <div className="nav-section" style={{marginTop:24}}>Sistema</div>
           <div className="nav-item" style={{fontSize:11}}>
@@ -1639,6 +1853,7 @@ function App() {
         {page === 'kpis' && <KPIs />}
         {page === 'server' && <ServerPage />}
         {page === 'deploy' && <ProjectView />}
+        {page === 'credentials' && <Credenciais />}
       </div>
     </div>
   );

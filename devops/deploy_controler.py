@@ -25,6 +25,36 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 
+# ─── SSM helper (leve, sem dependências externas) ─────────────────────────────
+
+def _get_ssm(name: str, fallback_env: str = "") -> str:
+    """Busca parâmetro do AWS SSM. Fallback: variável de ambiente."""
+    env_val = os.environ.get(fallback_env or name.lstrip("/").replace("/", "_").upper(), "")
+    if env_val:
+        return env_val
+    try:
+        import urllib.parse
+        url = (
+            f"http://localhost:2773/systemsmanager/parameters/get"
+            f"?name={urllib.parse.quote(name)}&withDecryption=true"
+        )
+        req = urllib.request.Request(url, headers={"X-Aws-Parameters-Secrets-Token": "none"})
+        # Fallback: usar AWS CLI via subprocess se Lambda extension não estiver disponível
+        raise Exception("use cli")
+    except Exception:
+        try:
+            result = subprocess.run(
+                ["aws", "ssm", "get-parameter", "--name", name,
+                 "--with-decryption", "--query", "Parameter.Value",
+                 "--output", "text", "--profile", "cowork-admin", "--region", "us-east-1"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+    return ""
+
 # ─── Configuração ─────────────────────────────────────────────────────────────
 
 REPO_PATH      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -32,15 +62,15 @@ GITHUB_REPO    = "joaogrigoli1-dev/controler"
 GITHUB_BRANCH  = "main"
 
 COOLIFY_URL    = "http://62.72.63.18:8000"
-COOLIFY_TOKEN  = "2|PACNSa1HBN0AkS5LKsp4x5YeNS95QirqOYyAsLg30ef58ece"
-SERVER_UUID    = "j4ws844wcg400kwsc0sswocg"   # mesmo servidor do myclinicsoft
+COOLIFY_TOKEN  = os.environ.get("COOLIFY_TOKEN") or _get_ssm("/controler/coolify_token")
+SERVER_UUID    = "j4ws844wcg400kwsc0sswocg"   # UUID do servidor no Coolify (público)
 APP_UUID       = "hksw4kg8owgs0wwg0o8k4kk0"  # UUID do app no Coolify (público)
 
 DOMAIN         = "controler.net.br"
 APP_PORT       = 3001
 
-AUTH_USER      = "joaogrigoli1@gmail.com"
-AUTH_PASS      = "#45Asvdsj"
+AUTH_USER      = os.environ.get("BASIC_AUTH_USER") or _get_ssm("/controler/auth_user")
+AUTH_PASS      = os.environ.get("BASIC_AUTH_PASS") or _get_ssm("/controler/auth_pass")
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
