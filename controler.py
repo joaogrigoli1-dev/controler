@@ -38,22 +38,25 @@ from core.database import (
     get_memories, get_memories_count_by_type, get_memories_total,
     add_memory_entry, delete_memory_entry,
     get_rules_text, save_rules_text,
-    log_agent_usage, get_daily_cost, get_today_cost
+    log_agent_usage, get_daily_cost, get_today_cost,
+    add_agent_finding, get_agent_findings, get_agent_findings_summary,
+    update_finding_status, delete_agent_finding, get_agent_findings_count,
 )
 
-# SSM Parameter Store (carregado após auto-install do boto3)
 from core.ssm import get_ssm_param
 
-# Configurações
 CONFIG_PATH = Path(__file__).parent / "config" / "settings.yaml"
 with open(CONFIG_PATH) as f:
     CONFIG = yaml.safe_load(f)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# Token que os agentes OpenClaw usam para autenticar no POST /api/agent-findings
+AGENT_API_TOKEN = os.getenv("AGENT_API_TOKEN", "openclaw_controler_2026")
+
 
 # ════════════════════════════════════════
-# Lifespan (startup/shutdown)
+# Lifespan
 # ════════════════════════════════════════
 
 @asynccontextmanager
@@ -63,10 +66,11 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(title="Controler", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Controler", version="2.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# ── Basic Auth (ativo quando BASIC_AUTH_USER e BASIC_AUTH_PASS estão definidos) ──
+
+# ── Basic Auth ──────────────────────────────────────────────────────────────
 import base64 as _b64
 import hmac as _hmac
 
@@ -75,31 +79,21 @@ _BASIC_PASS = os.getenv("BASIC_AUTH_PASS", "")
 
 
 def _check_credentials(username: str, password: str) -> bool:
-    """Comparação timing-safe para evitar timing attacks."""
     if not _BASIC_USER or not _BASIC_PASS:
         return False
-    user_ok = _hmac.compare_digest(username.encode(), _BASIC_USER.encode())
-    pass_ok = _hmac.compare_digest(password.encode(), _BASIC_PASS.encode())
-    return user_ok and pass_ok
+    return (
+        _hmac.compare_digest(username.encode(), _BASIC_USER.encode()) and
+        _hmac.compare_digest(password.encode(), _BASIC_PASS.encode())
+    )
 
 
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
-    """Adiciona cabeçalhos de segurança em todas as respostas."""
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
-        "font-src 'self' data:; "
-        "connect-src 'self' https://controler.net.br"
-    )
-    # Remove cabeçalho que expõe tecnologia do servidor
     if "server" in response.headers:
         del response.headers["server"]
     return response
@@ -107,12 +101,13 @@ async def security_headers_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def basic_auth_middleware(request: Request, call_next):
-    # Se as variáveis de ambiente não estiverem definidas, auth desligada (dev local)
     if not _BASIC_USER or not _BASIC_PASS:
         return await call_next(request)
 
-    # Health-check interno do Coolify não precisa de auth
+    # Health check e agent findings (autenticados por Bearer token) ficam livres do Basic Auth
     if request.url.path in ("/health", "/api/health"):
+        return await call_next(request)
+    if request.url.path == "/api/agent-findings" and request.method == "POST":
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
@@ -131,20 +126,97 @@ async def basic_auth_middleware(request: Request, call_next):
         headers={"WWW-Authenticate": 'Basic realm="Controler"'},
     )
 
-# Flag global para evitar deploys simultâneos
+
+# Flags de deploy em andamento
 _deploy_running = False
-# Flag global para evitar syncs simultâneos
-_whatsdev_sync_running = False
 
 
 # ════════════════════════════════════════
-# Health check (para Coolify / load balancers)
+# Health check
 # ════════════════════════════════════════
 
 @app.get("/health")
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "service": "controler"}
+    return {"status": "ok", "service": "controler", "version": "2.0.0"}
+
+
+# ════════════════════════════════════════
+# API: Agent Findings (OpenClaw → Controler)
+# ════════════════════════════════════════
+
+def _verify_agent_token(request: Request) -> bool:
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return _hmac.compare_digest(auth[7:].strip(), AGENT_API_TOKEN)
+    return False
+
+
+@app.post("/api/agent-findings")
+async def api_create_finding(request: Request):
+    """Endpoint que os agentes OpenClaw usam para reportar achados."""
+    if not _verify_agent_token(request):
+        return Response("401 Unauthorized", status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON inválido"}, status_code=400)
+
+    agent_id  = body.get("agent_id", "unknown")
+    project_id = body.get("project_id", "")
+    type_     = body.get("type", "INFO").upper()
+    severity  = body.get("severity", "info").lower()
+    title     = (body.get("title") or "").strip()
+    content   = body.get("content") or body.get("description") or ""
+    metadata  = body.get("metadata")
+
+    if not title:
+        return JSONResponse({"error": "title é obrigatório"}, status_code=400)
+
+    # Normaliza severity
+    if severity not in ("critical", "high", "warning", "info"):
+        severity = "info"
+
+    finding_id = add_agent_finding(agent_id, project_id, type_, severity, title, content, metadata)
+    return JSONResponse({"created": True, "id": finding_id}, status_code=201)
+
+
+@app.get("/api/agent-findings")
+async def api_list_findings(
+    project:  str = Query(None),
+    severity: str = Query(None),
+    type:     str = Query(None),
+    status:   str = Query(None),
+    agent:    str = Query(None),
+    limit:    int = Query(100),
+    offset:   int = Query(0),
+):
+    findings = get_agent_findings(
+        project_id=project, severity=severity, type_=type,
+        status=status, agent_id=agent, limit=limit, offset=offset
+    )
+    return {"findings": findings, "count": len(findings)}
+
+
+@app.get("/api/agent-findings/summary")
+async def api_findings_summary():
+    return get_agent_findings_summary()
+
+
+@app.patch("/api/agent-findings/{finding_id}/status")
+async def api_update_finding_status(finding_id: int, request: Request):
+    body = await request.json()
+    new_status = body.get("status", "")
+    if new_status not in ("open", "ack", "resolved", "ignored"):
+        return JSONResponse({"error": "status inválido"}, status_code=400)
+    ok = update_finding_status(finding_id, new_status)
+    return {"updated": ok}
+
+
+@app.delete("/api/agent-findings/{finding_id}")
+async def api_delete_finding(finding_id: int):
+    ok = delete_agent_finding(finding_id)
+    return {"deleted": ok}
 
 
 # ════════════════════════════════════════
@@ -181,20 +253,14 @@ async def api_project(project_id: str):
 
 @app.get("/api/myclinicsoft/deploy/stream")
 async def api_deploy_stream():
-    """
-    SSE endpoint — transmite cada passo do deploy em tempo real.
-    O frontend conecta via EventSource e recebe eventos conforme ocorrem.
-    """
+    """SSE — transmite cada passo do deploy em tempo real."""
     global _deploy_running
-
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
-    # Envia evento SSE formatado
     def make_event(entry: dict) -> str:
         return f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
 
-    # Se já estiver rodando, avisa imediatamente
     if _deploy_running:
         async def already_running():
             yield make_event({"step": "lock", "status": "error",
@@ -206,11 +272,9 @@ async def api_deploy_stream():
 
     _deploy_running = True
 
-    # Callback thread-safe: chamado de dentro da thread do deploy
     def sync_callback(entry: dict):
         loop.call_soon_threadsafe(queue.put_nowait, entry)
 
-    # Roda o deploy em thread separada (execute_command é síncrono/bloqueante)
     def run_in_thread():
         global _deploy_running
         try:
@@ -225,13 +289,11 @@ async def api_deploy_stream():
             "step": "__done__", "status": "done", "result": result
         })
 
-    t = threading.Thread(target=run_in_thread, daemon=True)
-    t.start()
+    threading.Thread(target=run_in_thread, daemon=True).start()
 
     async def generator():
         try:
             while True:
-                # Timeout de 6 min (deploy inteiro nunca deve passar disso)
                 entry = await asyncio.wait_for(queue.get(), timeout=360)
                 yield make_event(entry)
                 if entry.get("step") == "__done__":
@@ -244,112 +306,22 @@ async def api_deploy_stream():
             yield make_event({"step": "__done__", "status": "done",
                               "result": {"success": False, "error": "Timeout"}})
 
-    return StreamingResponse(
-        generator(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                 "Connection": "keep-alive"}
-    )
-
-
-@app.get("/api/myclinicsoft/whatsdev-sync/stream")
-async def api_whatsdev_sync_stream():
-    """
-    SSE endpoint — transmite cada passo do sync WhatsDev em tempo real.
-    Copia whatsapp_conversations + whatsapp_messages de Prod → Dev local.
-    """
-    global _whatsdev_sync_running
-
-    loop = asyncio.get_event_loop()
-    queue: asyncio.Queue = asyncio.Queue()
-
-    def make_event(entry: dict) -> str:
-        return f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
-
-    if _whatsdev_sync_running:
-        async def already_running():
-            yield make_event({"step": "lock", "status": "error",
-                              "message": "Sync já em andamento. Aguarde terminar."})
-            yield make_event({"step": "__done__", "status": "done",
-                              "result": {"success": False, "error": "Sync em andamento"}})
-        return StreamingResponse(already_running(), media_type="text/event-stream",
-                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-    _whatsdev_sync_running = True
-
-    def sync_callback(entry: dict):
-        loop.call_soon_threadsafe(queue.put_nowait, entry)
-
-    def run_in_thread():
-        global _whatsdev_sync_running
-        try:
-            import asyncio as _aio
-            from devops.whatsdev_sync import sync
-            result = _aio.run(sync(log_callback=sync_callback))
-        except Exception as exc:
-            result = {"success": False, "error": str(exc)}
-        finally:
-            _whatsdev_sync_running = False
-        loop.call_soon_threadsafe(queue.put_nowait, {
-            "step": "__done__", "status": "done", "result": result
-        })
-
-    t = threading.Thread(target=run_in_thread, daemon=True)
-    t.start()
-
-    async def generator():
-        try:
-            while True:
-                entry = await asyncio.wait_for(queue.get(), timeout=300)
-                yield make_event(entry)
-                if entry.get("step") == "__done__":
-                    break
-        except asyncio.TimeoutError:
-            global _whatsdev_sync_running
-            _whatsdev_sync_running = False
-            yield make_event({"step": "timeout", "status": "error",
-                              "message": "Timeout: sync demorou mais de 5 minutos"})
-            yield make_event({"step": "__done__", "status": "done",
-                              "result": {"success": False, "error": "Timeout"}})
-
-    return StreamingResponse(
-        generator(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                 "Connection": "keep-alive"}
-    )
+    return StreamingResponse(generator(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                                      "Connection": "keep-alive"})
 
 
 @app.get("/api/myclinicsoft/last-update")
 async def api_last_update():
-    """
-    Retorna data/hora da última modificação em arquivos do Controler OU do MyClinicSoft.
-    Varre os dois projetos e retorna o mtime mais recente entre os dois.
-    Ignora: __pycache__, node_modules, .git, dist, .pyc, .DS_Store,
-            bd/ (SQLite muda a todo momento), arquivos binários comuns.
-    """
-    import os
-    from datetime import datetime
-
-    SCAN_DIRS = [
-        Path(__file__).parent,                          # Controler
-        Path("/Users/jhgm/Documents/DEV/myclinicsoft"),    # MyClinicSoft
-    ]
-
+    """Retorna data/hora da última modificação em arquivos do MyClinicSoft."""
+    SCAN_DIR = Path(__file__).parent.parent / "myclinicsoft"
     skip_dirs = {"__pycache__", "bd", "node_modules", ".git", "dist", ".next", "coverage"}
     skip_exts = {".pyc", ".DS_Store", ".db-shm", ".db-wal",
                  ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
-                 ".woff", ".woff2", ".ttf", ".eot",
-                 ".lock", ".map"}
-
-    latest_mtime = 0.0
-    latest_file  = ""
-
-    for scan_root in SCAN_DIRS:
-        if not scan_root.exists():
-            continue
-        label = scan_root.name  # "controler" ou "myclinicsoft"
-        for root, dirs, files in os.walk(scan_root):
+                 ".woff", ".woff2", ".ttf", ".eot", ".lock", ".map"}
+    latest_mtime, latest_file = 0.0, ""
+    if SCAN_DIR.exists():
+        for root, dirs, files in os.walk(SCAN_DIR):
             dirs[:] = [d for d in dirs if d not in skip_dirs]
             for fname in files:
                 if any(fname.endswith(e) for e in skip_exts):
@@ -359,67 +331,44 @@ async def api_last_update():
                     mtime = os.path.getmtime(fpath)
                     if mtime > latest_mtime:
                         latest_mtime = mtime
-                        rel = os.path.relpath(fpath, scan_root)
-                        latest_file = f"{label}/{rel}"
+                        latest_file = os.path.relpath(fpath, SCAN_DIR)
                 except OSError:
                     continue
-
     if latest_mtime:
-        dt = datetime.fromtimestamp(latest_mtime)
-        formatted = dt.strftime("%d/%m/%Y %H:%M")
-        return {"last_update": formatted, "file": latest_file}
+        return {"last_update": datetime.fromtimestamp(latest_mtime).strftime("%d/%m/%Y %H:%M"),
+                "file": latest_file}
     return {"last_update": None, "file": ""}
 
 
 @app.get("/api/myclinicsoft/status")
 async def api_status():
+    """Verifica saúde do app MyClinicSoft (somente app principal)."""
     from core.tools import ssh_command, coolify_api
-
     mcs_cfg = CONFIG.get("myclinicsoft", {})
     app_uuid = mcs_cfg.get("coolify_app_uuid", "jckc0ccwssowwc0oocw80ogs")
-    buf_uuid = mcs_cfg.get("coolify_buffer_uuid", "nw48cggkk4ss4g00s08s8wkw")
 
-    # Tenta Coolify API primeiro
     app_r = coolify_api(f"/applications/{app_uuid}")
-    buf_r = coolify_api(f"/applications/{buf_uuid}")
-
-    if app_r["success"] and buf_r["success"]:
+    if app_r["success"]:
         app_status = app_r["data"].get("status", "unknown")
-        buf_status = buf_r["data"].get("status", "unknown")
         app_online = "healthy" in app_status or "running" in app_status
-        buf_online = "healthy" in buf_status or "running" in buf_status
         return {
             "app": {"online": app_online, "response": app_status},
-            "buffer": {"online": buf_online, "response": buf_status},
             "coolify": True,
-            "ssh": None,
             "checked_at": datetime.now().isoformat()
         }
 
-    # Fallback: SSH direto
+    # Fallback: SSH
     ssh_ok = ssh_command("echo ok", timeout=10)
     if not ssh_ok["success"] or "ok" not in ssh_ok.get("stdout", ""):
-        return {
-            "app": {"online": False, "response": "Coolify API e SSH inacessiveis"},
-            "buffer": {"online": False, "response": "Coolify API e SSH inacessiveis"},
-            "coolify": False,
-            "ssh": False,
-            "checked_at": datetime.now().isoformat()
-        }
+        return {"app": {"online": False, "response": "SSH inacessível"},
+                "coolify": False, "checked_at": datetime.now().isoformat()}
 
-    app_r = ssh_command("curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ --max-time 5", timeout=15)
-    app_code = app_r.get("stdout", "").strip().strip("'")
-    app_online = app_r["success"] and app_code and app_code != "000"
-
-    buf_r = ssh_command("curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/ --max-time 5", timeout=15)
-    buf_code = buf_r.get("stdout", "").strip().strip("'")
-    buf_online = buf_r["success"] and buf_code and buf_code != "000"
-
+    app_r = ssh_command(
+        "curl -sf http://localhost:5000/api/health --max-time 5 | head -c 100", timeout=15)
+    app_online = app_r["success"] and "ok" in app_r.get("stdout", "")
     return {
-        "app": {"online": app_online, "response": f"HTTP {app_code}" if app_online else app_code},
-        "buffer": {"online": buf_online, "response": f"HTTP {buf_code}" if buf_online else buf_code},
+        "app": {"online": app_online, "response": app_r.get("stdout", "")[:80]},
         "coolify": False,
-        "ssh": True,
         "checked_at": datetime.now().isoformat()
     }
 
@@ -460,7 +409,7 @@ async def api_logs(project_id: str):
 
 
 # ════════════════════════════════════════
-# API: Agente IA (o motor Claude Code)
+# API: Agente IA
 # ════════════════════════════════════════
 
 @app.post("/api/agent/chat")
@@ -468,82 +417,51 @@ async def api_agent_chat(request: Request):
     try:
         body = await request.json()
     except Exception as e:
-        return JSONResponse({"error": f"Invalid JSON in request: {str(e)}"}, 400)
+        return JSONResponse({"error": f"Invalid JSON: {str(e)}"}, 400)
 
-    try:
-        message = body.get("message", "")
-        project_id = body.get("project_id")
-        history = body.get("history", [])
-        cli_session_id = body.get("cli_session_id")  # Para continuidade de sessão
+    message = body.get("message", "")
+    project_id = body.get("project_id")
+    history = body.get("history", [])
+    cli_session_id = body.get("cli_session_id")
 
-        if not message.strip():
-            return JSONResponse({"response": "Mensagem vazia.", "tool_calls": [], "messages": []}, 200)
+    if not message.strip():
+        return JSONResponse({"response": "Mensagem vazia.", "tool_calls": [], "messages": []}, 200)
 
-        from core.agent import chat
-        result = await chat(message, history, project_id, cli_session_id)
+    from core.agent import chat
+    result = await chat(message, history, project_id, cli_session_id)
 
-        cost_usd   = result.get("cost_usd", 0)
-        num_turns  = result.get("num_turns", 0)
-        duration_ms = result.get("duration_ms", 0)
+    cost_usd    = result.get("cost_usd", 0)
+    num_turns   = result.get("num_turns", 0)
+    duration_ms = result.get("duration_ms", 0)
 
-        # Registra custo no banco para histórico diário
-        if cost_usd and cost_usd > 0:
-            try:
-                log_agent_usage(project_id, cost_usd, num_turns, duration_ms)
-            except Exception:
-                pass  # não bloqueia a resposta
+    if cost_usd and cost_usd > 0:
+        try:
+            log_agent_usage(project_id, cost_usd, num_turns, duration_ms)
+        except Exception:
+            pass
 
-        # Ensure all data is JSON-serializable before returning
-        response_data = {
-            "response": result.get("response", ""),
-            "tool_calls": result.get("tool_calls", []),
-            "messages": _serialize_messages(result.get("messages", [])),
-            "cli_session_id": result.get("cli_session_id"),
-            "cost_usd": cost_usd,
-            "num_turns": num_turns,
-            "duration_ms": duration_ms
-        }
-        return JSONResponse(response_data, 200)
-
-    except Exception as e:
-        import traceback
-        error_msg = f"Error processing chat: {str(e)}"
-        traceback.print_exc()
-        return JSONResponse({
-            "error": error_msg,
-            "response": "",
-            "tool_calls": [],
-            "messages": []
-        }, 500)
+    return JSONResponse({
+        "response":       result.get("response", ""),
+        "tool_calls":     result.get("tool_calls", []),
+        "messages":       _serialize_messages(result.get("messages", [])),
+        "cli_session_id": result.get("cli_session_id"),
+        "cost_usd":       cost_usd,
+        "num_turns":      num_turns,
+        "duration_ms":    duration_ms,
+    }, 200)
 
 
 def _serialize_messages(messages: list) -> list:
-    """
-    Recursively ensure all message objects are JSON-serializable.
-    Converts any non-serializable objects to strings.
-    """
-    import json
-
     def make_serializable(obj):
-        if isinstance(obj, (str, int, float, bool, type(None))):
-            return obj
-        elif isinstance(obj, dict):
-            return {k: make_serializable(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [make_serializable(item) for item in obj]
-        else:
-            # For any other type, try str() conversion
-            return str(obj)
-
-    serializable = []
+        if isinstance(obj, (str, int, float, bool, type(None))): return obj
+        if isinstance(obj, dict): return {k: make_serializable(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)): return [make_serializable(i) for i in obj]
+        return str(obj)
+    result = []
     for msg in messages:
-        try:
-            serializable.append(make_serializable(msg))
-        except Exception as e:
-            # If even that fails, store error message
-            serializable.append({"role": "system", "content": f"[Serialization error: {str(e)}]"})
-
-    return serializable
+        try: result.append(make_serializable(msg))
+        except Exception as e: result.append({"role": "system", "content": f"[Serialization error: {e}]"})
+    return result
 
 
 # ════════════════════════════════════════
@@ -552,23 +470,14 @@ def _serialize_messages(messages: list) -> list:
 
 @app.get("/api/settings/has-key")
 async def api_has_key():
-    """Verifica se o Claude CLI está autenticado (plano Max)."""
     try:
-        import subprocess
         cli_path = os.environ.get("CLAUDE_CLI_PATH", "/Users/jhgm/.npm-global/bin/claude")
-        result = subprocess.run(
-            [cli_path, "auth", "status"],
-            capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run([cli_path, "auth", "status"],
+                                capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
-            import json as _json
-            data = _json.loads(result.stdout)
-            return {
-                "has_key": data.get("loggedIn", False),
-                "method": "claude_cli_max",
-                "email": data.get("email", ""),
-                "subscription": data.get("subscriptionType", "")
-            }
+            data = json.loads(result.stdout)
+            return {"has_key": data.get("loggedIn", False), "method": "claude_cli_max",
+                    "email": data.get("email", ""), "subscription": data.get("subscriptionType", "")}
     except Exception:
         pass
     return {"has_key": False, "method": "claude_cli_max"}
@@ -576,11 +485,7 @@ async def api_has_key():
 
 @app.post("/api/settings/api-key")
 async def api_set_key(request: Request):
-    """Legacy: mantido para compatibilidade, mas CLI usa plano Max."""
-    return JSONResponse({
-        "info": "O Controler agora usa Claude CLI com plano Max. Não é necessária API key.",
-        "saved": False
-    }, 200)
+    return JSONResponse({"info": "Use Claude CLI com plano Max.", "saved": False}, 200)
 
 
 # ════════════════════════════════════════
@@ -588,11 +493,8 @@ async def api_set_key(request: Request):
 # ════════════════════════════════════════
 
 @app.get("/api/memories")
-async def api_get_memories(
-    project: str = Query(None),
-    limit: int = Query(50),
-    search: str = Query(None)
-):
+async def api_get_memories(project: str = Query(None), limit: int = Query(50),
+                           search: str = Query(None)):
     if not project:
         return {"memories": [], "count": 0}
     memories = get_memories(project, limit, search)
@@ -604,7 +506,7 @@ async def api_add_memory(request: Request):
     body = await request.json()
     project = body.get("project")
     content = body.get("content", "").strip()
-    type_ = body.get("type", "CONTEXT")
+    type_   = body.get("type", "CONTEXT")
     if not project or not content:
         return JSONResponse({"error": "project e content são obrigatórios"}, 400)
     add_memory_entry(project, type_, content)
@@ -612,11 +514,8 @@ async def api_add_memory(request: Request):
 
 
 @app.delete("/api/memories/{memory_id}")
-async def api_delete_memory(
-    memory_id: int,
-    project: str = Query(None),
-    reason: str = Query(None)
-):
+async def api_delete_memory(memory_id: int, project: str = Query(None),
+                             reason: str = Query(None)):
     delete_memory_entry(memory_id, project or "")
     return {"deleted": True}
 
@@ -628,9 +527,7 @@ async def api_delete_memory(
 @app.get("/api/rules")
 async def api_get_rules(project: str = Query(None)):
     if project:
-        content = get_rules_text(project)
-        return {"content": content}
-    # Sem project: retorna regras gerais + lista de projetos com status
+        return {"content": get_rules_text(project)}
     general = get_rules_text(None)
     dev_path = Path.home() / "Documents" / "DEV"
     projects = []
@@ -645,9 +542,7 @@ async def api_get_rules(project: str = Query(None)):
 @app.put("/api/rules")
 async def api_save_rules(request: Request):
     body = await request.json()
-    project = body.get("project")  # None = regras gerais
-    content = body.get("content", "")
-    save_rules_text(project, content)
+    save_rules_text(body.get("project"), body.get("content", ""))
     return {"saved": True}
 
 
@@ -657,10 +552,8 @@ async def api_save_rules(request: Request):
 
 def _git_run(folder, *args, timeout=5):
     try:
-        r = subprocess.run(
-            ["git", "-C", str(folder)] + list(args),
-            capture_output=True, text=True, timeout=timeout
-        )
+        r = subprocess.run(["git", "-C", str(folder)] + list(args),
+                           capture_output=True, text=True, timeout=timeout)
         return r.stdout.strip() if r.returncode == 0 else ""
     except Exception:
         return ""
@@ -669,9 +562,7 @@ def _git_run(folder, *args, timeout=5):
 @app.get("/api/overview")
 async def api_overview():
     dev_path = Path.home() / "Documents" / "DEV"
-    projects = []
-    total_memories = 0
-    last_global_activity = None
+    projects, total_memories, last_global_activity = [], 0, None
 
     if dev_path.exists():
         for folder in sorted(dev_path.iterdir()):
@@ -681,39 +572,24 @@ async def api_overview():
             by_type = get_memories_count_by_type(proj)
             mem_count = sum(by_type.values())
             total_memories += mem_count
-            rules_txt = get_rules_text(proj)
-            has_rules = bool(rules_txt.strip())
             last_commit = _git_run(folder, "log", "-1", "--format=%ci")
-            last_activity = last_commit or None
-            if last_activity and (last_global_activity is None or last_activity > last_global_activity):
-                last_global_activity = last_activity
+            if last_commit and (last_global_activity is None or last_commit > last_global_activity):
+                last_global_activity = last_commit
             projects.append({
-                "name": proj,
-                "memories": mem_count,
-                "byType": by_type,
-                "hasRules": has_rules,
-                "lastActivity": last_activity
+                "id": proj, "name": proj,
+                "memories_count": mem_count, "memories_by_type": by_type,
+                "has_rules": bool(get_rules_text(proj).strip()),
+                "last_commit": last_commit or None,
             })
+
+    findings_open = get_agent_findings_count()
 
     return {
         "projects": projects,
-        "totalMemories": total_memories,
-        "lastGlobalActivity": last_global_activity
-    }
-
-
-# ════════════════════════════════════════
-# API: Uso diário do agente IA (custo)
-# ════════════════════════════════════════
-
-@app.get("/api/usage/daily")
-async def api_usage_daily(days: int = 7):
-    """Retorna custo diário do agente IA nos últimos N dias."""
-    today = get_today_cost()
-    history = get_daily_cost(days)
-    return {
-        "today": today,
-        "history": history,
+        "total_projects": len(projects),
+        "total_memories": total_memories,
+        "last_activity": last_global_activity,
+        "findings_open": findings_open,
     }
 
 
@@ -725,155 +601,163 @@ async def api_usage_daily(days: int = 7):
 async def api_kpis():
     dev_path = Path.home() / "Documents" / "DEV"
     project_kpis = []
-    global_type_dist = {}
-    total_memories = 0
-    total_projects = 0
-    projects_with_git = 0
-    total_commits_7d = 0
-    total_commits_30d = 0
-    active_7d = 0
-    rules_count = 0
-    health_scores = []
 
     if dev_path.exists():
         for folder in sorted(dev_path.iterdir()):
             if not folder.is_dir() or folder.name.startswith('.'):
                 continue
             proj = folder.name
-            total_projects += 1
-
+            total_raw  = _git_run(folder, "rev-list", "--count", "HEAD")
+            c7  = _git_run(folder, "log", "--oneline", "--since=7 days ago")
+            c30 = _git_run(folder, "log", "--oneline", "--since=30 days ago")
+            branches_raw = _git_run(folder, "branch", "-a")
+            last_ci = _git_run(folder, "log", "-1", "--format=%ci")
             by_type = get_memories_count_by_type(proj)
-            mem_total = sum(by_type.values())
-            total_memories += mem_total
-            for t, c in by_type.items():
-                global_type_dist[t] = global_type_dist.get(t, 0) + c
-
-            rules_txt = get_rules_text(proj)
-            has_rules = bool(rules_txt.strip())
-            if has_rules:
-                rules_count += 1
-
-            is_git = (folder / ".git").exists()
-            git_stats = {"commits7d": 0, "commits30d": 0, "totalCommits": 0,
-                         "branches": 0, "lastCommit": None}
-            staleness = -1
-
-            if is_git:
-                projects_with_git += 1
-                total_raw = _git_run(folder, "rev-list", "--count", "HEAD")
-                if total_raw.isdigit():
-                    git_stats["totalCommits"] = int(total_raw)
-
-                c7 = _git_run(folder, "log", "--oneline", "--since=7 days ago")
-                git_stats["commits7d"] = len([x for x in c7.split('\n') if x]) if c7 else 0
-
-                c30 = _git_run(folder, "log", "--oneline", "--since=30 days ago")
-                git_stats["commits30d"] = len([x for x in c30.split('\n') if x]) if c30 else 0
-
-                branches_raw = _git_run(folder, "branch", "-a")
-                git_stats["branches"] = len([x for x in branches_raw.split('\n') if x]) if branches_raw else 0
-
-                last_ci = _git_run(folder, "log", "-1", "--format=%ci")
-                if last_ci:
-                    git_stats["lastCommit"] = last_ci
-                    try:
-                        from datetime import datetime as _dt
-                        # formato: "2026-03-03 13:59:38 -0300" → pega só a data/hora sem tz
-                        date_part = last_ci[:19]  # "2026-03-03 13:59:38"
-                        last_dt = _dt.strptime(date_part, "%Y-%m-%d %H:%M:%S")
-                        staleness = (_dt.now() - last_dt).days
-                    except Exception:
-                        staleness = -1
-
-                if git_stats["commits7d"] > 0:
-                    active_7d += 1
-                total_commits_7d += git_stats["commits7d"]
-                total_commits_30d += git_stats["commits30d"]
-
-            # Health score (0-100)
-            score = 0
-            score += min(30, mem_total * 3)         # memórias: até 30pts
-            score += min(20, len(by_type) * 5)      # diversidade: até 20pts
-            if has_rules:
-                score += 20                          # tem regras: 20pts
-            if git_stats["commits7d"] > 0:
-                score += 20                          # ativo esta semana: 20pts
-            elif git_stats["commits30d"] > 0:
-                score += 10
-            if git_stats["totalCommits"] > 0:
-                score += 10                          # tem histórico git: 10pts
-            score = min(100, score)
-            health_scores.append(score)
-
-            diversity = min(100, round(len(by_type) / 5 * 100))
             project_kpis.append({
                 "project": proj,
-                "health": score,
-                "memories": {"total": mem_total},
-                "diversity": diversity,
-                "hasRules": has_rules,
-                "git": git_stats,
-                "staleness": staleness
+                "commits_total":   int(total_raw) if total_raw.isdigit() else 0,
+                "commits_7d":      len(c7.splitlines()) if c7 else 0,
+                "commits_30d":     len(c30.splitlines()) if c30 else 0,
+                "branches":        len([b for b in (branches_raw or "").splitlines() if b.strip()]),
+                "last_commit":     last_ci or None,
+                "memories_total":  sum(by_type.values()),
+                "memories_by_type": by_type,
             })
 
-    avg_health = round(sum(health_scores) / len(health_scores)) if health_scores else 0
+    cost_data  = get_daily_cost(days=30)
+    today_cost = get_today_cost()
+
     return {
-        "global": {
-            "totalCommits7d": total_commits_7d,
-            "totalCommits30d": total_commits_30d,
-            "activeProjects7d": active_7d,
-            "totalProjects": total_projects,
-            "rulesCoverage": f"{rules_count}/{total_projects}",
-            "totalMemories": total_memories,
-            "avgMemoriesPerProject": round(total_memories / total_projects) if total_projects else 0,
-            "projectsWithGit": projects_with_git,
-            "avgHealth": avg_health,
-            "typeDistribution": global_type_dist
-        },
-        "projects": project_kpis
+        "projects": project_kpis,
+        "agent_cost": {"daily": cost_data, "today": today_cost},
     }
 
 
 # ════════════════════════════════════════
-# API: Coolify Container Monitoring
+# API: Server — Coolify helpers internos
 # ════════════════════════════════════════
 
-import httpx as _httpx
+_COOLIFY_TOKEN  = os.getenv("COOLIFY_TOKEN") or get_ssm_param("/myclinicsoft/coolify_token") or ""
+_COOLIFY_BASE   = f"http://{os.getenv('COOLIFY_HOST','62.72.63.18')}:8000/api/v1"
+_COOLIFY_SERVER_UUID = "j4ws844wcg400kwsc0sswocg"
 
-_COOLIFY_URL = os.getenv("COOLIFY_URL", "http://62.72.63.18:8000")
-_COOLIFY_TOKEN = os.getenv("COOLIFY_TOKEN") or get_ssm_param("/controler/coolify_token")
+# Mapa UUID → nome legível (inclui todos os serviços e agentes OpenClaw)
+_COOLIFY_NAME_MAP = {
+    "hksw4kg8owgs0wwg0o8k4kk0": "controler",
+    "jckc0ccwssowwc0oocw80ogs":  "myclinicsoft",
+    "yow040wosgowks8o80gk88g4":  "libertakidz",
+}
 
 
-async def _coolify_api(path: str) -> dict:
-    """Helper para chamadas à API do Coolify."""
-    headers = {
-        "Authorization": f"Bearer {_COOLIFY_TOKEN}",
-        "Accept": "application/json",
-    }
-    async with _httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
-        resp = await client.get(f"{_COOLIFY_URL}/api/v1{path}", headers=headers)
+def _friendly_name(name: str) -> str:
+    for uuid_prefix, app_name in _COOLIFY_NAME_MAP.items():
+        if name.startswith(uuid_prefix):
+            return app_name
+    # OpenClaw agent containers têm nome explícito
+    if name.startswith("openclaw-"):
+        return name
+    return name
+
+
+async def _coolify_api(path: str) -> list | dict:
+    import httpx
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(f"{_COOLIFY_BASE}{path}",
+                             headers={"Authorization": f"Bearer {_COOLIFY_TOKEN}",
+                                      "Accept": "application/json"})
+        r.raise_for_status()
+        return r.json()
+
+
+_DOCKER_SOCKET = "/var/run/docker.sock"
+
+
+def _has_docker_socket() -> bool:
+    return os.path.exists(_DOCKER_SOCKET)
+
+
+async def _docker_api(path: str, method: str = "GET") -> dict | list:
+    import httpx
+    transport = httpx.AsyncHTTPTransport(uds=_DOCKER_SOCKET)
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost", timeout=15.0) as c:
+        resp = await c.request(method, path)
         resp.raise_for_status()
         return resp.json()
 
 
+async def _docker_stats_via_socket() -> list:
+    raw = await _docker_api("/containers/json?all=false")
+    containers = []
+    for c in raw:
+        name = (c.get("Names") or ["/unknown"])[0].lstrip("/")
+        containers.append({
+            "name": name, "display_name": _friendly_name(name),
+            "state": c.get("State", "unknown"), "docker_status": c.get("Status", ""),
+            "image": c.get("Image", ""), "container_id": c.get("Id", "")[:12],
+        })
+
+    async def _get_stats(cid: str):
+        try:
+            s = await _docker_api(f"/containers/{cid}/stats?stream=false&one-shot=true")
+            cpu_d = (s.get("cpu_stats",{}).get("cpu_usage",{}).get("total_usage",0) -
+                     s.get("precpu_stats",{}).get("cpu_usage",{}).get("total_usage",0))
+            sys_d = (s.get("cpu_stats",{}).get("system_cpu_usage",0) -
+                     s.get("precpu_stats",{}).get("system_cpu_usage",0))
+            n_cpu = s.get("cpu_stats",{}).get("online_cpus",1) or 1
+            cpu_pct = round((cpu_d / sys_d) * n_cpu * 100, 2) if sys_d > 0 else 0.0
+            mem = s.get("memory_stats",{})
+            mu  = mem.get("usage",0) - mem.get("stats",{}).get("cache",0)
+            ml  = mem.get("limit",1)
+            mem_pct = round((mu / ml) * 100, 2) if ml > 0 else 0.0
+            net = s.get("networks",{})
+            rx  = sum(v.get("rx_bytes",0) for v in net.values())
+            tx  = sum(v.get("tx_bytes",0) for v in net.values())
+            return cid, {
+                "cpu_percent": f"{cpu_pct}%",
+                "mem_usage":   f"{mu/1048576:.1f}MiB / {ml/1048576:.0f}MiB",
+                "mem_percent": f"{mem_pct}%",
+                "net_io":      f"{rx/1048576:.1f}MB / {tx/1048576:.1f}MB",
+                "pids":        str(s.get("pids_stats",{}).get("current",0)),
+            }
+        except Exception:
+            return cid, {}
+
+    results = await asyncio.gather(*[_get_stats(c["container_id"]) for c in containers])
+    stats_map = dict(results)
+    for c in containers:
+        c.update(stats_map.get(c["container_id"], {}))
+    return containers
+
+
+@app.get("/api/server/docker/stats")
+async def api_docker_stats():
+    try:
+        if _has_docker_socket():
+            containers = await _docker_stats_via_socket()
+            source = "docker_socket"
+        else:
+            resources = await _coolify_api(f"/servers/{_COOLIFY_SERVER_UUID}/resources")
+            containers = [{"name": r.get("uuid",""), "display_name": r.get("name","unknown"),
+                           "state": "running" if "running" in r.get("status","") else r.get("status","unknown"),
+                           "docker_status": r.get("status",""), "image": "", "container_id": r.get("uuid","")[:12],
+                           "type": r.get("type",""), "cpu_percent":"N/A","mem_usage":"N/A",
+                           "mem_percent":"N/A","net_io":"N/A","pids":"N/A"} for r in resources]
+            source = "coolify_api"
+        return {"containers": containers, "total": len(containers),
+                "source": source, "timestamp": datetime.now().isoformat()}
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 @app.get("/api/server/coolify/applications")
 async def api_coolify_applications():
-    """Retorna lista de aplicações gerenciadas pelo Coolify."""
     try:
         apps = await _coolify_api("/applications")
-        result = []
-        for a in apps:
-            result.append({
-                "uuid": a.get("uuid"),
-                "name": a.get("name"),
-                "status": a.get("status", "unknown"),
-                "fqdn": a.get("fqdn", ""),
-                "build_pack": a.get("build_pack", ""),
-                "git_repository": a.get("git_repository", ""),
-                "git_branch": a.get("git_branch", ""),
-                "ports_exposes": a.get("ports_exposes", ""),
-                "health_check_path": a.get("health_check_path", ""),
-            })
+        result = [{"uuid": a.get("uuid"), "name": a.get("name"), "status": a.get("status","unknown"),
+                   "fqdn": a.get("fqdn",""), "build_pack": a.get("build_pack",""),
+                   "git_repository": a.get("git_repository",""), "git_branch": a.get("git_branch",""),
+                   "ports_exposes": a.get("ports_exposes",""), "health_check_path": a.get("health_check_path","")}
+                  for a in apps]
         return {"applications": result, "timestamp": datetime.now().isoformat()}
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
@@ -881,232 +765,162 @@ async def api_coolify_applications():
 
 @app.get("/api/server/coolify/resources")
 async def api_coolify_resources():
-    """Retorna todos os recursos do servidor Coolify (apps, DBs, services)."""
     try:
         servers = await _coolify_api("/servers")
         server_uuid = servers[0]["uuid"] if servers else None
-        resources = []
-        if server_uuid:
-            resources = await _coolify_api(f"/servers/{server_uuid}/resources")
+        resources = await _coolify_api(f"/servers/{server_uuid}/resources") if server_uuid else []
         return {"resources": resources, "server": servers[0] if servers else None,
                 "timestamp": datetime.now().isoformat()}
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-_DOCKER_SOCKET = "/var/run/docker.sock"
-_COOLIFY_NAME_MAP = {
-    "hksw4kg8owgs0wwg0o8k4kk0": "controler",
-    "jckc0ccwssowwc0oocw80ogs": "myclinicsoft",
-    "nw48cggkk4ss4g00s08s8wkw": "whatsapp-buffer",
-}
-_COOLIFY_SERVER_UUID = "j4ws844wcg400kwsc0sswocg"
+# ════════════════════════════════════════
+# API: OpenClaw — Status de todos os 4 agentes
+# ════════════════════════════════════════
+
+_OPENCLAW_AGENTS = [
+    {"id": "myclinicsoft",  "label": "MyClinicSoft",  "icon": "🏥",
+     "volume": "/opt/openclaw-myclinicsoft", "container": "openclaw-myclinicsoft",
+     "token_env": "OPENCLAW_TOKEN_MYCLINICSOFT"},
+    {"id": "xospam",        "label": "XOSpam",        "icon": "🛡️",
+     "volume": "/opt/openclaw-xospam",       "container": "openclaw-xospam",
+     "token_env": "OPENCLAW_TOKEN_XOSPAM"},
+    {"id": "libertakidz",   "label": "LibertaKidz",   "icon": "👧",
+     "volume": "/opt/openclaw-libertakidz",  "container": "openclaw-libertakidz",
+     "token_env": "OPENCLAW_TOKEN_LIBERTAKIDZ"},
+    {"id": "controler",     "label": "Controler",      "icon": "🎛️",
+     "volume": "/opt/openclaw-controler",    "container": "openclaw-controler",
+     "token_env": "OPENCLAW_TOKEN_CONTROLER"},
+]
+
+# Token unificado ou por agente (fallback para o token padrão do controler)
+_OPENCLAW_DEFAULT_TOKEN = os.getenv("OPENCLAW_TOKEN", "")
 
 
-def _friendly_name(name: str) -> str:
-    """Resolve Coolify UUID-based names to human-readable ones."""
-    for uuid_prefix, app_name in _COOLIFY_NAME_MAP.items():
-        if name.startswith(uuid_prefix):
-            return app_name
-    return name
+async def _get_agent_status(agent: dict) -> dict:
+    """Coleta status de um agente OpenClaw via volume montado."""
+    import httpx
 
+    vol = Path(agent["volume"])
+    token = os.getenv(agent["token_env"]) or _OPENCLAW_DEFAULT_TOKEN
 
-async def _docker_api(path: str, method: str = "GET") -> dict | list:
-    """Call Docker Engine API via Unix socket (if available)."""
-    import httpx as _hx
-    transport = _hx.AsyncHTTPTransport(uds=_DOCKER_SOCKET)
-    async with _hx.AsyncClient(transport=transport, base_url="http://localhost", timeout=15.0) as client:
-        resp = await client.request(method, path)
-        resp.raise_for_status()
-        return resp.json()
-
-
-def _has_docker_socket() -> bool:
-    return os.path.exists(_DOCKER_SOCKET)
-
-
-async def _docker_stats_via_socket() -> list:
-    """Get container stats via Docker Engine API (Unix socket)."""
-    raw = await _docker_api("/containers/json?all=false")
-    containers = []
-    for c in raw:
-        name = (c.get("Names") or ["/unknown"])[0].lstrip("/")
-        containers.append({
-            "name": name,
-            "display_name": _friendly_name(name),
-            "state": c.get("State", "unknown"),
-            "docker_status": c.get("Status", ""),
-            "image": c.get("Image", ""),
-            "container_id": c.get("Id", "")[:12],
-        })
-    # Get stats for each container
-    import asyncio as _aio
-
-    async def _get_stats(cid: str):
+    # Lê gateway token do openclaw.json no volume
+    gw_token = token
+    openclaw_json = vol / "openclaw.json"
+    if openclaw_json.exists():
         try:
-            s = await _docker_api(f"/containers/{cid}/stats?stream=false&one-shot=true")
-            cpu_delta = s.get("cpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0) - \
-                        s.get("precpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0)
-            sys_delta = s.get("cpu_stats", {}).get("system_cpu_usage", 0) - \
-                        s.get("precpu_stats", {}).get("system_cpu_usage", 0)
-            n_cpus = s.get("cpu_stats", {}).get("online_cpus", 1) or 1
-            cpu_pct = round((cpu_delta / sys_delta) * n_cpus * 100, 2) if sys_delta > 0 else 0.0
-            mem = s.get("memory_stats", {})
-            mem_usage = mem.get("usage", 0) - mem.get("stats", {}).get("cache", 0)
-            mem_limit = mem.get("limit", 1)
-            mem_pct = round((mem_usage / mem_limit) * 100, 2) if mem_limit > 0 else 0.0
-            net = s.get("networks", {})
-            rx = sum(v.get("rx_bytes", 0) for v in net.values())
-            tx = sum(v.get("tx_bytes", 0) for v in net.values())
-            pids = s.get("pids_stats", {}).get("current", 0)
-            return cid, {
-                "cpu_percent": f"{cpu_pct}%",
-                "mem_usage": f"{mem_usage / 1048576:.1f}MiB / {mem_limit / 1048576:.0f}MiB",
-                "mem_percent": f"{mem_pct}%",
-                "net_io": f"{rx / 1048576:.1f}MB / {tx / 1048576:.1f}MB",
-                "pids": str(pids),
+            cfg = json.loads(openclaw_json.read_text())
+            gw_token = cfg.get("gateway",{}).get("auth",{}).get("token", token) or token
+        except Exception:
+            pass
+
+    # Porta do gateway (padrão 18789)
+    gw_port = 18789
+    if openclaw_json.exists():
+        try:
+            cfg = json.loads(openclaw_json.read_text())
+            gw_port = cfg.get("gateway",{}).get("port", 18789)
+        except Exception:
+            pass
+
+    # Container name → porta interna (cada agente tem a mesma porta 18789 no seu próprio namespace)
+    container = agent["container"]
+
+    # Status via Docker socket
+    container_health = {"health": "unknown", "state": "unknown", "started_at": ""}
+    if _has_docker_socket():
+        try:
+            inspect = await _docker_api(f"/containers/{container}/json")
+            state = inspect.get("State", {})
+            container_health = {
+                "health":     state.get("Health", {}).get("Status", "none"),
+                "state":      state.get("Status", "unknown"),
+                "started_at": state.get("StartedAt", ""),
             }
         except Exception:
-            return cid, {}
+            pass
 
-    results = await _aio.gather(*[_get_stats(c["container_id"]) for c in containers])
-    stats_map = dict(results)
-    for c in containers:
-        c.update(stats_map.get(c["container_id"], {}))
-    return containers
+    # Cron jobs via volume
+    cron_jobs = []
+    jobs_path = vol / "cron" / "jobs.json"
+    if jobs_path.exists():
+        try:
+            raw = json.loads(jobs_path.read_text())
+            jobs_list = raw if isinstance(raw, list) else raw.get("jobs", raw.get("items", []))
+            for j in jobs_list:
+                if isinstance(j, dict):
+                    cron_jobs.append({
+                        "id":          j.get("id",""),
+                        "name":        j.get("name",""),
+                        "schedule":    j.get("schedule",{}),
+                        "model":       j.get("payload",{}).get("model","default"),
+                        "last_status": j.get("state",{}).get("lastRunStatus",""),
+                        "last_run":    j.get("state",{}).get("lastRunAtMs"),
+                        "next_run":    j.get("state",{}).get("nextRunAtMs"),
+                    })
+        except Exception:
+            pass
 
+    # Modelo primário configurado
+    primary_model = "unknown"
+    if openclaw_json.exists():
+        try:
+            cfg = json.loads(openclaw_json.read_text())
+            primary_model = cfg.get("agents",{}).get("defaults",{}).get("model",{}).get("primary","unknown")
+        except Exception:
+            pass
 
-async def _docker_stats_via_coolify() -> list:
-    """Get container info via Coolify API (fallback, no CPU/MEM data)."""
-    resources = await _coolify_api(f"/servers/{_COOLIFY_SERVER_UUID}/resources")
-    containers = []
-    for r in resources:
-        containers.append({
-            "name": r.get("uuid", ""),
-            "display_name": r.get("name", "unknown"),
-            "state": "running" if "running" in r.get("status", "") else r.get("status", "unknown"),
-            "docker_status": r.get("status", ""),
-            "image": "",
-            "container_id": r.get("uuid", "")[:12],
-            "type": r.get("type", ""),
-            "cpu_percent": "N/A",
-            "mem_usage": "N/A",
-            "mem_percent": "N/A",
-            "net_io": "N/A",
-            "pids": "N/A",
-        })
-    return containers
-
-
-@app.get("/api/server/docker/stats")
-async def api_docker_stats():
-    """Retorna docker stats — via Docker socket se disponível, senão Coolify API."""
-    try:
-        if _has_docker_socket():
-            containers = await _docker_stats_via_socket()
-            source = "docker_socket"
-        else:
-            containers = await _docker_stats_via_coolify()
-            source = "coolify_api"
-        return {
-            "containers": containers,
-            "total": len(containers),
-            "source": source,
-            "timestamp": datetime.now().isoformat(),
-        }
-    except Exception as exc:
-        import traceback
-        traceback.print_exc()
-        return JSONResponse({"error": str(exc)}, status_code=500)
-
-
-OPENCLAW_BRIDGE_URL          = os.getenv("OPENCLAW_BRIDGE_URL", "https://openclaw.controler.net.br")
-OPENCLAW_BRIDGE_INTERNAL_URL = os.getenv("OPENCLAW_BRIDGE_INTERNAL_URL", "http://openclaw:18790")
-OPENCLAW_TOKEN               = os.getenv("OPENCLAW_TOKEN") or get_ssm_param("/openclaws/controler/gateway_token")
+    return {
+        "id":             agent["id"],
+        "label":          agent["label"],
+        "icon":           agent["icon"],
+        "container":      container_health,
+        "cron_jobs":      cron_jobs,
+        "primary_model":  primary_model,
+        "volume_exists":  vol.exists(),
+    }
 
 
 @app.get("/api/server/openclaw/status")
 async def api_openclaw_status():
-    """Retorna status do agente OpenClaws e seus cron jobs.
-    Tries: HTTPS bridge API → mounted volumes → Docker API (fallback chain).
-    """
-    import httpx
+    """Status de todos os 4 agentes OpenClaw."""
     try:
-        # ── Cron jobs via bridge internal URL (Docker DNS, preferred) ──────
-        cron_data = {}
-        source = "unavailable"
-        for bridge_url in [OPENCLAW_BRIDGE_INTERNAL_URL, OPENCLAW_BRIDGE_URL]:
-            try:
-                async with httpx.AsyncClient(timeout=8) as client:
-                    r = await client.get(
-                        f"{bridge_url}/api/crons",
-                        headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}"},
-                    )
-                    if r.status_code == 200:
-                        cron_data = r.json()
-                        source = "bridge_api"
-                        break
-            except Exception:
-                pass
-
-        # ── Fallback: mounted volume ────────────────────────
-        if source == "unavailable":
-            cron_path = Path("/opt/openclaw/cron/jobs.json")
-            if cron_path.exists():
-                cron_data = json.loads(cron_path.read_text())
-                source = "mounted_volume"
-
-        # ── Container health ───────────────────────────────
-        health_info = {"health": "unknown", "state": "unknown", "started_at": ""}
-        if _has_docker_socket():
-            try:
-                inspect = await _docker_api("/containers/openclaw/json")
-                state = inspect.get("State", {})
-                health_info = {
-                    "health": state.get("Health", {}).get("Status", "none"),
-                    "state": state.get("Status", "unknown"),
-                    "started_at": state.get("StartedAt", ""),
-                }
-                source = "docker_socket+" + source
-            except Exception:
-                pass
-
-        # ── Config ─────────────────────────────────────────
-        config_info = {}
-        config_path = Path("/opt/openclaw/config.yml")
-        if config_path.exists():
-            config_info = yaml.safe_load(config_path.read_text()) or {}
-
-        return {
-            "container": health_info,
-            "cron": cron_data,
-            "config": {
-                "model": config_info.get("agents", {}).get("default", {}).get("model", "unknown"),
-                "cron_enabled": config_info.get("cron", {}).get("enabled", False),
-                "max_concurrent": config_info.get("cron", {}).get("maxConcurrentRuns", 0),
-                "gateway_port": config_info.get("gateway", {}).get("port", 0),
-            },
-            "source": source,
-            "timestamp": datetime.now().isoformat(),
-        }
+        results = await asyncio.gather(*[_get_agent_status(a) for a in _OPENCLAW_AGENTS],
+                                       return_exceptions=True)
+        agents = []
+        for r in results:
+            if isinstance(r, Exception):
+                agents.append({"error": str(r)})
+            else:
+                agents.append(r)
+        return {"agents": agents, "timestamp": datetime.now().isoformat()}
     except Exception as exc:
-        import traceback
-        traceback.print_exc()
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.post("/api/server/openclaw/crons/{job_id}/run")
-async def api_openclaw_run_cron(job_id: str):
-    """Dispara manualmente um cron job do OpenClaw.
-    Usa a URL interna (Docker DNS) para evitar 404 ao chamar pelo domínio externo
-    de dentro da rede coolify.
-    """
+@app.post("/api/server/openclaw/crons/{agent_id}/{job_id}/run")
+async def api_openclaw_run_cron(agent_id: str, job_id: str):
+    """Dispara manualmente um cron job de um agente específico."""
+    agent = next((a for a in _OPENCLAW_AGENTS if a["id"] == agent_id), None)
+    if not agent:
+        return JSONResponse({"error": f"Agente '{agent_id}' não encontrado"}, 404)
+
+    vol = Path(agent["volume"])
+    gw_token = _OPENCLAW_DEFAULT_TOKEN
+    try:
+        cfg = json.loads((vol / "openclaw.json").read_text())
+        gw_token = cfg.get("gateway",{}).get("auth",{}).get("token", gw_token) or gw_token
+    except Exception:
+        pass
+
     import httpx
+    container = agent["container"]
     try:
         async with httpx.AsyncClient(timeout=40) as client:
             r = await client.post(
-                f"{OPENCLAW_BRIDGE_INTERNAL_URL}/api/crons/{job_id}/run",
-                headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}"},
+                f"http://{container}:18789/api/crons/{job_id}/run",
+                headers={"Authorization": f"Bearer {gw_token}"},
             )
             return JSONResponse(r.json(), status_code=r.status_code)
     except Exception as exc:
@@ -1119,153 +933,79 @@ async def api_openclaw_run_cron(job_id: str):
 
 @app.get("/api/hardware")
 async def api_hardware():
-    """
-    Retorna KPIs de consumo de hardware do servidor:
-    CPU, Memória, Disco, Rede, Processos.
-    """
     try:
-        import psutil
-        import platform as _plat
-
-        # ── CPU ─────────────────────────────────────────
+        import psutil, platform as _plat
         cpu_pct  = psutil.cpu_percent(interval=0.5)
         per_core = psutil.cpu_percent(interval=None, percpu=True)
         cpu_freq = psutil.cpu_freq()
-        load_avg = [round(x, 2) for x in psutil.getloadavg()] \
-                   if hasattr(psutil, "getloadavg") else [0, 0, 0]
-
-        # ── Memória ──────────────────────────────────────
+        load_avg = [round(x, 2) for x in psutil.getloadavg()] if hasattr(psutil, "getloadavg") else [0,0,0]
         mem  = psutil.virtual_memory()
         swap = psutil.swap_memory()
-
-        # ── Disco ────────────────────────────────────────
         disks = []
         for part in psutil.disk_partitions(all=False):
             try:
-                usage = psutil.disk_usage(part.mountpoint)
-                disks.append({
-                    "device":     part.device,
-                    "mountpoint": part.mountpoint,
-                    "fstype":     part.fstype,
-                    "total":      usage.total,
-                    "used":       usage.used,
-                    "free":       usage.free,
-                    "percent":    usage.percent,
-                })
+                u = psutil.disk_usage(part.mountpoint)
+                disks.append({"device": part.device, "mountpoint": part.mountpoint,
+                               "fstype": part.fstype, "total": u.total, "used": u.used,
+                               "free": u.free, "percent": u.percent})
             except (PermissionError, OSError):
                 continue
-
-        # ── Rede ─────────────────────────────────────────
-        net = psutil.net_io_counters()
-
-        # ── Sistema ──────────────────────────────────────
-        boot_dt      = datetime.fromtimestamp(psutil.boot_time())
-        uptime_secs  = (datetime.now() - boot_dt).total_seconds()
-        process_count = len(psutil.pids())
-
-        # ── Top 5 processos por CPU ───────────────────────
+        net  = psutil.net_io_counters()
+        boot = datetime.fromtimestamp(psutil.boot_time())
         top_procs = []
-        for p in sorted(
-            psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent", "status"]),
-            key=lambda x: x.info.get("cpu_percent") or 0,
-            reverse=True
-        )[:5]:
-            top_procs.append({
-                "pid":    p.info["pid"],
-                "name":   p.info["name"],
-                "cpu":    round(p.info.get("cpu_percent") or 0, 1),
-                "mem":    round(p.info.get("memory_percent") or 0, 1),
-                "status": p.info.get("status", "?"),
-            })
-
+        for p in sorted(psutil.process_iter(["pid","name","cpu_percent","memory_percent","status"]),
+                        key=lambda x: x.info.get("cpu_percent") or 0, reverse=True)[:5]:
+            top_procs.append({"pid": p.info["pid"], "name": p.info["name"],
+                               "cpu": round(p.info.get("cpu_percent") or 0, 1),
+                               "mem": round(p.info.get("memory_percent") or 0, 1),
+                               "status": p.info.get("status","?")})
         return {
-            "cpu": {
-                "percent":        cpu_pct,
-                "count_logical":  psutil.cpu_count(logical=True),
-                "count_physical": psutil.cpu_count(logical=False),
-                "freq_current":   round(cpu_freq.current, 0) if cpu_freq else None,
-                "freq_max":       round(cpu_freq.max, 0)     if cpu_freq else None,
-                "per_core":       per_core,
-                "load_avg_1m":    load_avg[0],
-                "load_avg_5m":    load_avg[1],
-                "load_avg_15m":   load_avg[2],
-            },
-            "memory": {
-                "total":        mem.total,
-                "used":         mem.used,
-                "available":    mem.available,
-                "percent":      mem.percent,
-                "swap_total":   swap.total,
-                "swap_used":    swap.used,
-                "swap_percent": swap.percent,
-            },
-            "disk":    disks,
-            "network": {
-                "bytes_sent":    net.bytes_sent,
-                "bytes_recv":    net.bytes_recv,
-                "packets_sent":  net.packets_sent,
-                "packets_recv":  net.packets_recv,
-                "errin":         net.errin,
-                "errout":        net.errout,
-            },
-            "system": {
-                "boot_time":      boot_dt.strftime("%d/%m/%Y %H:%M"),
-                "uptime_hours":   round(uptime_secs / 3600, 1),
-                "process_count":  process_count,
-                "platform":       _plat.platform(),
-                "python_version": _plat.python_version(),
-            },
+            "cpu": {"percent": cpu_pct, "count_logical": psutil.cpu_count(logical=True),
+                    "count_physical": psutil.cpu_count(logical=False),
+                    "freq_current": round(cpu_freq.current,0) if cpu_freq else None,
+                    "freq_max": round(cpu_freq.max,0) if cpu_freq else None,
+                    "per_core": per_core, "load_avg_1m": load_avg[0],
+                    "load_avg_5m": load_avg[1], "load_avg_15m": load_avg[2]},
+            "memory": {"total": mem.total, "used": mem.used, "available": mem.available,
+                       "percent": mem.percent, "swap_total": swap.total,
+                       "swap_used": swap.used, "swap_percent": swap.percent},
+            "disk": disks,
+            "network": {"bytes_sent": net.bytes_sent, "bytes_recv": net.bytes_recv,
+                        "packets_sent": net.packets_sent, "packets_recv": net.packets_recv,
+                        "errin": net.errin, "errout": net.errout},
+            "system": {"boot_time": boot.strftime("%d/%m/%Y %H:%M"),
+                       "uptime_hours": round((datetime.now()-boot).total_seconds()/3600,1),
+                       "process_count": len(psutil.pids()), "platform": _plat.platform(),
+                       "python_version": _plat.python_version()},
             "top_processes": top_procs,
-            "timestamp":     datetime.now().isoformat(),
+            "timestamp": datetime.now().isoformat(),
         }
     except ImportError:
-        return JSONResponse(
-            {"error": "psutil não instalado. Execute: pip install psutil"},
-            status_code=500
-        )
+        return JSONResponse({"error": "psutil não instalado"}, status_code=500)
     except Exception as exc:
-        import traceback
-        traceback.print_exc()
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 # ════════════════════════════════════════
-# Credenciais (AWS SSM Parameter Store)
+# Credenciais (AWS SSM)
 # ════════════════════════════════════════
 
 _SSM_CACHE = {"data": None, "ts": 0}
-_SSM_CACHE_TTL = 300  # 5 minutos
+_SSM_CACHE_TTL = 300
 
 def _fetch_ssm_parameters():
-    """Busca todos os parâmetros do SSM e organiza por projeto."""
-    import time
+    import time, boto3
     now = time.time()
     if _SSM_CACHE["data"] and (now - _SSM_CACHE["ts"]) < _SSM_CACHE_TTL:
         return _SSM_CACHE["data"]
-
-    try:
-        import boto3
-    except ImportError:
-        os.system(f"{sys.executable} -m pip install boto3 -q")
-        import boto3
-
-    # Tenta perfil cowork-admin, senão usa default
     try:
         session = boto3.Session(profile_name="cowork-admin", region_name="us-east-1")
     except Exception:
         session = boto3.Session(region_name="us-east-1")
-
     ssm = session.client("ssm")
-    params = []
-    next_token = None
-
+    params, next_token = [], None
     while True:
-        kwargs = {
-            "Path": "/",
-            "Recursive": True,
-            "WithDecryption": True,
-            "MaxResults": 10,
-        }
+        kwargs = {"Path": "/", "Recursive": True, "WithDecryption": True, "MaxResults": 10}
         if next_token:
             kwargs["NextToken"] = next_token
         resp = ssm.get_parameters_by_path(**kwargs)
@@ -1273,47 +1013,30 @@ def _fetch_ssm_parameters():
         next_token = resp.get("NextToken")
         if not next_token:
             break
-
-    # Organiza por serviço (primeiro segmento do path)
     PROJECT_MAP = {
-        "srv1": {"name": "Servidor (srv1)", "icon": "🖥️", "project": "infraestrutura"},
-        "claude_api": {"name": "Claude API", "icon": "🤖", "project": "controler"},
-        "cloudflare": {"name": "Cloudflare", "icon": "☁️", "project": "infraestrutura"},
-        "smtp": {"name": "SMTP / Email", "icon": "📧", "project": "infraestrutura"},
-        "openclaws": {"name": "OpenClaws", "icon": "🦞", "project": "openclaws"},
-        "credentials": {"name": "AWS Credentials", "icon": "🔑", "project": "infraestrutura"},
+        "srv1":        {"name": "Servidor (srv1)",   "icon": "🖥️",  "project": "infraestrutura"},
+        "claude_api":  {"name": "Claude API",        "icon": "🤖",  "project": "controler"},
+        "cloudflare":  {"name": "Cloudflare",        "icon": "☁️",  "project": "infraestrutura"},
+        "smtp":        {"name": "SMTP / Email",      "icon": "📧",  "project": "infraestrutura"},
+        "openclaws":   {"name": "OpenClaw Agents",   "icon": "🦞",  "project": "openclaws"},
+        "myclinicsoft":{"name": "MyClinicSoft",      "icon": "🏥",  "project": "myclinicsoft"},
+        "libertakidz": {"name": "LibertaKidz",       "icon": "👧",  "project": "libertakidz"},
+        "shared":      {"name": "Compartilhados",    "icon": "🔗",  "project": "infraestrutura"},
+        "credentials": {"name": "AWS Credentials",   "icon": "🔑",  "project": "infraestrutura"},
     }
-
     services = {}
     for p in params:
         parts = p["Name"].strip("/").split("/")
         svc = parts[0] if parts else "other"
         key = "/".join(parts[1:]) if len(parts) > 1 else parts[0]
-
         if svc not in services:
             meta = PROJECT_MAP.get(svc, {"name": svc.title(), "icon": "📦", "project": "outros"})
-            services[svc] = {
-                "service": svc,
-                "name": meta["name"],
-                "icon": meta["icon"],
-                "project": meta["project"],
-                "params": [],
-            }
-
-        services[svc]["params"].append({
-            "key": key,
-            "value": p["Value"],
-            "type": p["Type"],
-            "version": p.get("Version", 1),
-            "lastModified": p["LastModifiedDate"].isoformat() if p.get("LastModifiedDate") else None,
-        })
-
-    result = {
-        "services": list(services.values()),
-        "total": len(params),
-        "cached": False,
-    }
-
+            services[svc] = {"service": svc, "name": meta["name"], "icon": meta["icon"],
+                             "project": meta["project"], "params": []}
+        services[svc]["params"].append({"key": key, "value": p["Value"], "type": p["Type"],
+                                        "version": p.get("Version", 1),
+                                        "lastModified": p["LastModifiedDate"].isoformat() if p.get("LastModifiedDate") else None})
+    result = {"services": list(services.values()), "total": len(params), "cached": False}
     _SSM_CACHE["data"] = result
     _SSM_CACHE["ts"] = now
     return result
@@ -1321,24 +1044,18 @@ def _fetch_ssm_parameters():
 
 @app.get("/api/credentials")
 async def get_credentials():
-    """Retorna todas as credenciais do SSM organizadas por serviço."""
     try:
-        data = _fetch_ssm_parameters()
-        return JSONResponse(data)
+        return JSONResponse(_fetch_ssm_parameters())
     except Exception as exc:
-        import traceback
-        traceback.print_exc()
         return JSONResponse({"error": str(exc), "services": [], "total": 0}, status_code=500)
 
 
 @app.post("/api/credentials/refresh")
 async def refresh_credentials():
-    """Força refresh do cache de credenciais."""
     _SSM_CACHE["data"] = None
     _SSM_CACHE["ts"] = 0
     try:
-        data = _fetch_ssm_parameters()
-        return JSONResponse(data)
+        return JSONResponse(_fetch_ssm_parameters())
     except Exception as exc:
         return JSONResponse({"error": str(exc), "services": [], "total": 0}, status_code=500)
 
@@ -1358,113 +1075,48 @@ async def root():
 
 def _seed_initial_data():
     """Popula dados iniciais se o banco estiver vazio."""
-    projects = get_projects()
-    if projects:
-        return  # Já tem dados
+    if get_projects():
+        return
 
-    # Projeto MyClinicSoft
-    upsert_project(
-        "myclinicsoft", "MyClinicSoft", "🏥",
-        "Sistema de gestao para clinicas. Producao em 62.72.63.18 (Coolify/Docker). "
-        "App principal na porta 5000 (Nixpacks), WhatsApp Buffer na porta 3001 (Docker)."
-    )
+    upsert_project("myclinicsoft", "MyClinicSoft", "🏥",
+                   "Sistema de gestão de clínicas. Produção em 62.72.63.18 (Coolify). "
+                   "App principal na porta 5000 (Nixpacks).")
 
-    # Ação: Deploy
+    upsert_project("xospam", "XOSpam", "🛡️",
+                   "Sistema anti-spam e gestão de emails. Pipeline de filtragem com IA.")
+
+    upsert_project("libertakidz", "LibertaKidz", "👧",
+                   "Ecossistema de segurança infantil + servidor de email Stalwart.")
+
+    upsert_project("controler", "Controler", "🎛️",
+                   "Mesa de controle operacional. Agrega findings dos agentes OpenClaw.")
+
     add_action("myclinicsoft", "Deploy MyClinicSoft",
-        "Valida TypeScript → Build local → Git push (main) → Coolify restart → Health check app + buffer",
-        "deploy", {"script": "devops/deploy_myclinicsoft.py"})
+               "TypeScript check → Build → Git push (main) → Coolify restart → Health check",
+               "deploy", {"script": "devops/deploy_myclinicsoft.py"})
 
-    # Regras do projeto (persistidas no banco, não em arquivo de texto)
     rules = [
         ("deploy", "Direção única obrigatória",
-         "O caminho de codigo e SEMPRE: Local DEV (Mac) → GitHub (main) → Coolify (62.72.63.18). "
-         "O caminho inverso é PROIBIDO. Nunca puxar código de produção para local.",
+         "Código SEMPRE: Mac DEV → GitHub (main) → Coolify. Nunca editar direto no srv1.",
          "mandatory"),
-
-        ("buffer", "WhatsApp Buffer é intocável",
-         "O WhatsApp Buffer (porta 3001, Docker) NUNCA pode ser derrubado, reiniciado ou sobrescrito durante deploy. "
-         "Se o buffer estiver fora do ar, mensagens de pacientes serão PERDIDAS permanentemente. "
-         "O Meta reenvia webhooks por no máximo ~72h — após isso, a mensagem some.",
+        ("deploy", "NUNCA reiniciar myclinicsoft sem autorização",
+         "O container myclinicsoft está em produção. Reiniciar apenas com autorização explícita.",
          "mandatory"),
-
-        ("buffer", "Banco whatsapp é intocável",
-         "O banco PostgreSQL 'whatsapp' (separado do 'myclinicsoft') contém conversations, messages, etc. "
-         "NUNCA sobrescrever ou dropar tabelas desse banco. O Buffer popula esse banco em triangulação. "
-         "O DB sync do deploy só toca o banco 'myclinicsoft' — nunca o banco 'whatsapp'.",
+        ("security", "NUNCA apagar arquivos myclinicsoft",
+         "Proibido deletar arquivos na pasta myclinicsoft ou no banco de dados myclinicsoft.",
          "mandatory"),
-
-        ("deploy", "Validação obrigatória antes de deploy",
-         "npm run check deve retornar 0 erros. npm run build deve concluir sem erro. "
-         "Se falhar, o deploy NÃO pode continuar.",
-         "mandatory"),
-
-        ("deploy", "Branch obrigatório: main",
-         "Deploy só pode ser feito a partir da branch main. "
-         "Nunca fazer deploy de outra branch.",
-         "mandatory"),
-
-        ("security", "Credenciais nunca no código",
-         "DATABASE_URL de produção NUNCA commitada. Secrets ficam APENAS em "
-         "nas env vars do Coolify (nunca em código).",
-         "mandatory"),
-
-        ("buffer", "Ordem do webhook é invariante",
-         "1) res.status(200) PRIMEIRO 2) queueWebhook 3) parseWebhook 4) resolveIdentity 5) INSERT. "
-         "Reordenar causa perda de mensagens.",
-         "mandatory"),
-
-        ("deploy", "Rollback controlado",
-         "Usar make rollback apenas quando health check falha E logs mostram erro crítico. "
-         "Investigar causa ANTES de novo deploy. Buffer geralmente NÃO precisa de rollback.",
-         "warning"),
-
-        ("general", "Dados de pacientes: LGPD",
-         "Nunca puxar dump de produção com dados reais para dev. "
-         "Apenas schema-only ou dados anonimizados. CPF, telefone, nome — tudo substituído.",
-         "mandatory"),
+        ("agent", "Janela de notificação",
+         "CRITICAL: 24/7. WARNING: seg-sex 7h-21h BRT. INFO: apenas Controler, sem push.",
+         "info"),
     ]
-
-    for category, title, content, severity in rules:
-        add_rule("myclinicsoft", category, title, content, severity)
-
-    # Memória inicial
-    save_memory("myclinicsoft",
-        "# MyClinicSoft — Memória Operacional\n\n"
-        "## Arquitetura\n"
-        "- App Principal: Express + React, Coolify/Docker, porta 5000\n"
-        "- WhatsApp Buffer: Docker, porta 3001 (CRÍTICO)\n"
-        "- Banco: PostgreSQL (myclinicsoft + whatsapp — bancos separados)\n"
-        "- Servidor: 62.72.63.18 (Coolify/Docker)\n"
-        "- Deploy: GitHub push → Coolify API restart\n\n"
-        "## Decisões Vigentes\n"
-        "- Caminho único: Local → GitHub → Produção\n"
-        "- Buffer nunca pode cair\n"
-        "- Branch de deploy: main\n\n"
-        "## Estado Atual\n"
-        "- Sistema em produção estável\n"
-        "- ~13.400 pacientes, 464 conversas WhatsApp\n"
-        "- 140 tabelas no banco\n"
-    )
+    for cat, title, content, sev in rules:
+        add_rule("myclinicsoft", cat, title, content, sev)
 
 
 # ════════════════════════════════════════
-# Main
+# Entrypoint
 # ════════════════════════════════════════
 
 if __name__ == "__main__":
-    import signal
-
-    # Handler de SIGTERM para graceful shutdown (rolling deploy do Coolify)
-    def _handle_sigterm(signum, frame):
-        print("\n[controler] Recebeu SIGTERM — encerrando gracefully...", flush=True)
-        sys.exit(0)
-
-    signal.signal(signal.SIGTERM, _handle_sigterm)
-
-    # Env vars têm prioridade (útil em Docker/Coolify)
-    port = int(os.getenv("PORT", CONFIG.get("server", {}).get("port", 3001)))
-    host = os.getenv("HOST", CONFIG.get("server", {}).get("host", "127.0.0.1"))
-    print(f"\n🎛️  Controler rodando em http://{host}:{port}\n")
-    if _BASIC_USER:
-        print(f"🔒  Basic Auth ATIVO — usuário: {_BASIC_USER}\n")
-    uvicorn.run(app, host=host, port=port, log_level="info", server_header=False)
+    port = CONFIG.get("server", {}).get("port", 3001)
+    uvicorn.run("controler:app", host="0.0.0.0", port=port, reload=False, log_level="info")

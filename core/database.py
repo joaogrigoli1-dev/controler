@@ -45,23 +45,24 @@ def init_db():
         project_id  TEXT NOT NULL REFERENCES projects(id),
         name        TEXT NOT NULL,
         description TEXT,
-        action_type TEXT NOT NULL,  -- 'deploy', 'script', 'check', 'custom'
-        config      TEXT,           -- JSON com parâmetros específicos
+        action_type TEXT NOT NULL,
+        config      TEXT,
         sort_order  INTEGER DEFAULT 0,
         active      INTEGER DEFAULT 1
     );
 
-    -- Regras persistentes por projeto (não se perdem no reinício)
+    -- Regras persistentes por projeto
     CREATE TABLE IF NOT EXISTS rules (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id  TEXT NOT NULL REFERENCES projects(id),
-        category    TEXT NOT NULL,  -- 'deploy', 'security', 'buffer', 'agent', 'general'
+        category    TEXT NOT NULL,
         title       TEXT NOT NULL,
         content     TEXT NOT NULL,
-        severity    TEXT DEFAULT 'mandatory',  -- 'mandatory', 'warning', 'info'
+        severity    TEXT DEFAULT 'mandatory',
         created_at  TEXT DEFAULT (datetime('now')),
         active      INTEGER DEFAULT 1
     );
+
 
     -- Memória geral por projeto (substituível, versionada)
     CREATE TABLE IF NOT EXISTS memory (
@@ -77,8 +78,8 @@ def init_db():
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id  TEXT NOT NULL REFERENCES projects(id),
         action_type TEXT NOT NULL,
-        status      TEXT NOT NULL,  -- 'success', 'failed', 'running', 'cancelled'
-        logs        TEXT,           -- JSON com detalhes
+        status      TEXT NOT NULL,
+        logs        TEXT,
         started_at  TEXT DEFAULT (datetime('now')),
         finished_at TEXT,
         elapsed_sec REAL
@@ -89,7 +90,7 @@ def init_db():
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id  TEXT,
         title       TEXT,
-        messages    TEXT NOT NULL,  -- JSON array de mensagens
+        messages    TEXT NOT NULL,
         created_at  TEXT DEFAULT (datetime('now')),
         updated_at  TEXT DEFAULT (datetime('now'))
     );
@@ -125,6 +126,23 @@ def init_db():
         num_turns   INTEGER DEFAULT 0,
         duration_ms INTEGER DEFAULT 0,
         created_at  TEXT DEFAULT (datetime('now'))
+    );
+
+
+    -- Findings reportados pelos agentes OpenClaw (monitoramento autônomo)
+    -- Cada agente POST aqui quando detecta erros, melhorias, anomalias, etc.
+    CREATE TABLE IF NOT EXISTS agent_findings (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id    TEXT NOT NULL,          -- 'openclaw-myclinicsoft', 'openclaw-xospam', etc.
+        project_id  TEXT NOT NULL,          -- 'myclinicsoft', 'xospam', 'libertakidz', 'controler'
+        type        TEXT NOT NULL,          -- 'ERROR', 'SUGGESTION', 'PERFORMANCE', 'COMPETITOR_INSIGHT', 'DAILY_REPORT', 'SECURITY'
+        severity    TEXT DEFAULT 'info',    -- 'critical', 'high', 'warning', 'info'
+        title       TEXT NOT NULL,
+        content     TEXT,                   -- Detalhes completos (markdown suportado)
+        metadata    TEXT,                   -- JSON adicional (ex: log excerpt, stack trace)
+        status      TEXT DEFAULT 'open',    -- 'open', 'ack', 'resolved', 'ignored'
+        created_at  TEXT DEFAULT (datetime('now')),
+        updated_at  TEXT DEFAULT (datetime('now'))
     );
 
     """)
@@ -422,10 +440,10 @@ def save_rules_text(project_id, content):
     conn.commit()
     conn.close()
 
+
 # ── Agent Usage (custo diário) ──
 
 def log_agent_usage(project_id: str, cost_usd: float, num_turns: int = 0, duration_ms: int = 0):
-    """Registra uso do agente IA (custo por chamada)."""
     conn = get_conn()
     conn.execute(
         "INSERT INTO agent_usage (project_id, cost_usd, num_turns, duration_ms) VALUES (?,?,?,?)",
@@ -436,7 +454,6 @@ def log_agent_usage(project_id: str, cost_usd: float, num_turns: int = 0, durati
 
 
 def get_daily_cost(days: int = 7):
-    """Retorna custo agrupado por dia nos últimos N dias."""
     conn = get_conn()
     rows = conn.execute("""
         SELECT
@@ -454,7 +471,6 @@ def get_daily_cost(days: int = 7):
 
 
 def get_today_cost():
-    """Retorna custo total de hoje."""
     conn = get_conn()
     row = conn.execute("""
         SELECT
@@ -472,3 +488,109 @@ def get_today_cost():
             "total_turns": row["total_turns"] or 0,
         }
     return {"total_cost": 0.0, "num_calls": 0, "total_turns": 0}
+
+
+# ── Agent Findings ──
+
+def add_agent_finding(agent_id: str, project_id: str, type_: str, severity: str,
+                      title: str, content: str = None, metadata: dict = None) -> int:
+    conn = get_conn()
+    cur = conn.execute(
+        """INSERT INTO agent_findings
+           (agent_id, project_id, type, severity, title, content, metadata)
+           VALUES (?,?,?,?,?,?,?)""",
+        (agent_id, project_id, type_, severity, title, content,
+         json.dumps(metadata, ensure_ascii=False) if metadata else None)
+    )
+    finding_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return finding_id
+
+
+def get_agent_findings(project_id=None, severity=None, type_=None,
+                       status=None, agent_id=None, limit=100, offset=0):
+    conn = get_conn()
+    clauses, params = [], []
+    if project_id:
+        clauses.append("project_id=?"); params.append(project_id)
+    if severity:
+        clauses.append("severity=?"); params.append(severity)
+    if type_:
+        clauses.append("type=?"); params.append(type_)
+    if status:
+        clauses.append("status=?"); params.append(status)
+    if agent_id:
+        clauses.append("agent_id=?"); params.append(agent_id)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(
+        f"SELECT * FROM agent_findings {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        params + [limit, offset]
+    ).fetchall()
+    conn.close()
+    return list_from_rows(rows)
+
+
+def get_agent_findings_summary():
+    """Retorna KPIs dos findings: contagem por projeto, severidade e status."""
+    conn = get_conn()
+
+    by_severity = {r['severity']: r['cnt'] for r in conn.execute(
+        "SELECT severity, COUNT(*) as cnt FROM agent_findings WHERE status NOT IN ('resolved','ignored') GROUP BY severity"
+    ).fetchall()}
+
+    by_project = {r['project_id']: r['cnt'] for r in conn.execute(
+        "SELECT project_id, COUNT(*) as cnt FROM agent_findings WHERE status NOT IN ('resolved','ignored') GROUP BY project_id"
+    ).fetchall()}
+
+    by_status = {r['status']: r['cnt'] for r in conn.execute(
+        "SELECT status, COUNT(*) as cnt FROM agent_findings GROUP BY status"
+    ).fetchall()}
+
+    last_24h = conn.execute(
+        "SELECT COUNT(*) as cnt FROM agent_findings WHERE created_at >= datetime('now','-1 day')"
+    ).fetchone()['cnt']
+
+    last_activity = conn.execute(
+        "SELECT created_at FROM agent_findings ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    last_activity = last_activity['created_at'] if last_activity else None
+
+    conn.close()
+    return {
+        "by_severity": by_severity,
+        "by_project":  by_project,
+        "by_status":   by_status,
+        "last_24h":    last_24h,
+        "last_activity": last_activity,
+    }
+
+
+def update_finding_status(finding_id: int, status: str) -> bool:
+    conn = get_conn()
+    cur = conn.execute(
+        "UPDATE agent_findings SET status=?, updated_at=datetime('now') WHERE id=?",
+        (status, finding_id)
+    )
+    changed = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def delete_agent_finding(finding_id: int) -> bool:
+    conn = get_conn()
+    cur = conn.execute("DELETE FROM agent_findings WHERE id=?", (finding_id,))
+    changed = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return changed
+
+
+def get_agent_findings_count():
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) as n FROM agent_findings WHERE status NOT IN ('resolved','ignored')"
+    ).fetchone()
+    conn.close()
+    return row['n'] if row else 0
