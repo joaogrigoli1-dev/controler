@@ -314,6 +314,7 @@ const Icon = {
   Clock:  () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
   AlertTriangle: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
   ChevronDown: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>,
+  ExternalLink: () => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>,
 };
 
 // ── API hooks ───────────────────────────────────────────────────────────────
@@ -1722,12 +1723,19 @@ function AgentsPage() {
 
   return (
     <div>
-      <div className="main-header">
-        <h2 style={{display:'flex',alignItems:'center',gap:10}}>
-          <Icon.Bot /> Agentes OpenClaw
-          <span className="openclaw-badge">4 agentes ativos</span>
-        </h2>
-        <p>Monitoramento aut\u00f4nomo 24/7 \u00b7 Findings em tempo real</p>
+      <div className="main-header" style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:16}}>
+        <div>
+          <h2 style={{display:'flex',alignItems:'center',gap:10}}>
+            <Icon.Bot /> Agentes OpenClaw
+            <span className="openclaw-badge">4 agentes ativos</span>
+          </h2>
+          <p>Monitoramento aut\u00f4nomo 24/7 \u00b7 Findings em tempo real</p>
+        </div>
+        <a href="https://app.openclaw.ai" target="_blank" rel="noopener noreferrer"
+          className="btn btn-primary"
+          style={{flexShrink:0,marginTop:2,textDecoration:'none',display:'inline-flex',alignItems:'center',gap:6}}>
+          <Icon.ExternalLink /> Abrir Gerenciador
+        </a>
       </div>
 
       <div className="agent-grid">
