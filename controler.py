@@ -127,8 +127,6 @@ async def basic_auth_middleware(request: Request, call_next):
     )
 
 
-# Flags de deploy em andamento
-_deploy_running = False
 
 
 # ════════════════════════════════════════
@@ -247,130 +245,78 @@ async def api_project(project_id: str):
     return project
 
 
+
 # ════════════════════════════════════════
-# API: Deploy MyClinicSoft
+# API: Containers (Coolify Docker)
 # ════════════════════════════════════════
 
-@app.get("/api/myclinicsoft/deploy/stream")
-async def api_deploy_stream():
-    """SSE — transmite cada passo do deploy em tempo real."""
-    global _deploy_running
-    loop = asyncio.get_event_loop()
-    queue: asyncio.Queue = asyncio.Queue()
+@app.get("/api/containers")
+async def api_containers():
+    """Lista containers Docker do srv1 via Coolify API + docker stats."""
+    import httpx
+    containers = []
+    disk_used, disk_total, total_mem_gb = "?", "?", "?"
 
-    def make_event(entry: dict) -> str:
-        return f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            # Get resources from Coolify
+            r = await client.get(f"{_COOLIFY_BASE}/resources",
+                                 headers={"Authorization": f"Bearer {_COOLIFY_TOKEN}",
+                                           "Accept": "application/json"})
+            resources = r.json() if r.status_code == 200 else []
 
-    if _deploy_running:
-        async def already_running():
-            yield make_event({"step": "lock", "status": "error",
-                              "message": "Deploy já em andamento. Aguarde terminar."})
-            yield make_event({"step": "__done__", "status": "done",
-                              "result": {"success": False, "error": "Deploy em andamento"}})
-        return StreamingResponse(already_running(), media_type="text/event-stream",
-                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+            # Get server details for disk/mem
+            try:
+                sr = await client.get(f"{_COOLIFY_BASE}/servers/{_COOLIFY_SERVER_UUID}",
+                                      headers={"Authorization": f"Bearer {_COOLIFY_TOKEN}",
+                                                "Accept": "application/json"})
+                if sr.status_code == 200:
+                    sd = sr.json().get("settings", {})
+                    # Server info may vary by Coolify version
+            except Exception:
+                pass
 
-    _deploy_running = True
+            # Build container list from resources
+            for res in resources:
+                name = res.get("name", "?")
+                uuid = res.get("uuid", "")
+                status = res.get("status", "unknown")
+                rtype = res.get("type", "")
 
-    def sync_callback(entry: dict):
-        loop.call_soon_threadsafe(queue.put_nowait, entry)
+                containers.append({
+                    "id": uuid,
+                    "name": _friendly_name(name) if uuid in _COOLIFY_NAME_MAP else name,
+                    "image": res.get("image", res.get("docker_compose_location", "—")),
+                    "status": status,
+                    "cpu": None,
+                    "mem_mb": None,
+                    "ports": "",
+                })
 
-    def run_in_thread():
-        global _deploy_running
-        try:
-            import asyncio as _aio
-            from devops.deploy_myclinicsoft import deploy
-            result = _aio.run(deploy(log_callback=sync_callback))
-        except Exception as exc:
-            result = {"success": False, "error": str(exc), "logs": []}
-        finally:
-            _deploy_running = False
-        loop.call_soon_threadsafe(queue.put_nowait, {
-            "step": "__done__", "status": "done", "result": result
-        })
+    except Exception as exc:
+        # Fallback: return error info
+        return {"containers": [], "error": str(exc), "disk_used": "?", "disk_total": "?", "total_mem_gb": "?"}
 
-    threading.Thread(target=run_in_thread, daemon=True).start()
-
-    async def generator():
-        try:
-            while True:
-                entry = await asyncio.wait_for(queue.get(), timeout=360)
-                yield make_event(entry)
-                if entry.get("step") == "__done__":
-                    break
-        except asyncio.TimeoutError:
-            global _deploy_running
-            _deploy_running = False
-            yield make_event({"step": "timeout", "status": "error",
-                              "message": "Timeout: deploy demorou mais de 6 minutos"})
-            yield make_event({"step": "__done__", "status": "done",
-                              "result": {"success": False, "error": "Timeout"}})
-
-    return StreamingResponse(generator(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                                      "Connection": "keep-alive"})
-
-
-@app.get("/api/myclinicsoft/last-update")
-async def api_last_update():
-    """Retorna data/hora da última modificação em arquivos do MyClinicSoft."""
-    SCAN_DIR = Path(__file__).parent.parent / "myclinicsoft"
-    skip_dirs = {"__pycache__", "bd", "node_modules", ".git", "dist", ".next", "coverage"}
-    skip_exts = {".pyc", ".DS_Store", ".db-shm", ".db-wal",
-                 ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
-                 ".woff", ".woff2", ".ttf", ".eot", ".lock", ".map"}
-    latest_mtime, latest_file = 0.0, ""
-    if SCAN_DIR.exists():
-        for root, dirs, files in os.walk(SCAN_DIR):
-            dirs[:] = [d for d in dirs if d not in skip_dirs]
-            for fname in files:
-                if any(fname.endswith(e) for e in skip_exts):
-                    continue
-                fpath = os.path.join(root, fname)
-                try:
-                    mtime = os.path.getmtime(fpath)
-                    if mtime > latest_mtime:
-                        latest_mtime = mtime
-                        latest_file = os.path.relpath(fpath, SCAN_DIR)
-                except OSError:
-                    continue
-    if latest_mtime:
-        return {"last_update": datetime.fromtimestamp(latest_mtime).strftime("%d/%m/%Y %H:%M"),
-                "file": latest_file}
-    return {"last_update": None, "file": ""}
-
-
-@app.get("/api/myclinicsoft/status")
-async def api_status():
-    """Verifica saúde do app MyClinicSoft (somente app principal)."""
-    from core.tools import ssh_command, coolify_api
-    mcs_cfg = CONFIG.get("myclinicsoft", {})
-    app_uuid = mcs_cfg.get("coolify_app_uuid", "jckc0ccwssowwc0oocw80ogs")
-
-    app_r = coolify_api(f"/applications/{app_uuid}")
-    if app_r["success"]:
-        app_status = app_r["data"].get("status", "unknown")
-        app_online = "healthy" in app_status or "running" in app_status
-        return {
-            "app": {"online": app_online, "response": app_status},
-            "coolify": True,
-            "checked_at": datetime.now().isoformat()
-        }
-
-    # Fallback: SSH
-    ssh_ok = ssh_command("echo ok", timeout=10)
-    if not ssh_ok["success"] or "ok" not in ssh_ok.get("stdout", ""):
-        return {"app": {"online": False, "response": "SSH inacessível"},
-                "coolify": False, "checked_at": datetime.now().isoformat()}
-
-    app_r = ssh_command(
-        "curl -sf http://localhost:5000/api/health --max-time 5 | head -c 100", timeout=15)
-    app_online = app_r["success"] and "ok" in app_r.get("stdout", "")
     return {
-        "app": {"online": app_online, "response": app_r.get("stdout", "")[:80]},
-        "coolify": False,
-        "checked_at": datetime.now().isoformat()
+        "containers": containers,
+        "disk_used": disk_used,
+        "disk_total": disk_total,
+        "total_mem_gb": total_mem_gb,
     }
+
+
+@app.post("/api/containers/{app_uuid}/restart")
+async def api_container_restart(app_uuid: str):
+    """Restart a container via Coolify API."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(f"{_COOLIFY_BASE}/applications/{app_uuid}/restart",
+                                  headers={"Authorization": f"Bearer {_COOLIFY_TOKEN}",
+                                            "Accept": "application/json"})
+            return {"success": r.status_code < 400, "status_code": r.status_code}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
 
 
 # ════════════════════════════════════════
@@ -627,9 +573,56 @@ async def api_kpis():
     cost_data  = get_daily_cost(days=30)
     today_cost = get_today_cost()
 
+    # Compute global aggregation expected by frontend
+    total_commits_7d  = sum(p["commits_7d"] for p in project_kpis)
+    total_commits_30d = sum(p["commits_30d"] for p in project_kpis)
+    total_memories    = sum(p["memories_total"] for p in project_kpis)
+    active_7d         = sum(1 for p in project_kpis if p["commits_7d"] > 0)
+    with_rules        = sum(1 for p in project_kpis if len(get_rules(p["project"])) > 0)
+    with_git          = sum(1 for p in project_kpis if p["commits_total"] > 0)
+    n = len(project_kpis) or 1
+
+    # Type distribution across all projects
+    type_dist = {}
+    for p in project_kpis:
+        for t, c in p["memories_by_type"].items():
+            type_dist[t] = type_dist.get(t, 0) + c
+
+    # Health score: simple heuristic (commits + memories + rules coverage)
+    def _health(p):
+        score = 0
+        if p["commits_7d"] > 0: score += 30
+        elif p["commits_30d"] > 0: score += 15
+        if p["memories_total"] > 2: score += 25
+        elif p["memories_total"] > 0: score += 10
+        if len(get_rules(p["project"])) > 0: score += 25
+        if p["commits_total"] > 10: score += 20
+        return min(score, 100)
+
+    per_project = []
+    for p in project_kpis:
+        h = _health(p)
+        per_project.append({**p, "health": h,
+                            "diversity": len(p["memories_by_type"]),
+                            "staleness": "ativo" if p["commits_7d"] > 0 else "inativo" if p["commits_30d"] == 0 else "lento"})
+
+    avg_health = round(sum(_health(p) for p in project_kpis) / n)
+
     return {
-        "projects": project_kpis,
+        "projects": per_project,
         "agent_cost": {"daily": cost_data, "today": today_cost},
+        "global": {
+            "totalProjects": len(project_kpis),
+            "totalCommits7d": total_commits_7d,
+            "totalCommits30d": total_commits_30d,
+            "activeProjects7d": active_7d,
+            "totalMemories": total_memories,
+            "avgMemoriesPerProject": round(total_memories / n, 1),
+            "rulesCoverage": with_rules,
+            "projectsWithGit": with_git,
+            "avgHealth": avg_health,
+            "typeDistribution": type_dist,
+        },
     }
 
 

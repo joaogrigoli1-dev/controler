@@ -741,17 +741,16 @@ function KPIs() {
                     <span style={{fontWeight:700, color:scoreColor(p.health), fontSize:13}}>{p.health}</span>
                   </div>
                 </td>
-                <td>{p.memories.total}</td>
-                <td><span style={{color: p.diversity>=70?'var(--gn)':p.diversity>=40?'var(--yw)':'var(--rd)'}}>{p.diversity}%</span></td>
-                <td>{p.hasRules ? <span style={{color:'var(--gn)'}}>✓</span> : <span style={{color:'var(--rd)'}}>✗</span>}</td>
-                <td style={{color: p.git.commits7d>0?'var(--gn)':'var(--dim)'}}>{p.git.commits7d}</td>
-                <td>{p.git.commits30d}</td>
-                <td>{p.git.totalCommits}</td>
+                <td>{p.memories_total}</td>
+                <td>{p.diversity}</td>
+                <td>{p.memories_total > 0 ? <span style={{color:'var(--gn)'}}>✓</span> : <span style={{color:'var(--rd)'}}>✗</span>}</td>
+                <td style={{color: p.commits_7d>0?'var(--gn)':'var(--dim)'}}>{p.commits_7d}</td>
+                <td>{p.commits_30d}</td>
+                <td>{p.commits_total}</td>
                 <td>
-                  {p.staleness < 0 ? <span style={{color:'var(--dim)'}}>—</span>
-                  : p.staleness <= 3 ? <span style={{color:'var(--gn)'}}>{p.staleness}d</span>
-                  : p.staleness <= 7 ? <span style={{color:'var(--yw)'}}>{p.staleness}d</span>
-                  : <span style={{color:'var(--rd)'}}>{p.staleness}d</span>}
+                  {p.staleness === 'ativo' ? <span style={{color:'var(--gn)'}}>ativo</span>
+                  : p.staleness === 'lento' ? <span style={{color:'var(--yw)'}}>lento</span>
+                  : <span style={{color:'var(--rd)'}}>inativo</span>}
                 </td>
               </tr>
             ))}
@@ -1335,121 +1334,78 @@ function OpenClawTab() {
 }
 
 // ── Project Page (MyClinicSoft) ──────────────────────────────────────────────
-function ProjectView() {
-  const [status, setStatus] = useState(null);
-  const [statusLoading, setStatusLoading] = useState(true);
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const [deploying, setDeploying] = useState(false);
-  const [logs, setLogs] = useState([]);
-  const [result, setResult] = useState(null);
-  const { data: memData } = useFetch('/memories?project=myclinicsoft&limit=10');
+// ── Containers Page (Coolify) ────────────────────────────────────────────────
+function ContainersPage() {
+  const { data, loading, refetch } = useFetch('/containers');
+  const [actionLoading, setActionLoading] = useState(null);
 
-  const fetchStatus = useCallback(() => {
-    setStatusLoading(true);
-    fetch(API + '/myclinicsoft/status').then(r => r.json()).catch(() => null)
-      .then(s => { setStatus(s); setStatusLoading(false); });
-    fetch(API + '/myclinicsoft/last-update').then(r => r.json()).catch(() => null)
-      .then(d => { if (d) setLastUpdate(d); });
-  }, []);
-
-  useEffect(fetchStatus, []);
-
-  const startDeploy = () => {
-    setDeploying(true); setLogs([]); setResult(null);
-    const es = new EventSource(API + '/myclinicsoft/deploy/stream');
-    let gotMessage = false;
-    es.onmessage = (e) => {
-      gotMessage = true;
-      try {
-        const data = JSON.parse(e.data);
-        if (data.step === '__done__') { setResult(data.result); setDeploying(false); es.close(); fetchStatus(); }
-        else { setLogs(prev => [...prev, data]); }
-      } catch(err) {
-        setLogs(prev => [...prev, {step:'parse', status:'error', message:'Erro ao processar: ' + e.data}]);
-      }
-    };
-    es.onerror = () => {
-      setDeploying(false);
-      setResult({ success: false, error: gotMessage ? 'Conexão SSE perdida' : 'Não conectou ao endpoint' });
-      es.close();
-    };
+  const doAction = async (id, action) => {
+    setActionLoading(`${id}-${action}`);
+    try {
+      await fetch(API + `/containers/${id}/${action}`, { method: 'POST' });
+      setTimeout(refetch, 2000);
+    } catch(e) { console.error(e); }
+    finally { setActionLoading(null); }
   };
 
-  const stepColor = (s) => s === 'ok' ? 'var(--gn)' : s === 'error' ? 'var(--rd)' : s === 'running' ? 'var(--ac2)' : 'var(--yw)';
-  const stepIcon = (s) => s === 'ok' ? '✓' : s === 'error' ? '✗' : s === 'running' ? '⟳' : '…';
+  if (loading || !data) return <div className="empty"><p>Carregando containers...</p></div>;
+
+  const statusColor = (s) => {
+    if (!s) return 'var(--dim)';
+    const sl = s.toLowerCase();
+    if (sl.includes('healthy') || sl.includes('running')) return 'var(--gn)';
+    if (sl.includes('unhealthy') || sl.includes('error')) return 'var(--rd)';
+    if (sl.includes('starting') || sl.includes('building')) return 'var(--yw)';
+    return 'var(--dim)';
+  };
+
+  const totalMem = data.containers?.reduce((a, c) => a + (c.mem_mb || 0), 0) || 0;
+  const healthy = data.containers?.filter(c => c.status?.toLowerCase().includes('healthy') || c.status?.toLowerCase().includes('running')).length || 0;
 
   return (
     <div>
       <div className="main-header">
-        <h2>Deploy MyClinicSoft</h2>
-        <p>Deploy local DEV → Produção (62.72.63.18 via Coolify)</p>
+        <h2>Containers — Coolify</h2>
+        <p>Gerenciamento dos containers em producao (srv1 — 62.72.63.18)</p>
       </div>
-      <div className="cards" style={{gridTemplateColumns:'repeat(auto-fill, minmax(180px, 1fr))'}}>
-        <div className="card">
-          <div className="card-label">SSH</div>
-          <div className={`card-value ${statusLoading ? '' : status?.ssh ? 'green' : 'orange'}`} style={{fontSize:20}}>
-            {statusLoading ? '...' : status?.ssh ? '● Conectado' : '● Offline'}
-          </div>
-          <div className="card-sub">62.72.63.18 (Coolify)</div>
-        </div>
-        <div className="card">
-          <div className="card-label">App (porta 5000)</div>
-          <div className={`card-value ${statusLoading ? '' : status?.app?.online ? 'green' : 'orange'}`} style={{fontSize:20}}>
-            {statusLoading ? '...' : status?.app?.online ? '● Online' : '● Offline'}
-          </div>
-          <div className="card-sub">{status?.app?.response || '—'}</div>
-        </div>
-        <div className="card">
-          <div className="card-label">Última Alteração Local</div>
-          <div className="card-value cyan" style={{fontSize:18}}>{lastUpdate?.last_update || '—'}</div>
-          <div className="card-sub" style={{fontSize:10, wordBreak:'break-all'}}>{lastUpdate?.file || ''}</div>
-        </div>
+      <div className="cards" style={{gridTemplateColumns:'repeat(auto-fill, minmax(160px, 1fr))'}}>
+        <KPICard label="Containers" value={data.containers?.length || 0} color="blue" sub="Total em execucao" />
+        <KPICard label="Healthy" value={healthy} color="green" sub={`de ${data.containers?.length || 0} containers`} />
+        <KPICard label="Memoria Total" value={`${totalMem.toFixed(0)} MB`} color="purple" sub={`de ${data.total_mem_gb || '?'} GB`} />
+        <KPICard label="Disco" value={data.disk_used || '—'} color="cyan" sub={`de ${data.disk_total || '?'}`} />
       </div>
-      <div style={{display:'flex', gap:12, marginBottom:24}}>
-        <button className="btn btn-primary" onClick={startDeploy} disabled={deploying}
-                style={{padding:'10px 24px', fontSize:14, opacity: deploying ? 0.6 : 1}}>
-          <Icon.Rocket /> {deploying ? 'Deploy em andamento...' : 'Deploy → Produção'}
-        </button>
-        <button className="btn btn-sm" onClick={fetchStatus}><Icon.Refresh /> Atualizar Status</button>
+      <div style={{display:'flex', gap:8, marginBottom:20}}>
+        <button className="btn btn-sm" onClick={refetch}><Icon.Refresh /> Atualizar</button>
       </div>
-      {(logs.length > 0 || result) && (
-        <div className="table-wrap" style={{marginBottom:24}}>
-          <div className="table-header">
-            <h3>Deploy — Log de Execução</h3>
-            {result && <span className={`badge ${result.success ? 'badge-context' : 'badge-error'}`}>{result.success ? 'SUCESSO' : 'FALHOU'}</span>}
-          </div>
-          <div style={{padding:16, fontFamily:'SF Mono, Menlo, monospace', fontSize:12, lineHeight:1.8, maxHeight:400, overflowY:'auto'}}>
-            {logs.map((l, i) => (
-              <div key={i} style={{display:'flex', gap:8, alignItems:'flex-start'}}>
-                <span style={{color: stepColor(l.status), fontWeight:700, flexShrink:0, width:16, textAlign:'center'}}>{stepIcon(l.status)}</span>
-                <span style={{color: l.status === 'error' ? 'var(--rd)' : 'var(--tx)'}}>
-                  <span style={{color:'var(--dim)'}}>[{l.step}]</span> {l.message}
-                </span>
-              </div>
+      <div className="table-wrap">
+        <div className="table-header"><h3>Containers Ativos</h3></div>
+        <table>
+          <thead><tr>
+            <th>Nome</th><th>Imagem</th><th>Status</th><th>CPU</th><th>Memoria</th><th>Portas</th><th>Acoes</th>
+          </tr></thead>
+          <tbody>
+            {(data.containers || []).map(c => (
+              <tr key={c.id}>
+                <td style={{fontWeight:600}}>{c.name}</td>
+                <td style={{fontSize:11, color:'var(--dim)', maxWidth:180, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{c.image}</td>
+                <td><span style={{color:statusColor(c.status), fontWeight:600, fontSize:12}}>{c.status || '?'}</span></td>
+                <td style={{fontSize:12}}>{c.cpu || '—'}</td>
+                <td style={{fontSize:12}}>{c.mem_mb ? `${c.mem_mb.toFixed(0)} MB` : '—'}</td>
+                <td style={{fontSize:11, color:'var(--dim)'}}>{c.ports || '—'}</td>
+                <td>
+                  <div style={{display:'flex', gap:4}}>
+                    <button className="btn btn-sm" onClick={() => doAction(c.id, 'restart')}
+                            disabled={actionLoading === `${c.id}-restart`}
+                            style={{fontSize:10, padding:'2px 8px'}}>
+                      {actionLoading === `${c.id}-restart` ? '...' : 'Restart'}
+                    </button>
+                  </div>
+                </td>
+              </tr>
             ))}
-            {deploying && <div style={{color:'var(--ac2)', marginTop:8}}>⟳ Deploy em execução...</div>}
-            {result && !result.success && result.error && (
-              <div style={{marginTop:12, padding:12, background:'rgba(239,68,68,.1)', borderRadius:6, border:'1px solid var(--rd)', fontSize:12, color:'var(--rd)'}}>
-                <strong>Erro:</strong> {result.error}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-      {!logs.length && (
-        <div className="table-wrap">
-          <div className="table-header"><h3>Pipeline de Deploy</h3></div>
-          <div style={{padding:16, fontSize:13, lineHeight:1.8, color:'var(--dim)'}}>
-            <div style={{marginBottom:8}}><strong style={{color:'var(--tx)'}}>Etapas do Deploy:</strong></div>
-            <div>1. Valida TypeScript (npx tsc --noEmit)</div>
-            <div>2. Build do projeto (npm run build)</div>
-            <div>3. Git push → main</div>
-            <div>4. Coolify API restart (build Nixpacks + container)</div>
-            <div>5. Aguarda build + health check</div>
-            <div>6. Health check app</div>
-          </div>
-        </div>
-      )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1637,6 +1593,7 @@ function AgentsPage() {
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState({});
   const [refreshing, setRefreshing] = useState(false);
+  const [showManagerMenu, setShowManagerMenu] = useState(false);
 
   const loadAll = async () => {
     setRefreshing(true);
@@ -1731,11 +1688,34 @@ function AgentsPage() {
           </h2>
           <p>Monitoramento aut\u00f4nomo 24/7 \u00b7 Findings em tempo real</p>
         </div>
-        <a href="https://app.openclaw.ai" target="_blank" rel="noopener noreferrer"
-          className="btn btn-primary"
-          style={{flexShrink:0,marginTop:2,textDecoration:'none',display:'inline-flex',alignItems:'center',gap:6}}>
-          <Icon.ExternalLink /> Abrir Gerenciador
-        </a>
+        <div style={{position:'relative',flexShrink:0}}>
+          <button className="btn btn-primary" style={{gap:6}}
+            onClick={() => setShowManagerMenu(m => !m)}>
+            <Icon.ExternalLink /> Gerenciador OpenClaw ▾
+          </button>
+          {showManagerMenu && (
+            <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',background:'var(--s1)',border:'1px solid var(--bd)',borderRadius:8,padding:'6px 0',zIndex:50,minWidth:240,boxShadow:'0 8px 24px rgba(0,0,0,.4)'}}>
+              {[
+                {id:'myclinicsoft', label:'MyClinicsOft'},
+                {id:'xospam',       label:'XOSpam'},
+                {id:'libertakidz',  label:'LibertaKidz'},
+                {id:'controler',    label:'Controler'},
+              ].map(({id, label}) => (
+                <a key={id}
+                  href={`http://${id}.openclaw.62.72.63.18.sslip.io/`}
+                  target="_blank" rel="noopener noreferrer"
+                  onClick={() => setShowManagerMenu(false)}
+                  style={{display:'flex',alignItems:'center',gap:10,padding:'9px 16px',color:'var(--tx)',textDecoration:'none',fontSize:13,transition:'background .15s'}}
+                  onMouseEnter={e=>e.currentTarget.style.background='var(--s2)'}
+                  onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                  <span style={{fontSize:16}}>\uD83E\uDDB5</span>
+                  <span style={{flex:1}}>{label}</span>
+                  <Icon.ExternalLink />
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="agent-grid">
@@ -1760,8 +1740,16 @@ function AgentsPage() {
                 )}
               </div>
               {ag.primary_model && ag.primary_model !== 'unknown' && (
-                <div style={{marginBottom:10}}>
+                <div style={{marginBottom:10,display:'flex',alignItems:'center',gap:8}}>
                   <span className="model-chip">{ag.primary_model}</span>
+                  <a href={`http://${ag.id}.openclaw.62.72.63.18.sslip.io/`}
+                    target="_blank" rel="noopener noreferrer"
+                    style={{display:'inline-flex',alignItems:'center',gap:4,fontSize:10,color:'var(--ac2)',textDecoration:'none',
+                            border:'1px solid rgba(59,130,246,.3)',borderRadius:4,padding:'2px 8px',background:'rgba(59,130,246,.06)'}}
+                    onMouseEnter={e=>e.currentTarget.style.background='rgba(59,130,246,.15)'}
+                    onMouseLeave={e=>e.currentTarget.style.background='rgba(59,130,246,.06)'}>
+                    <Icon.ExternalLink /> Gerenciar
+                  </a>
                 </div>
               )}
               {ag.cron_jobs && ag.cron_jobs.length > 0 && (
@@ -1933,8 +1921,8 @@ function App() {
           </div>
 
           <div className="nav-section" style={{marginTop:24}}>DevOps</div>
-          <div className={`nav-item ${page==='deploy'?'active':''}`} onClick={() => setPage('deploy')}>
-            <Icon.Rocket /> Deploy
+          <div className={`nav-item ${page==='containers'?'active':''}`} onClick={() => setPage('containers')}>
+            <Icon.Server /> Containers
           </div>
           <div className={`nav-item ${page==='credentials'?'active':''}`} onClick={() => setPage('credentials')}>
             <Icon.Key /> Credenciais
@@ -1962,7 +1950,7 @@ function App() {
         {page === 'rules' && <Rules />}
         {page === 'kpis' && <KPIs />}
         {page === 'server' && <ServerPage />}
-        {page === 'deploy' && <ProjectView />}
+        {page === 'containers' && <ContainersPage />}
         {page === 'credentials' && <Credenciais />}
         {page === 'agents' && <AgentsPage />}
       </div>
