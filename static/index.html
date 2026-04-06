@@ -159,6 +159,44 @@
     .empty svg { width: 40px; height: 40px; margin-bottom: 12px; opacity: .5; }
     .empty p { font-size: 13px; }
 
+    /* ── Deploy Pipeline ───────────────────────────────────── */
+    .deploy-pipeline { display: flex; align-items: center; gap: 0; margin-bottom: 24px; }
+    .deploy-env { display: flex; flex-direction: column; align-items: center; gap: 6px;
+                  background: var(--s1); border: 1px solid var(--bd); border-radius: var(--radius);
+                  padding: 14px 20px; min-width: 160px; text-align: center; transition: all .2s; }
+    .deploy-env.synced { border-color: var(--gn); background: rgba(34,197,94,.05); }
+    .deploy-env.behind { border-color: var(--yw); background: rgba(234,179,8,.05); }
+    .deploy-env.error  { border-color: var(--rd); background: rgba(239,68,68,.05); }
+    .deploy-env-label { font-size: 10px; font-weight: 700; text-transform: uppercase;
+                        letter-spacing: 1px; color: var(--dim); }
+    .deploy-env-hash  { font-family: 'SF Mono','Menlo',monospace; font-size: 13px;
+                        font-weight: 600; color: var(--tx); }
+    .deploy-env-icon  { font-size: 22px; }
+    .deploy-arrow { display: flex; flex-direction: column; align-items: center;
+                    padding: 0 8px; gap: 4px; flex-shrink: 0; }
+    .deploy-arrow-line { width: 32px; height: 2px; background: var(--bd); position: relative; }
+    .deploy-arrow-line.synced { background: var(--gn); }
+    .deploy-arrow-line.behind { background: var(--yw); }
+    .deploy-arrow-line::after { content:''; position:absolute; right:-6px; top:-4px;
+                                 border:5px solid transparent; border-left-color: inherit; }
+    .deploy-arrow-label { font-size: 9px; color: var(--dim); white-space: nowrap; }
+    .deploy-log { background: #0a0e14; border: 1px solid var(--bd); border-radius: var(--radius);
+                  padding: 14px; font-family: 'SF Mono','Menlo',monospace; font-size: 11px;
+                  line-height: 1.7; height: 340px; overflow-y: auto; color: #a8c0d8; }
+    .deploy-log .log-ok   { color: var(--gn); }
+    .deploy-log .log-err  { color: var(--rd); }
+    .deploy-log .log-step { color: var(--ac2); font-weight: 700; }
+    .deploy-log .log-warn { color: var(--yw); }
+    .deploy-log .log-ts   { color: var(--muted); margin-right: 6px; }
+    .step-track { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+    .step-pill { display: flex; align-items: center; gap: 5px; padding: 4px 12px;
+                 border-radius: 20px; font-size: 11px; font-weight: 600;
+                 background: var(--s2); border: 1px solid var(--bd); color: var(--dim); }
+    .step-pill.active  { background: rgba(59,130,246,.15); border-color: var(--ac); color: var(--ac2); }
+    .step-pill.done    { background: rgba(34,197,94,.1);  border-color: var(--gn); color: var(--gn); }
+    .step-pill.error   { background: rgba(239,68,68,.1);  border-color: var(--rd); color: var(--rd); }
+    .step-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
     /* ── Hardware Dashboard ─────────────────────────────────── */
     .hw-section { background: var(--s1); border: 1px solid var(--bd); border-radius: var(--radius);
                   padding: 18px; margin-bottom: 18px; }
@@ -1884,6 +1922,302 @@ function AgentsPage() {
   );
 }
 
+// ── DeployPage ─────────────────────────────────────────────────────────────
+function DeployPage() {
+  const [sync, setSync] = React.useState(null);
+  const [syncLoading, setSyncLoading] = React.useState(true);
+  const [jobId, setJobId] = React.useState(null);
+  const [job, setJob] = React.useState(null);
+  const [logSince, setLogSince] = React.useState(0);
+  const [logs, setLogs] = React.useState([]);
+  const logRef = React.useRef(null);
+  const pollRef = React.useRef(null);
+
+  const STEPS = [
+    {key:'coolify',  label:'Coolify API'},
+    {key:'buffer',   label:'Buffer Pre'},
+    {key:'git',      label:'Git / Branch'},
+    {key:'ts',       label:'TypeScript'},
+    {key:'build',    label:'Build'},
+    {key:'push',     label:'Git Push'},
+    {key:'deploy',   label:'Deploy'},
+    {key:'health',   label:'Health'},
+  ];
+
+  const detectStep = (stepStr) => {
+    if (!stepStr) return null;
+    const s = stepStr.toLowerCase();
+    if (s.includes('coolify api')) return 'coolify';
+    if (s.includes('buffer pre') || (s.includes('buffer') && !s.includes('pos'))) return 'buffer';
+    if (s.includes('git / branch') || s.includes('git/branch') || s.includes('restaurar')) return 'git';
+    if (s.includes('typescript')) return 'ts';
+    if (s.includes('build') && !s.includes('deploy')) return 'build';
+    if (s.includes('git push')) return 'push';
+    if (s.includes('deploy coolify') || s.includes('deploy')) return 'deploy';
+    if (s.includes('health') || s.includes('buffer pos') || s.includes('concluido')) return 'health';
+    return null;
+  };
+
+  const loadSync = React.useCallback(() => {
+    setSyncLoading(true);
+    fetch(API + '/deploy/myclinicsoft/sync')
+      .then(r => r.json())
+      .then(d => { setSync(d); setSyncLoading(false); })
+      .catch(() => setSyncLoading(false));
+  }, []);
+
+  React.useEffect(() => {
+    loadSync();
+  }, [loadSync]);
+
+  // Auto-scroll log
+  React.useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [logs]);
+
+  // Poll job
+  React.useEffect(() => {
+    if (!jobId) return;
+    const poll = async () => {
+      try {
+        const r = await fetch(API + `/deploy/myclinicsoft/job/${jobId}?since=${logSince}`);
+        const d = await r.json();
+        if (d.logs && d.logs.length > 0) {
+          setLogs(prev => [...prev, ...d.logs]);
+          setLogSince(d.total);
+        }
+        setJob(prev => ({...prev, status: d.status, step: d.step}));
+        if (d.status === 'done' || d.status === 'error') {
+          clearInterval(pollRef.current);
+          loadSync();
+        }
+      } catch(e) {}
+    };
+    pollRef.current = setInterval(poll, 1500);
+    return () => clearInterval(pollRef.current);
+  }, [jobId, logSince]);
+
+  const startDeploy = async () => {
+    setLogs([]);
+    setLogSince(0);
+    setJob({status: 'running', step: 'Iniciando...'});
+    try {
+      const r = await fetch(API + '/deploy/myclinicsoft', {method: 'POST'});
+      const d = await r.json();
+      if (d.error) { alert(d.error); setJob(null); return; }
+      setJobId(d.job_id);
+    } catch(e) {
+      alert('Erro ao iniciar deploy: ' + e.message);
+      setJob(null);
+    }
+  };
+
+  const envStatus = (env) => {
+    if (!sync) return '';
+    if (env === 'dev')  return sync.dev_eq_git ? 'synced' : 'behind';
+    if (env === 'git')  return (sync.dev_eq_git && sync.git_eq_prod) ? 'synced' : sync.dev_eq_git ? 'behind' : '';
+    if (env === 'prod') return sync.git_eq_prod ? 'synced' : 'behind';
+    return '';
+  };
+
+  const classifyLine = (line) => {
+    if (!line) return '';
+    const l = line.toLowerCase();
+    // Format: "[Label] ✅/❌/⟳ message"
+    if (line.includes('❌') || l.includes('erro') || l.includes('error') || l.includes('fail') || l.includes('[erro]')) return 'log-err';
+    if (line.includes('✅') || l.includes('ok') || l.includes('sucesso') || l.includes('conclu')) return 'log-ok';
+    if (line.includes('⟳') || l.includes('aguardando') || l.includes('running')) return 'log-step';
+    if (l.includes('warn') || l.includes('aviso') || l.includes('skip')) return 'log-warn';
+    return '';
+  };
+
+  const isRunning = job && job.status === 'running';
+  const isDone    = job && job.status === 'done';
+  const isError   = job && job.status === 'error';
+  const currentStepKey = job ? detectStep(job.step || '') : null;
+
+  const stepState = (key) => {
+    if (!job) return '';
+    const stepIdx = STEPS.findIndex(s => s.key === key);
+    const curIdx  = STEPS.findIndex(s => s.key === currentStepKey);
+    if (isError && stepIdx === curIdx) return 'error';
+    if (isDone || stepIdx < curIdx) return 'done';
+    if (stepIdx === curIdx) return 'active';
+    return '';
+  };
+
+  return (
+    <div>
+      <div className="main-header">
+        <h2 style={{display:'flex',alignItems:'center',gap:10}}>
+          <span style={{width:22,height:22,display:'inline-flex',flexShrink:0,color:'var(--ac2)'}}><Icon.Zap /></span>
+          Deploy — MyClinicSoft
+        </h2>
+        <p>Pipeline completo: DEV [Mac] → GIT [GitHub] → PROD [Coolify srv1]</p>
+      </div>
+
+      {/* ── Sync Status ── */}
+      <div className="hw-section" style={{marginBottom:20}}>
+        <div className="hw-section-title">
+          <Icon.Refresh /> Status de Sincronização
+          <span style={{marginLeft:'auto',fontSize:10,color:'var(--dim)',fontWeight:400}}>
+            {sync && !syncLoading ? sync.branch ? `branch: ${sync.branch}` : '' : ''}
+          </span>
+          <button className="btn btn-sm" style={{marginLeft:8}} onClick={loadSync} disabled={syncLoading}>
+            {syncLoading ? '...' : 'Refresh'}
+          </button>
+        </div>
+
+        {syncLoading && <div style={{color:'var(--dim)',fontSize:13}}>Carregando status...</div>}
+
+        {sync && !syncLoading && (
+          <>
+            <div className="deploy-pipeline">
+              {/* DEV */}
+              <div className={`deploy-env ${envStatus('dev')}`}>
+                <div className="deploy-env-icon">💻</div>
+                <div className="deploy-env-label">DEV [Mac]</div>
+                <div className="deploy-env-hash">{sync.envs?.dev?.short || '?'}</div>
+                {sync.dirty && <span style={{fontSize:9,color:'var(--yw)',marginTop:2}}>⚠ dirty</span>}
+              </div>
+
+              {/* Arrow DEV→GIT */}
+              <div className="deploy-arrow">
+                <div className={`deploy-arrow-line ${sync.dev_eq_git ? 'synced' : 'behind'}`} />
+                <div className="deploy-arrow-label" style={{color: sync.dev_eq_git ? 'var(--gn)' : 'var(--yw)'}}>
+                  {sync.dev_eq_git ? '✓ sync' : '→ push'}
+                </div>
+              </div>
+
+              {/* GIT */}
+              <div className={`deploy-env ${sync.dev_eq_git ? 'synced' : 'behind'}`}>
+                <div className="deploy-env-icon">🐙</div>
+                <div className="deploy-env-label">GIT [GitHub]</div>
+                <div className="deploy-env-hash">{sync.envs?.git?.short || '?'}</div>
+              </div>
+
+              {/* Arrow GIT→PROD */}
+              <div className="deploy-arrow">
+                <div className={`deploy-arrow-line ${sync.git_eq_prod ? 'synced' : 'behind'}`} />
+                <div className="deploy-arrow-label" style={{color: sync.git_eq_prod ? 'var(--gn)' : 'var(--yw)'}}>
+                  {sync.git_eq_prod ? '✓ sync' : '→ deploy'}
+                </div>
+              </div>
+
+              {/* PROD */}
+              <div className={`deploy-env ${envStatus('prod')}`}>
+                <div className="deploy-env-icon">🚀</div>
+                <div className="deploy-env-label">PROD [Coolify]</div>
+                <div className="deploy-env-hash">{sync.envs?.prod?.short || '?'}</div>
+              </div>
+            </div>
+
+            {/* Status badge */}
+            <div style={{display:'flex',alignItems:'center',gap:12}}>
+              <span style={{
+                fontSize:13, fontWeight:600,
+                color: sync.all_synced ? 'var(--gn)' : 'var(--yw)'
+              }}>
+                {sync.all_synced ? '✅' : '⚠️'} {sync.sync_label}
+              </span>
+              {!sync.all_synced && (
+                <span style={{fontSize:11,color:'var(--dim)'}}>
+                  Deploy necessário para sincronizar ambientes
+                </span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Deploy Control ── */}
+      <div className="hw-section" style={{marginBottom:20}}>
+        <div className="hw-section-title">
+          <span style={{width:14,height:14,display:'inline-flex',flexShrink:0}}><Icon.Zap /></span> Executar Deploy
+        </div>
+
+        {/* Step tracker */}
+        {job && (
+          <div className="step-track">
+            {STEPS.map(s => {
+              const state = stepState(s.key);
+              return (
+                <div key={s.key} className={`step-pill ${state}`}>
+                  <div className="step-pill-dot" />
+                  {state === 'active' && isRunning ? '⟳ ' : state === 'done' ? '✓ ' : ''}
+                  {s.label}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom: job ? 12 : 0}}>
+          <button
+            className={`btn ${isRunning ? '' : 'btn-primary'}`}
+            onClick={startDeploy}
+            disabled={isRunning}
+            style={{
+              fontSize:14, padding:'10px 24px', fontWeight:700,
+              background: isRunning ? 'var(--s3)' : isError ? 'var(--rd)' : undefined,
+              opacity: isRunning ? 0.7 : 1,
+            }}
+          >
+            {isRunning ? (
+              <>⟳ Deploying... {job?.step ? `— ${job.step}` : ''}</>
+            ) : isDone ? (
+              <><Icon.Check /> Deploy Concluído — Executar Novamente</>
+            ) : isError ? (
+              <>⚠ Erro — Tentar Novamente</>
+            ) : (
+              <><span style={{width:14,height:14,display:'inline-flex'}}><Icon.Zap /></span> Executar Deploy Completo</>
+            )}
+          </button>
+
+          {(isDone || isError) && (
+            <span style={{
+              fontSize:13, fontWeight:600,
+              color: isDone ? 'var(--gn)' : 'var(--rd)'
+            }}>
+              {isDone ? '✅ Pipeline concluído com sucesso!' : `❌ Falhou: ${job?.step}`}
+            </span>
+          )}
+        </div>
+
+        {sync && !sync.all_synced && !job && (
+          <div style={{fontSize:11,color:'var(--dim)',marginTop:6}}>
+            O deploy irá: {!sync.dev_eq_git ? '📤 git push → ' : ''}{!sync.git_eq_prod ? '🚀 coolify deploy' : ''}
+          </div>
+        )}
+      </div>
+
+      {/* ── Log Output ── */}
+      {(logs.length > 0 || isRunning) && (
+        <div className="hw-section">
+          <div className="hw-section-title" style={{marginBottom:10}}>
+            <Icon.Server /> Log de Deploy
+            <span style={{marginLeft:'auto',fontSize:10,color:'var(--dim)',fontWeight:400}}>
+              {logs.length} linhas
+            </span>
+          </div>
+          <div className="deploy-log" ref={logRef}>
+            {logs.length === 0 && isRunning && (
+              <span style={{color:'var(--dim)'}}>Aguardando saída...</span>
+            )}
+            {logs.map((line, i) => (
+              <div key={i}>
+                <span className="log-ts">{String(i+1).padStart(3,'0')}</span>
+                <span className={classifyLine(line)}>{line}</span>
+              </div>
+            ))}
+            {isRunning && <span style={{color:'var(--ac2)',animation:'pulse 1s infinite'}}>▌</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main App ────────────────────────────────────────────────────────────────
 function App() {
   const [page, setPage] = useState('overview');
@@ -1930,6 +2264,9 @@ function App() {
           <div className={`nav-item ${page==='agents'?'active':''}`} onClick={() => setPage('agents')}>
             <Icon.Bot /> Agentes IA
           </div>
+          <div className={`nav-item ${page==='deploy'?'active':''}`} onClick={() => setPage('deploy')}>
+            <Icon.Zap /> Deploy
+          </div>
 
           <div className="nav-section" style={{marginTop:24}}>Sistema</div>
           <div className="nav-item" style={{fontSize:11}}>
@@ -1953,6 +2290,7 @@ function App() {
         {page === 'containers' && <ContainersPage />}
         {page === 'credentials' && <Credenciais />}
         {page === 'agents' && <AgentsPage />}
+        {page === 'deploy' && <DeployPage />}
       </div>
     </div>
   );

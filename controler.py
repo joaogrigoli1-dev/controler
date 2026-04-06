@@ -1054,6 +1054,187 @@ async def refresh_credentials():
 
 
 # ════════════════════════════════════════
+# Deploy — MyClinicSoft
+# ════════════════════════════════════════
+import uuid as _uuid_mod
+
+_MYCLINICSOFT_PATH = Path.home() / "Documents" / "DEV" / "myclinicsoft"
+_MYCLINICSOFT_UUID = "jckc0ccwssowwc0oocw80ogs"
+
+# Job store: job_id -> {"status": "running"|"done"|"error", "logs": [...], "step": str}
+_deploy_jobs: dict = {}
+
+
+def _git_remote_hash(folder) -> str:
+    """Busca o hash HEAD do remote (GitHub) sem fazer fetch completo."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(folder), "ls-remote", "origin", "refs/heads/main"],
+            capture_output=True, text=True, timeout=15
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip().split()[0]
+    except Exception:
+        pass
+    return ""
+
+
+_DEPLOY_CACHE = Path(__file__).parent / ".last_myclinicsoft_deploy"
+
+async def _coolify_app_commit() -> str:
+    """Retorna o commit hash do último deploy em produção.
+    Usa cache local (.last_myclinicsoft_deploy) pois Coolify sempre retorna HEAD."""
+    try:
+        if _DEPLOY_CACHE.exists():
+            data = json.loads(_DEPLOY_CACHE.read_text())
+            return data.get("commit", "")
+    except Exception:
+        pass
+    return ""
+
+
+@app.get("/api/deploy/myclinicsoft/sync")
+async def api_deploy_sync():
+    """Compara commit hash nos 3 ambientes: DEV [Mac] vs GIT [GitHub] vs PROD [Coolify]."""
+    local_hash  = _git_run(_MYCLINICSOFT_PATH, "rev-parse", "HEAD")
+    remote_hash = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _git_remote_hash(_MYCLINICSOFT_PATH)
+    )
+    prod_hash = await _coolify_app_commit()
+
+    short = lambda h: h[:8] if h else "?"
+    dev_eq_git  = bool(local_hash  and remote_hash and local_hash  == remote_hash)
+    git_eq_prod = bool(remote_hash and prod_hash   and remote_hash == prod_hash)
+    all_synced  = dev_eq_git and git_eq_prod
+
+    if all_synced:
+        sync_status = "IN_SYNC"
+        sync_label  = "Todos sincronizados"
+    elif not dev_eq_git and not git_eq_prod:
+        sync_status = "ALL_DIFFERENT"
+        sync_label  = "DEV > GIT > PROD desatualizados"
+    elif not dev_eq_git:
+        sync_status = "DEV_AHEAD"
+        sync_label  = "DEV a frente do GIT"
+    else:
+        sync_status = "GIT_AHEAD_PROD"
+        sync_label  = "GIT a frente do PROD"
+
+    branch = _git_run(_MYCLINICSOFT_PATH, "rev-parse", "--abbrev-ref", "HEAD")
+    dirty  = bool(_git_run(_MYCLINICSOFT_PATH, "status", "--porcelain").strip())
+
+    return {
+        "sync_status": sync_status,
+        "sync_label":  sync_label,
+        "all_synced":  all_synced,
+        "dev_eq_git":  dev_eq_git,
+        "git_eq_prod": git_eq_prod,
+        "envs": {
+            "dev":  {"hash": local_hash,  "short": short(local_hash),  "label": "DEV [Mac]"},
+            "git":  {"hash": remote_hash, "short": short(remote_hash), "label": "GIT [GitHub]"},
+            "prod": {"hash": prod_hash,   "short": short(prod_hash),   "label": "PROD [Coolify]"},
+        },
+        "branch": branch,
+        "dirty":  dirty,
+    }
+
+
+@app.post("/api/deploy/myclinicsoft")
+async def api_deploy_start():
+    """Inicia deploy completo: TypeScript -> Build -> Git push -> Coolify -> Health."""
+    active = [j for j in _deploy_jobs.values() if j["status"] == "running"]
+    if active:
+        return JSONResponse({"error": "Deploy ja em andamento."}, status_code=409)
+
+    job_id = str(_uuid_mod.uuid4())[:8]
+    _deploy_jobs[job_id] = {"status": "running", "logs": [], "step": "Iniciando..."}
+
+    async def _run():
+        try:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from devops.deploy_myclinicsoft import deploy as _deploy
+
+            # Step labels para o tracker visual
+            _STEP_LABELS = {
+                "coolify":      "Coolify API",
+                "buffer-pre":   "Buffer Pre",
+                "git":          "Git / Branch",
+                "check":        "TypeScript",
+                "build":        "Build",
+                "push":         "Git Push",
+                "deploy":       "Deploy Coolify",
+                "health-app":   "Health Check",
+                "buffer-post":  "Buffer Pos",
+                "git-restore":  "Restaurar Branch",
+                "done":         "Concluido",
+            }
+            _STATUS_ICONS = {"ok": "✅", "error": "❌", "running": "⟳"}
+
+            def _log(entry):
+                # entry é um dict: {step, status, message, time}
+                if isinstance(entry, dict):
+                    step    = entry.get("step", "")
+                    status  = entry.get("status", "")
+                    msg     = entry.get("message", "")
+                    icon    = _STATUS_ICONS.get(status, "•")
+                    label   = _STEP_LABELS.get(step, step)
+                    line    = f"[{label}] {icon} {msg}"
+                    _deploy_jobs[job_id]["logs"].append(line)
+                    # Atualiza step label se mudou
+                    if status == "running":
+                        _deploy_jobs[job_id]["step"] = f"{label}"
+                    elif status == "error":
+                        _deploy_jobs[job_id]["step"] = f"Erro em {label}"
+                else:
+                    _deploy_jobs[job_id]["logs"].append(str(entry))
+
+            result = await _deploy(log_callback=_log)
+
+            if result and result.get("success"):
+                # Salva o commit deployado no cache local
+                try:
+                    import subprocess as _sp
+                    commit = _sp.run(
+                        ["git", "-C", str(_MYCLINICSOFT_PATH), "rev-parse", "HEAD"],
+                        capture_output=True, text=True
+                    ).stdout.strip()
+                    _DEPLOY_CACHE.write_text(
+                        json.dumps({"commit": commit, "deployed_at": datetime.now().isoformat()})
+                    )
+                except Exception:
+                    pass
+                _deploy_jobs[job_id]["status"] = "done"
+                _deploy_jobs[job_id]["step"] = "Concluido com sucesso"
+            else:
+                err = result.get("error", "Falha no deploy") if result else "Falha no deploy"
+                _deploy_jobs[job_id]["status"] = "error"
+                _deploy_jobs[job_id]["step"] = f"Erro: {err}"
+        except Exception as exc:
+            _deploy_jobs[job_id]["status"] = "error"
+            _deploy_jobs[job_id]["step"] = f"Erro: {exc}"
+            _deploy_jobs[job_id]["logs"].append(f"[ERRO] {exc}")
+
+    asyncio.create_task(_run())
+    return {"job_id": job_id, "status": "started"}
+
+
+@app.get("/api/deploy/myclinicsoft/job/{job_id}")
+async def api_deploy_job(job_id: str, since: int = Query(0)):
+    """Polling: retorna status + logs novos desde o indice `since`."""
+    job = _deploy_jobs.get(job_id)
+    if not job:
+        return JSONResponse({"error": "Job nao encontrado."}, status_code=404)
+    logs = job["logs"]
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "step":   job["step"],
+        "logs":   logs[since:],
+        "total":  len(logs),
+    }
+
+
+# ════════════════════════════════════════
 # Página principal
 # ════════════════════════════════════════
 
