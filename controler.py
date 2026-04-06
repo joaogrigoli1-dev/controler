@@ -33,7 +33,8 @@ import subprocess
 # Init database
 from core.database import (
     init_db, get_projects, get_project, get_actions, get_rules,
-    get_memory, save_memory, get_recent_logs, get_setting, set_setting,
+    get_memory, save_memory, get_recent_logs,
+    # get_setting, set_setting — importados mas sem uso ativo (reservados para futuro)
     upsert_project, add_action, add_rule,
     get_memories, get_memories_count_by_type, get_memories_total,
     add_memory_entry, delete_memory_entry,
@@ -252,56 +253,104 @@ async def api_project(project_id: str):
 
 @app.get("/api/containers")
 async def api_containers():
-    """Lista containers Docker do srv1 via Coolify API + docker stats."""
-    import httpx
+    """Lista containers Docker do srv1 via SSH + docker stats em tempo real."""
+    import re as _re
+
+    # SSH commands (paralelo)
+    STATS_CMD = (
+        "docker stats --no-stream --format "
+        "'{{.Name}}|||{{.CPUPerc}}|||{{.MemUsage}}|||{{.MemPerc}}|||{{.BlockIO}}'"
+    )
+    PS_CMD = (
+        "docker ps --format "
+        "'{{.Names}}|||{{.ID}}|||{{.Image}}|||{{.Status}}|||{{.Ports}}'"
+    )
+    SYS_CMD = "df -h / && echo '---FREE---' && free -m | grep Mem"
+
+    stats_r, ps_r, sys_r = await asyncio.gather(
+        _ssh_run(_SRV1_HOST, _SRV1_USER, _SRV1_PASS, STATS_CMD),
+        _ssh_run(_SRV1_HOST, _SRV1_USER, _SRV1_PASS, PS_CMD),
+        _ssh_run(_SRV1_HOST, _SRV1_USER, _SRV1_PASS, SYS_CMD),
+    )
+
+    # Parse docker stats
+    stats_map: dict = {}
+    for line in stats_r["stdout"].splitlines():
+        parts = line.split("|||")
+        if len(parts) >= 5:
+            name = parts[0].strip().lstrip("/")
+            stats_map[name] = {
+                "cpu": parts[1].strip(),
+                "mem_usage": parts[2].strip(),
+                "mem_pct": parts[3].strip(),
+                "block": parts[4].strip(),
+            }
+
+    # Parse docker ps
     containers = []
-    disk_used, disk_total, total_mem_gb = "?", "?", "?"
+    for line in ps_r["stdout"].splitlines():
+        parts = line.split("|||")
+        if len(parts) < 4:
+            continue
+        name   = parts[0].strip().lstrip("/")
+        cid    = parts[1].strip()
+        image  = parts[2].strip()
+        status = parts[3].strip()
+        ports  = parts[4].strip() if len(parts) > 4 else ""
 
-    try:
-        async with httpx.AsyncClient(timeout=12) as client:
-            # Get resources from Coolify
-            r = await client.get(f"{_COOLIFY_BASE}/resources",
-                                 headers={"Authorization": f"Bearer {_COOLIFY_TOKEN}",
-                                           "Accept": "application/json"})
-            resources = r.json() if r.status_code == 200 else []
+        s = stats_map.get(name, {})
+        mem_raw = s.get("mem_usage", "")   # e.g. "123.4MiB / 7.77GiB"
+        mem_mb  = None
+        try:
+            m = _re.match(r"([\d.]+)\s*(MiB|GiB|MB|GB)", mem_raw)
+            if m:
+                v, unit = float(m.group(1)), m.group(2)
+                mem_mb = v if "Mi" in unit or "MB" in unit else v * 1024
+        except Exception:
+            pass
 
-            # Get server details for disk/mem
-            try:
-                sr = await client.get(f"{_COOLIFY_BASE}/servers/{_COOLIFY_SERVER_UUID}",
-                                      headers={"Authorization": f"Bearer {_COOLIFY_TOKEN}",
-                                                "Accept": "application/json"})
-                if sr.status_code == 200:
-                    sd = sr.json().get("settings", {})
-                    # Server info may vary by Coolify version
-            except Exception:
-                pass
+        display = _friendly_name(name)
+        containers.append({
+            "id":     cid,
+            "name":   display,
+            "image":  image,
+            "status": status,
+            "cpu":    s.get("cpu"),
+            "mem_mb": round(mem_mb, 1) if mem_mb is not None else None,
+            "mem_pct": s.get("mem_pct"),
+            "block":  s.get("block"),
+            "ports":  ports[:60] if ports else "",
+        })
 
-            # Build container list from resources
-            for res in resources:
-                name = res.get("name", "?")
-                uuid = res.get("uuid", "")
-                status = res.get("status", "unknown")
-                rtype = res.get("type", "")
-
-                containers.append({
-                    "id": uuid,
-                    "name": _friendly_name(name) if uuid in _COOLIFY_NAME_MAP else name,
-                    "image": res.get("image", res.get("docker_compose_location", "—")),
-                    "status": status,
-                    "cpu": None,
-                    "mem_mb": None,
-                    "ports": "",
-                })
-
-    except Exception as exc:
-        # Fallback: return error info
-        return {"containers": [], "error": str(exc), "disk_used": "?", "disk_total": "?", "total_mem_gb": "?"}
+    # Parse system stats (df raw output + free -m)
+    disk_used = disk_total = disk_pct = total_mem_gb = "?"
+    sys_lines = sys_r["stdout"].splitlines()
+    in_free = False
+    for sline in sys_lines:
+        if "---FREE---" in sline:
+            in_free = True
+            continue
+        if not in_free:
+            parts = sline.split()
+            if len(parts) >= 5 and parts[0] != "Filesystem":
+                disk_total, disk_used = parts[1], parts[2]
+                disk_pct = parts[4].replace("%", "")
+        else:
+            parts = sline.split()
+            if len(parts) >= 3 and parts[0] == "Mem:":
+                try:
+                    total_mem_gb = f"{int(parts[1]) / 1024:.1f}"
+                except Exception:
+                    pass
 
     return {
-        "containers": containers,
-        "disk_used": disk_used,
-        "disk_total": disk_total,
+        "containers":   containers,
+        "disk_used":    disk_used,
+        "disk_total":   disk_total,
+        "disk_pct":     disk_pct,
         "total_mem_gb": total_mem_gb,
+        "source":       "ssh_docker_stats" if stats_r["success"] else "error",
+        "ssh_error":    stats_r.get("stderr") if not stats_r["success"] else None,
     }
 
 
@@ -633,6 +682,42 @@ async def api_kpis():
 _COOLIFY_TOKEN  = os.getenv("COOLIFY_TOKEN") or get_ssm_param("/myclinicsoft/coolify_token") or ""
 _COOLIFY_BASE   = f"http://{os.getenv('COOLIFY_HOST','62.72.63.18')}:8000/api/v1"
 _COOLIFY_SERVER_UUID = "j4ws844wcg400kwsc0sswocg"
+
+# ── SSH Helpers ──────────────────────────────────────────────────────────────
+_SSHPASS_BIN = "/usr/local/bin/sshpass"
+_SRV1_HOST   = "62.72.63.18"
+_SRV1_USER   = "root"
+_SRV1_PASS   = get_ssm_param("/controler/srv1_ssh_password") or ""
+_FISIOMT_HOST        = "187.77.246.214"
+_FISIOMT_USER        = "root"
+_FISIOMT_PASS        = get_ssm_param("/controler/fisiomt_ssh_password") or ""
+_FISIOMT_HESTIA_PASS = get_ssm_param("/controler/fisiomt_hestia_password") or ""
+
+
+async def _ssh_run(host: str, user: str, password: str, command: str, port: int = 22) -> dict:
+    """Executa comando remoto via sshpass."""
+    sshpass = _SSHPASS_BIN if os.path.exists(_SSHPASS_BIN) else "sshpass"
+    cmd = [
+        sshpass, "-p", password,
+        "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+        "-p", str(port), f"{user}@{host}", command,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=25)
+        return {
+            "success": proc.returncode == 0,
+            "stdout": stdout.decode("utf-8", errors="replace").strip(),
+            "stderr": stderr.decode("utf-8", errors="replace").strip(),
+            "returncode": proc.returncode,
+        }
+    except asyncio.TimeoutError:
+        return {"success": False, "stdout": "", "stderr": "SSH timeout", "returncode": -1}
+    except Exception as exc:
+        return {"success": False, "stdout": "", "stderr": str(exc), "returncode": -1}
+
 
 # Mapa UUID → nome legível (inclui todos os serviços e agentes OpenClaw)
 _COOLIFY_NAME_MAP = {
@@ -1152,7 +1237,15 @@ async def api_deploy_start():
     async def _run():
         try:
             sys.path.insert(0, str(Path(__file__).parent))
-            from devops.deploy_myclinicsoft import deploy as _deploy
+
+            # Garante token Coolify disponível no módulo deploy
+            # (o módulo lê COOLIFY_TOKEN no import, então patchamos diretamente)
+            _token = os.environ.get("COOLIFY_TOKEN") or get_ssm_param("/myclinicsoft/coolify_token") or ""
+            if _token:
+                os.environ["COOLIFY_TOKEN"] = _token
+            import devops.deploy_myclinicsoft as _dm
+            _dm.COOLIFY_TOKEN = _token  # patch var de módulo
+            _deploy = _dm.deploy
 
             # Step labels para o tracker visual
             _STEP_LABELS = {
@@ -1208,7 +1301,10 @@ async def api_deploy_start():
             else:
                 err = result.get("error", "Falha no deploy") if result else "Falha no deploy"
                 _deploy_jobs[job_id]["status"] = "error"
-                _deploy_jobs[job_id]["step"] = f"Erro: {err}"
+                # Mantém o step label que _log() já definiu (ex: "Erro em Git / Branch")
+                # Só define se ainda estiver no estado inicial
+                if _deploy_jobs[job_id]["step"] in ("Iniciando...", ""):
+                    _deploy_jobs[job_id]["step"] = f"Erro: {err}"
         except Exception as exc:
             _deploy_jobs[job_id]["status"] = "error"
             _deploy_jobs[job_id]["step"] = f"Erro: {exc}"
@@ -1237,6 +1333,222 @@ async def api_deploy_job(job_id: str, since: int = Query(0)):
 # ════════════════════════════════════════
 # Página principal
 # ════════════════════════════════════════
+
+
+# ════════════════════════════════════════
+# API: VPS FisioMT (187.77.246.214) — via HestiaCP API
+# ════════════════════════════════════════
+
+_HESTIA_BASE = "https://187.77.246.214:8083/api/"
+
+
+def _hestia_post(cmd: str, **kwargs) -> str:
+    """Synchronous HestiaCP API call — returns raw text."""
+    import urllib.request, urllib.parse, ssl
+    data = {"user": "admin", "password": _FISIOMT_HESTIA_PASS,
+            "returncode": "no", "cmd": cmd, **kwargs}
+    body = urllib.parse.urlencode(data).encode()
+    ctx  = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode    = ssl.CERT_NONE
+    req  = urllib.request.Request(_HESTIA_BASE, data=body, method="POST")
+    with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+def _parse_hestia_table(text: str) -> list:
+    """Parse HestiaCP plain-text table into list of dicts."""
+    lines  = [l for l in text.strip().splitlines() if l.strip()]
+    if len(lines) < 2:
+        return []
+    # First line = headers, second = dashes, rest = data
+    headers = lines[0].split()
+    rows    = []
+    for line in lines[2:]:
+        parts = line.split()
+        if not parts:
+            continue
+        row = {}
+        for i, h in enumerate(headers):
+            row[h] = parts[i] if i < len(parts) else ""
+        rows.append(row)
+    return rows
+
+
+def _parse_hestia_kv(text: str) -> dict:
+    """Parse HestiaCP key:value output into dict."""
+    result = {}
+    for line in text.strip().splitlines():
+        if ":" in line:
+            k, _, v = line.partition(":")
+            result[k.strip()] = v.strip()
+    return result
+
+
+@app.get("/api/vps-fisiomt/stats")
+async def api_vps_fisiomt_stats():
+    """Métricas do servidor FisioMT via HestiaCP API."""
+    import re as _re
+
+    async def _run_info():
+        return await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _hestia_post("v-list-sys-info"))
+
+    async def _run_services():
+        return await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _hestia_post("v-list-sys-services"))
+
+    try:
+        info_txt, svc_txt = await asyncio.gather(_run_info(), _run_services())
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+
+    # Parse sys-info: HOSTNAME OS VER ARCH HESTIA RELEASE UPTIME LA...
+    data = {
+        "hostname": "", "os": "", "os_ver": "", "arch": "",
+        "hestia_ver": "", "uptime_min": 0,
+        "load1": 0.0, "load5": 0.0, "load15": 0.0,
+        "services": [], "timestamp": datetime.now().isoformat(),
+        "source": "hestia_api",
+    }
+    info_rows = _parse_hestia_table(info_txt)
+    if info_rows:
+        r = info_rows[0]
+        data["hostname"]   = r.get("HOSTNAME", "")
+        data["os"]         = r.get("OS", "")
+        data["os_ver"]     = r.get("VER", "")
+        data["arch"]       = r.get("ARCH", "")
+        data["hestia_ver"] = r.get("HESTIA", "")
+        try:
+            data["uptime_min"] = int(r.get("UPTIME", 0))
+        except Exception:
+            pass
+        # Load avg — may appear as separate cols after RELEASE
+        raw = info_txt
+        la_match = _re.search(r"release\s+([\d.]+)\s*/\s*([\d.]+)\s*/\s*([\d.]+)", raw, _re.IGNORECASE)
+        if la_match:
+            data["load1"]  = float(la_match.group(1))
+            data["load5"]  = float(la_match.group(2))
+            data["load15"] = float(la_match.group(3))
+
+    # Parse sys-services
+    svc_rows = _parse_hestia_table(svc_txt)
+    total_mem_mb  = 0
+    total_cpu_pct = 0.0
+    services      = []
+    for row in svc_rows:
+        try:
+            mem = int(row.get("MEM", 0))
+            cpu = float(row.get("CPU", 0))
+            total_mem_mb  += mem
+            total_cpu_pct += cpu
+            uptime_s = int(row.get("UPTIME", 0))
+        except Exception:
+            mem = 0; cpu = 0.0; uptime_s = 0
+        services.append({
+            "name":       row.get("NAME", ""),
+            "state":      row.get("STATE", ""),
+            "cpu_pct":    cpu,
+            "mem_mb":     mem,
+            "uptime_min": uptime_s,
+        })
+
+    data["services"]        = services
+    data["total_svc_mem_mb"]= total_mem_mb
+    data["total_cpu_pct"]   = round(total_cpu_pct, 2)
+
+    # Uptime human-readable
+    um = data["uptime_min"]
+    d_  = um // 1440
+    h_  = (um % 1440) // 60
+    m_  = um % 60
+    data["uptime_human"] = f"{d_}d {h_}h {m_}m" if d_ else f"{h_}h {m_}m"
+
+    return data
+
+
+@app.get("/api/vps-fisiomt/hestia/accounts")
+async def api_vps_fisiomt_hestia_accounts():
+    """Lista contas HestiaCP com uso de recursos."""
+
+    async def _list_users():
+        return await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _hestia_post("v-list-users"))
+
+    async def _user_detail(uname: str):
+        txt = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _hestia_post("v-list-user", arg1=uname))
+        return uname, _parse_hestia_kv(txt)
+
+    try:
+        users_txt = await _list_users()
+        user_rows = _parse_hestia_table(users_txt)
+        user_names = [r["USER"] for r in user_rows if r.get("USER")]
+
+        details   = await asyncio.gather(*[_user_detail(u) for u in user_names])
+        detail_map = dict(details)
+
+        accounts = []
+        for row in user_rows:
+            uname = row.get("USER", "")
+            d     = detail_map.get(uname, {})
+            try:
+                disk_mb   = int(row.get("DISK", 0))
+                bw_mb     = int(row.get("BW", 0))
+                web_cnt   = int(row.get("WEB", 0))
+                mail_cnt  = int(row.get("MAIL", 0))
+                db_cnt    = int(row.get("DB", 0))
+            except Exception:
+                disk_mb = bw_mb = web_cnt = mail_cnt = db_cnt = 0
+
+            disk_quota = 0
+            try:
+                quota_str = d.get("DISK_QUOTA", "0").replace("unlimited", "0")
+                disk_quota = int(quota_str)
+            except Exception:
+                pass
+
+            disk_pct = round(disk_mb / disk_quota * 100, 1) if disk_quota > 0 else 0
+
+            accounts.append({
+                "user":        uname,
+                "role":        row.get("ROLE", ""),
+                "plan":        row.get("PKG", ""),
+                "status":      row.get("SPND", "no"),
+                "full_name":   d.get("FULL NAME", d.get("NAME", "")),
+                "email":       d.get("EMAIL", ""),
+                "web":         web_cnt,
+                "mail":        mail_cnt,
+                "db":          db_cnt,
+                "disk_mb":     disk_mb,
+                "disk_quota":  disk_quota,
+                "disk_pct":    disk_pct,
+                "bandwidth_mb":bw_mb,
+                "date":        row.get("DATE", ""),
+            })
+
+        return {
+            "accounts":  accounts,
+            "total":     len(accounts),
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+
+
+@app.get("/api/vps-fisiomt/hestia/domains/{username}")
+async def api_vps_fisiomt_hestia_domains(username: str):
+    """Lista domínios web de uma conta HestiaCP."""
+    try:
+        txt = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _hestia_post("v-list-web-domains", arg1=username))
+        rows = _parse_hestia_table(txt)
+        return {"domains": rows, "user": username}
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+
+
 
 @app.get("/")
 async def root():

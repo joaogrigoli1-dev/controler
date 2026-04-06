@@ -106,16 +106,25 @@ def _check_buffer_health():
     """
     Verifica se o WhatsApp Buffer está UP.
     Tenta: 1) Coolify status  2) SSH curl porta 3001
+    Retorna up=True (skip) se o app não existir no Coolify (removido/migrado).
     """
-    # Via Coolify API
-    status = _coolify_app_status(COOLIFY_BUF_UUID)
+    # Verifica se o app ainda existe no Coolify
+    r = _coolify_get_app(COOLIFY_BUF_UUID)
+    if not r["success"]:
+        # App não encontrado — foi removido ou migrado; skip sem bloquear deploy
+        err = r.get("error", "")
+        if "404" in str(err) or "not found" in str(err).lower() or r.get("status") == 404:
+            return {"up": True, "method": "skip", "detail": "App removido do Coolify (skip)"}
+
+    # App existe — verifica status
+    status = r["data"].get("status", "unknown") if r["success"] else "unknown"
     if "healthy" in status or "running" in status:
         return {"up": True, "method": "coolify", "detail": status}
 
     # Fallback: SSH + curl
-    r = _ssh("curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/ --max-time 5", timeout=15)
-    if r["success"]:
-        code = r.get("stdout", "").strip().strip("'")
+    r2 = _ssh("curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/ --max-time 5", timeout=15)
+    if r2["success"]:
+        code = r2.get("stdout", "").strip().strip("'")
         if code and code != "000":
             return {"up": True, "method": "http", "detail": f"HTTP {code}"}
 
@@ -129,9 +138,14 @@ def _get_current_branch():
 
 
 def _get_git_status():
-    """Retorna se há alterações não commitadas."""
+    """Retorna alterações staged/modificadas (ignora untracked ??)."""
     r = execute_command("git status --porcelain", cwd=LOCAL_PATH)
-    return r.get("stdout", "").strip() if r["success"] else ""
+    if not r["success"]:
+        return ""
+    lines = r.get("stdout", "").strip().splitlines()
+    # Ignora apenas untracked (??) — modified/staged/deleted ainda bloqueiam
+    tracked = [l for l in lines if l and not l.startswith("??")]
+    return "\n".join(tracked)
 
 
 def _ensure_main_branch(log):

@@ -288,57 +288,6 @@ def get_recent_logs(project_id, limit=20):
     return list_from_rows(rows)
 
 
-# ── Agent Conversations ──
-
-def save_conversation(project_id, title, messages):
-    conn = get_conn()
-    conn.execute(
-        "INSERT INTO agent_conversations (project_id, title, messages) VALUES (?,?,?)",
-        (project_id, title, json.dumps(messages, ensure_ascii=False))
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_conversations(project_id, limit=10):
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT id, project_id, title, created_at FROM agent_conversations WHERE project_id=? ORDER BY updated_at DESC LIMIT ?",
-        (project_id, limit)
-    ).fetchall()
-    conn.close()
-    return list_from_rows(rows)
-
-
-def get_conversation(conv_id):
-    conn = get_conn()
-    row = conn.execute("SELECT * FROM agent_conversations WHERE id=?", (conv_id,)).fetchone()
-    conn.close()
-    if row:
-        data = dict_from_row(row)
-        data['messages'] = json.loads(data['messages'])
-        return data
-    return None
-
-
-# ── Settings ──
-
-def get_setting(key, default=None):
-    conn = get_conn()
-    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-    conn.close()
-    return row['value'] if row else default
-
-
-def set_setting(key, value):
-    conn = get_conn()
-    conn.execute(
-        "INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=?",
-        (key, value, value)
-    )
-    conn.commit()
-    conn.close()
-
 
 # ── Memories (tipadas) ──
 
