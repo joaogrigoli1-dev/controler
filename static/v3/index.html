@@ -522,7 +522,7 @@
   async function loadScreen(name) {
     if (!screenModules[name]) {
       try {
-        screenModules[name] = await import(`./screens/${name}.js`);
+        screenModules[name] = await import(`/static/v3/screens/${name}.js`);
       } catch {
         return null;
       }
