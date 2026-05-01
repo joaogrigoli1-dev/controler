@@ -1688,6 +1688,59 @@ async def api_scheduler_jobs():
 
 
 # ════════════════════════════════════════
+# API v3 — Resource Scanner
+# ════════════════════════════════════════
+
+_scanner_cache: dict = {}   # {"result": {...}, "ts": datetime}
+
+
+@app.get("/api/scanner/last")
+async def api_scanner_last():
+    """Retorna o último resultado cacheado do scanner."""
+    if not _scanner_cache:
+        return JSONResponse({"result": None, "ts": None, "message": "Nenhum scan executado ainda"})
+    return {
+        "result":  _scanner_cache.get("result"),
+        "results": _scanner_cache.get("result", {}).get("results", {}),
+        "ts":      _scanner_cache.get("ts"),
+    }
+
+
+@app.get("/api/scanner/run")
+async def api_scanner_run():
+    """Executa o Resource Scanner completo (~5-15s) e cacheia o resultado."""
+    from core.scanner import run_scan
+    result = await run_scan(PROJECTS_PATH)
+    _scanner_cache["result"] = result
+    _scanner_cache["ts"] = datetime.now().isoformat()
+    # Registrar na timeline
+    summary = result.get("summary", {})
+    add_timeline_event(
+        event_type="scan",
+        severity="warning" if summary.get("warning", 0) > 0 else "info",
+        title=f"Resource Scanner: {summary.get('total', 0)} issues encontrados",
+        detail=f"critical={summary.get('critical',0)} warning={summary.get('warning',0)} info={summary.get('info',0)}",
+        actor="scheduler",
+    )
+    return result
+
+
+@app.post("/api/scanner/fix")
+async def api_scanner_fix(request: Request):
+    """Executa uma ação segura (whitelist) do scanner."""
+    from core.scanner import execute_safe_action
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON inválido"}, status_code=400)
+    action = body.get("action", "")
+    if not action:
+        return JSONResponse({"error": "Campo 'action' obrigatório"}, status_code=400)
+    result = execute_safe_action(action)
+    return result
+
+
+# ════════════════════════════════════════
 # API v3 — OpenClaw Agents alias
 # ════════════════════════════════════════
 
