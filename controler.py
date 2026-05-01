@@ -1687,8 +1687,91 @@ async def api_scheduler_jobs():
     return {"jobs": jobs, "running": _scheduler.running}
 
 
+# ════════════════════════════════════════
+# API v3 — OpenClaw Agents alias
+# ════════════════════════════════════════
+
+@app.get("/api/openclaw/agents")
+async def api_openclaw_agents_v3():
+    """Alias v3: retorna agentes OpenClaw no formato esperado pelo frontend v3."""
+    try:
+        results = await asyncio.gather(*[_get_agent_status(a) for a in _OPENCLAW_AGENTS],
+                                       return_exceptions=True)
+        agents = []
+        for r in results:
+            if isinstance(r, Exception):
+                agents.append({"error": str(r), "status": "error"})
+            else:
+                agents.append(r)
+        return {"agents": agents, "timestamp": datetime.now().isoformat()}
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/openclaw/agents/{agent_id}/logs")
+async def api_openclaw_agent_logs(agent_id: str, limit: int = Query(50)):
+    """Logs de um agente OpenClaw específico."""
+    agent = next((a for a in _OPENCLAW_AGENTS if a["id"] == agent_id), None)
+    if not agent:
+        return JSONResponse({"error": f"Agente '{agent_id}' não encontrado"}, status_code=404)
+    try:
+        vol = Path(agent["volume"])
+        log_file = vol / "logs" / "agent.log"
+        if log_file.exists():
+            lines = log_file.read_text(errors="replace").splitlines()
+            return {"logs": lines[-limit:], "agent_id": agent_id}
+        return {"logs": [], "agent_id": agent_id}
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+# ════════════════════════════════════════
+# API v3 — Vault SSM params
+# ════════════════════════════════════════
+
+@app.get("/api/vault/params")
+async def api_vault_params():
+    """Lista parâmetros SSM no formato esperado pelo Vault screen do frontend v3."""
+    try:
+        creds_data = _fetch_ssm_parameters()
+        # _fetch_ssm_parameters retorna {services: [...], params: [...], total: N}
+        # Transformar para lista flat de {name, type, value, last_modified}
+        params = []
+        raw_params = creds_data.get("params", [])
+        for p in raw_params:
+            params.append({
+                "name":          p.get("name") or p.get("Name") or "",
+                "type":          p.get("type") or p.get("Type") or "String",
+                "value":         p.get("value") or p.get("Value") or "",
+                "last_modified": p.get("last_modified") or p.get("LastModifiedDate") or None,
+                "version":       p.get("version") or p.get("Version") or 1,
+            })
+        # Fallback: se não há params diretos, usar services
+        if not params:
+            for svc in creds_data.get("services", []):
+                for item in svc.get("params", []):
+                    params.append({
+                        "name":          item.get("name") or "",
+                        "type":          item.get("type") or "String",
+                        "value":         item.get("value") or "",
+                        "last_modified": item.get("last_modified") or None,
+                        "version":       item.get("version") or 1,
+                    })
+        return {"params": params, "total": len(params)}
+    except Exception as exc:
+        return JSONResponse({"error": str(exc), "params": []}, status_code=500)
+
+
+# ════════════════════════════════════════
+# Root — serve frontend v3
+# ════════════════════════════════════════
+
 @app.get("/")
 async def root():
+    # v3 cutover: servir novo frontend sci-fi
+    v3_path = STATIC_DIR / "v3" / "index.html"
+    if v3_path.exists():
+        return FileResponse(str(v3_path))
     return FileResponse(str(STATIC_DIR / "index.html"))
 
 
