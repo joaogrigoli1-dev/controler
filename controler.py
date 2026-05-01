@@ -11,6 +11,7 @@ import asyncio
 import threading
 import os
 import sys
+import functools
 from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -52,8 +53,25 @@ with open(CONFIG_PATH) as f:
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# SEC-02: PROJECTS_PATH configurável via env var — corrige dashboard zerado em produção Docker
+PROJECTS_PATH = Path(os.getenv("PROJECTS_PATH", str(Path.home() / "Documents" / "DEV")))
+
 # Token que os agentes OpenClaw usam para autenticar no POST /api/agent-findings
-AGENT_API_TOKEN = os.getenv("AGENT_API_TOKEN", "openclaw_controler_2026")
+# SEC-01: carregado do SSM — nunca hardcoded
+def _load_agent_api_token() -> str:
+    val = os.getenv("AGENT_API_TOKEN") or get_ssm_param("/controler/agent_api_token")
+    if not val:
+        # Aviso em vez de RuntimeError para não quebrar startup em dev sem SSM configurado
+        import warnings
+        warnings.warn(
+            "AGENT_API_TOKEN não configurado! Defina a env var AGENT_API_TOKEN "
+            "ou crie o parâmetro /controler/agent_api_token no AWS SSM.",
+            RuntimeWarning, stacklevel=1
+        )
+        return ""
+    return val
+
+AGENT_API_TOKEN = _load_agent_api_token()
 
 
 # ════════════════════════════════════════
@@ -95,6 +113,16 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # SEC-08: Content Security Policy
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com unpkg.com esm.sh; "
+        "style-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com; "
+        "font-src 'self' fonts.gstatic.com; "
+        "connect-src 'self'; "
+        "img-src 'self' data:; "
+        "frame-ancestors 'none';"
+    )
     if "server" in response.headers:
         del response.headers["server"]
     return response
@@ -224,7 +252,7 @@ async def api_delete_finding(finding_id: int):
 
 @app.get("/api/projects")
 async def api_projects():
-    dev_path = Path.home() / "Documents" / "DEV"
+    dev_path = PROJECTS_PATH
     result = []
     if dev_path.exists():
         for folder in sorted(dev_path.iterdir()):
@@ -268,9 +296,9 @@ async def api_containers():
     SYS_CMD = "df -h / && echo '---FREE---' && free -m | grep Mem"
 
     stats_r, ps_r, sys_r = await asyncio.gather(
-        _ssh_run(_SRV1_HOST, _SRV1_USER, _SRV1_PASS, STATS_CMD),
-        _ssh_run(_SRV1_HOST, _SRV1_USER, _SRV1_PASS, PS_CMD),
-        _ssh_run(_SRV1_HOST, _SRV1_USER, _SRV1_PASS, SYS_CMD),
+        _ssh_run(_SRV1_HOST, _SRV1_USER, _get_srv1_pass(), STATS_CMD),
+        _ssh_run(_SRV1_HOST, _SRV1_USER, _get_srv1_pass(), PS_CMD),
+        _ssh_run(_SRV1_HOST, _SRV1_USER, _get_srv1_pass(), SYS_CMD),
     )
 
     # Parse docker stats
@@ -524,7 +552,7 @@ async def api_get_rules(project: str = Query(None)):
     if project:
         return {"content": get_rules_text(project)}
     general = get_rules_text(None)
-    dev_path = Path.home() / "Documents" / "DEV"
+    dev_path = PROJECTS_PATH
     projects = []
     if dev_path.exists():
         for folder in sorted(dev_path.iterdir()):
@@ -556,7 +584,7 @@ def _git_run(folder, *args, timeout=5):
 
 @app.get("/api/overview")
 async def api_overview():
-    dev_path = Path.home() / "Documents" / "DEV"
+    dev_path = PROJECTS_PATH
     projects, total_memories, last_global_activity = [], 0, None
 
     if dev_path.exists():
@@ -594,7 +622,7 @@ async def api_overview():
 
 @app.get("/api/kpis")
 async def api_kpis():
-    dev_path = Path.home() / "Documents" / "DEV"
+    dev_path = PROJECTS_PATH
     project_kpis = []
 
     if dev_path.exists():
@@ -679,7 +707,8 @@ async def api_kpis():
 # API: Server — Coolify helpers internos
 # ════════════════════════════════════════
 
-_COOLIFY_TOKEN  = os.getenv("COOLIFY_TOKEN") or get_ssm_param("/myclinicsoft/coolify_token") or ""
+# SEC-03: path corrigido de /myclinicsoft/ para /controler/
+_COOLIFY_TOKEN  = os.getenv("COOLIFY_TOKEN") or get_ssm_param("/controler/coolify_token") or ""
 _COOLIFY_BASE   = f"http://{os.getenv('COOLIFY_HOST','62.72.63.18')}:8000/api/v1"
 _COOLIFY_SERVER_UUID = "j4ws844wcg400kwsc0sswocg"
 
@@ -687,11 +716,21 @@ _COOLIFY_SERVER_UUID = "j4ws844wcg400kwsc0sswocg"
 _SSHPASS_BIN = "/usr/local/bin/sshpass"
 _SRV1_HOST   = "62.72.63.18"
 _SRV1_USER   = "root"
-_SRV1_PASS   = get_ssm_param("/controler/srv1_ssh_password") or ""
-_FISIOMT_HOST        = "187.77.246.214"
-_FISIOMT_USER        = "root"
-_FISIOMT_PASS        = get_ssm_param("/controler/fisiomt_ssh_password") or ""
-_FISIOMT_HESTIA_PASS = get_ssm_param("/controler/fisiomt_hestia_password") or ""
+_FISIOMT_HOST = "187.77.246.214"
+_FISIOMT_USER = "root"
+
+# SEC-05: senhas carregadas por lazy-load (não no startup global)
+@functools.lru_cache(maxsize=None)
+def _get_srv1_pass() -> str:
+    return get_ssm_param("/controler/srv1_ssh_password") or ""
+
+@functools.lru_cache(maxsize=None)
+def _get_fisiomt_pass() -> str:
+    return get_ssm_param("/controler/fisiomt_ssh_password") or ""
+
+@functools.lru_cache(maxsize=None)
+def _get_fisiomt_hestia_pass() -> str:
+    return get_ssm_param("/controler/fisiomt_hestia_password") or ""
 
 
 async def _ssh_run(host: str, user: str, password: str, command: str, port: int = 22) -> dict:
@@ -1143,7 +1182,7 @@ async def refresh_credentials():
 # ════════════════════════════════════════
 import uuid as _uuid_mod
 
-_MYCLINICSOFT_PATH = Path.home() / "Documents" / "DEV" / "myclinicsoft"
+_MYCLINICSOFT_PATH = PROJECTS_PATH / "myclinicsoft"
 _MYCLINICSOFT_UUID = "jckc0ccwssowwc0oocw80ogs"
 
 # Job store: job_id -> {"status": "running"|"done"|"error", "logs": [...], "step": str}
@@ -1240,7 +1279,8 @@ async def api_deploy_start():
 
             # Garante token Coolify disponível no módulo deploy
             # (o módulo lê COOLIFY_TOKEN no import, então patchamos diretamente)
-            _token = os.environ.get("COOLIFY_TOKEN") or get_ssm_param("/myclinicsoft/coolify_token") or ""
+            # SEC-03: path corrigido para /controler/coolify_token
+            _token = os.environ.get("COOLIFY_TOKEN") or get_ssm_param("/controler/coolify_token") or ""
             if _token:
                 os.environ["COOLIFY_TOKEN"] = _token
             import devops.deploy_myclinicsoft as _dm
@@ -1345,7 +1385,7 @@ _HESTIA_BASE = "https://187.77.246.214:8083/api/"
 def _hestia_post(cmd: str, **kwargs) -> str:
     """Synchronous HestiaCP API call — returns raw text."""
     import urllib.request, urllib.parse, ssl
-    data = {"user": "admin", "password": _FISIOMT_HESTIA_PASS,
+    data = {"user": "admin", "password": _get_fisiomt_hestia_pass(),
             "returncode": "no", "cmd": cmd, **kwargs}
     body = urllib.parse.urlencode(data).encode()
     ctx  = ssl.create_default_context()
