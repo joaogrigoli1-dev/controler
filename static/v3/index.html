@@ -363,6 +363,137 @@
     }
 
     .empty-icon { font-size: 32px; margin-bottom: 8px; }
+
+    /* ── Mobile hamburger ────────────────────────────────────────────────── */
+    .hamburger {
+      display: none;
+      flex-direction: column;
+      gap: 5px;
+      cursor: pointer;
+      padding: 4px;
+      border: none;
+      background: transparent;
+    }
+
+    .hamburger span {
+      display: block;
+      width: 20px;
+      height: 2px;
+      background: var(--text);
+      border-radius: 1px;
+      transition: all 0.2s;
+    }
+
+    .sidebar-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 90;
+    }
+
+    @media (max-width: 768px) {
+      .hamburger { display: flex; }
+      .sidebar {
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        z-index: 110;
+      }
+      .sidebar.open {
+        transform: translateX(0);
+        box-shadow: 4px 0 30px rgba(0,0,0,0.5);
+      }
+      .sidebar-overlay.open { display: block; }
+      .main { margin-left: 0; }
+      .page-content { padding: 16px; }
+      .grid-4 { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 480px) {
+      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+      .topbar { padding: 0 12px; }
+    }
+
+    /* ── Keyboard shortcut overlay (Cmd+K) ───────────────────────���───────── */
+    .cmd-k-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: rgba(2,3,8,0.85);
+      backdrop-filter: blur(4px);
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 15vh;
+    }
+
+    .cmd-k-overlay.open { display: flex; }
+
+    .cmd-k-box {
+      width: 100%;
+      max-width: 520px;
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 12px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.6), var(--glow-cyan);
+      overflow: hidden;
+    }
+
+    .cmd-k-input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      font-size: 16px;
+      padding: 16px 20px;
+      outline: none;
+      font-family: var(--font-sans);
+    }
+
+    .cmd-k-input::placeholder { color: var(--muted); }
+
+    .cmd-k-results { max-height: 320px; overflow-y: auto; }
+
+    .cmd-k-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      cursor: pointer;
+      transition: background 0.1s;
+      font-size: 14px;
+    }
+
+    .cmd-k-item:hover, .cmd-k-item.selected {
+      background: rgba(0,212,255,0.08);
+    }
+
+    .cmd-k-hint {
+      padding: 8px 20px;
+      font-size: 11px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 16px;
+    }
+
+    .cmd-k-shortcut {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .kbd {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 3px;
+      border: 1px solid var(--border2);
+      background: var(--surface2);
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--muted);
+    }
   </style>
 </head>
 <body>
@@ -497,18 +628,149 @@
     return titles[route] || route;
   }
 
+  // ── All nav items flat (for Cmd+K search) ──────────────────────────────
+  const ALL_ITEMS = NAV.flatMap(s => s.items);
+
+  // ── Cmd+K search overlay ────────────────────────────────────────────────
+  function CmdKOverlay({ open, onClose, onNavigate }) {
+    const [query,    setQuery]    = useState("");
+    const [selected, setSelected] = useState(0);
+    const inputRef = { current: null };
+
+    useEffect(() => {
+      if (open) {
+        setQuery(""); setSelected(0);
+        setTimeout(() => inputRef.current && inputRef.current.focus(), 50);
+      }
+    }, [open]);
+
+    const results = query.trim()
+      ? ALL_ITEMS.filter(i =>
+          i.label.toLowerCase().includes(query.toLowerCase()) ||
+          i.hash.toLowerCase().includes(query.toLowerCase())
+        )
+      : ALL_ITEMS;
+
+    const handleKey = (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); setSelected(s => Math.min(s+1, results.length-1)); }
+      if (e.key === "ArrowUp")   { e.preventDefault(); setSelected(s => Math.max(s-1, 0)); }
+      if (e.key === "Enter" && results[selected]) { onNavigate(results[selected].hash); onClose(); }
+      if (e.key === "Escape") onClose();
+    };
+
+    if (!open) return null;
+
+    return html`
+      <div class=${"cmd-k-overlay" + (open ? " open" : "")} onClick=${onClose}>
+        <div class="cmd-k-box" onClick=${e => e.stopPropagation()}>
+          <input
+            ref=${r => inputRef.current = r}
+            class="cmd-k-input"
+            placeholder="Ir para... (telas, projetos)"
+            value=${query}
+            onInput=${e => { setQuery(e.target.value); setSelected(0); }}
+            onKeyDown=${handleKey}
+          />
+          <div class="cmd-k-results">
+            ${results.map((item, i) => html`
+              <div
+                key=${item.hash}
+                class=${"cmd-k-item" + (i === selected ? " selected" : "")}
+                onClick=${() => { onNavigate(item.hash); onClose(); }}
+                onMouseEnter=${() => setSelected(i)}
+              >
+                <span style=${{ fontSize: "16px", width: "22px" }}>${item.icon}</span>
+                <span>${item.label}</span>
+                <span style=${{ marginLeft: "auto", fontSize: "11px", color: "var(--muted)", fontFamily: "var(--font-mono)" }}>
+                  #${item.hash}
+                </span>
+              </div>
+            `)}
+            ${results.length === 0 && html`
+              <div class="cmd-k-item" style=${{ color: "var(--muted)", cursor: "default" }}>
+                Nenhum resultado para "${query}"
+              </div>
+            `}
+          </div>
+          <div class="cmd-k-hint">
+            <span class="cmd-k-shortcut"><span class="kbd">↑↓</span> navegar</span>
+            <span class="cmd-k-shortcut"><span class="kbd">↵</span> ir</span>
+            <span class="cmd-k-shortcut"><span class="kbd">Esc</span> fechar</span>
+            <span style=${{ marginLeft: "auto" }}>
+              <span class="kbd">G</span>+<span class="kbd">H</span> Home ·
+              <span class="kbd">G</span>+<span class="kbd">S</span> srv1 ·
+              <span class="kbd">G</span>+<span class="kbd">T</span> Timeline ·
+              <span class="kbd">G</span>+<span class="kbd">A</span> Alerts
+            </span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   // ── App root ─────────────────────────────────────────────────────────────
   function App() {
-    const [route, setRoute] = useState(getCurrentRoute);
+    const [route,       setRoute]       = useState(getCurrentRoute);
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [cmdkOpen,    setCmdkOpen]    = useState(false);
+    const gKeyRef = { current: false };
 
+    // Hash router
     useEffect(() => {
       const handler = () => setRoute(getCurrentRoute());
       window.addEventListener("hashchange", handler);
       return () => window.removeEventListener("hashchange", handler);
     }, []);
 
+    // Keyboard shortcuts
+    useEffect(() => {
+      const down = (e) => {
+        // Cmd+K or Ctrl+K
+        if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+          e.preventDefault();
+          setCmdkOpen(o => !o);
+          return;
+        }
+        // Escape — close any open panel
+        if (e.key === "Escape") {
+          setCmdkOpen(false);
+          setSidebarOpen(false);
+          return;
+        }
+        // G+x shortcuts (only when not in an input)
+        const tag = document.activeElement?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        if (e.key === "g" || e.key === "G") { gKeyRef.current = true; setTimeout(() => gKeyRef.current = false, 1000); return; }
+        if (gKeyRef.current) {
+          const map = { h: "/", s: "/srv1", t: "/timeline", a: "/alerts", v: "/vault", p: "/projects" };
+          const dest = map[e.key.toLowerCase()];
+          if (dest) { navigate(dest); gKeyRef.current = false; }
+        }
+      };
+      document.addEventListener("keydown", down);
+      return () => document.removeEventListener("keydown", down);
+    }, []);
+
+    const handleNavClick = (hash) => {
+      navigate(hash);
+      setSidebarOpen(false); // close mobile sidebar after nav
+    };
+
     return html`
-      <aside class="sidebar">
+      <!-- Mobile overlay -->
+      <div
+        class=${"sidebar-overlay" + (sidebarOpen ? " open" : "")}
+        onClick=${() => setSidebarOpen(false)}
+      />
+
+      <!-- Cmd+K overlay -->
+      <${CmdKOverlay}
+        open=${cmdkOpen}
+        onClose=${() => setCmdkOpen(false)}
+        onNavigate=${navigate}
+      />
+
+      <aside class=${"sidebar" + (sidebarOpen ? " open" : "")}>
         <!-- Logo -->
         <div class="sidebar-logo">
           <div class="logo-mark">⬡ Controler</div>
@@ -525,7 +787,7 @@
                   key=${item.hash}
                   class=${"nav-item" + (route === item.hash ? " active" : "")}
                   href=${"#" + item.hash}
-                  onClick=${(e) => { e.preventDefault(); navigate(item.hash); }}
+                  onClick=${(e) => { e.preventDefault(); handleNavClick(item.hash); }}
                 >
                   <span class="nav-icon">${item.icon}</span>
                   <span>${item.label}</span>
@@ -549,9 +811,24 @@
         <!-- Top bar -->
         <header class="topbar">
           <div class="topbar-left">
+            <!-- Hamburger (mobile only) -->
+            <button class="hamburger" onClick=${() => setSidebarOpen(o => !o)} aria-label="Menu">
+              <span/>
+              <span/>
+              <span/>
+            </button>
             <div class="page-title">${routeTitle(route)}</div>
           </div>
           <div class="topbar-right">
+            <!-- Cmd+K hint (desktop) -->
+            <button
+              class="btn"
+              style=${{ fontSize: "11px", padding: "4px 10px", display: "flex", gap: "6px", alignItems: "center" }}
+              onClick=${() => setCmdkOpen(true)}
+            >
+              <span style=${{ color: "var(--muted)" }}>Buscar</span>
+              <span class="kbd" style=${{ fontSize: "9px" }}>⌘K</span>
+            </button>
             <${Clock}/>
             <div class="indicator-dot" title="Online"/>
           </div>
