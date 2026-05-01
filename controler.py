@@ -266,7 +266,7 @@ async def basic_auth_middleware(request: Request, call_next):
 @app.get("/health")
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "service": "controler", "version": "2.0.0"}
+    return {"status": "ok", "service": "controler", "version": "3.0.0"}
 
 
 # ════════════════════════════════════════
