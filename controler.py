@@ -156,12 +156,10 @@ async def _job_deploy_sync():
 
 
 async def _job_daily_digest():
-    """Às 8h BRT: envia digest diário via WhatsApp (implementado na Fase 2)."""
+    """Às 8h BRT: envia digest diário via WhatsApp."""
     try:
         from core.alerts import send_daily_digest
         await send_daily_digest()
-    except ImportError:
-        pass  # core/alerts.py ainda não existe — será criado na Fase 2
     except Exception as exc:
         import logging
         logging.getLogger("controler.scheduler").warning(f"daily_digest falhou: {exc}")
@@ -1652,12 +1650,8 @@ async def api_alerts_test(request: Request):
     severity = body.get("severity", "warning")
     title    = body.get("title", "Teste de alerta — Controler v3")
     message  = body.get("message", "Mensagem de teste gerada manualmente.")
-    try:
-        from core.alerts import alert_manager
-        result = await alert_manager.send(severity, title, message, rule_key="manual_test")
-    except ImportError:
-        # core/alerts.py ainda não existe — será criado na Fase 2
-        result = {"skipped": True, "reason": "core/alerts.py não implementado ainda (Fase 2)"}
+    from core.alerts import alert_manager
+    result = await alert_manager.send(severity, title, message, rule_key="manual_test")
     return result
 
 
