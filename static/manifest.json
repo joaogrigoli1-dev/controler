@@ -1,0 +1,27 @@
+{
+  "name": "Controler Command Center",
+  "short_name": "Controler",
+  "description": "Command Center operacional — infra, deploys, alertas e containers em tempo real",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#020308",
+  "theme_color": "#00d4ff",
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["utilities", "productivity"],
+  "lang": "pt-BR",
+  "scope": "/"
+}

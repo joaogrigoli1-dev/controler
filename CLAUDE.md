@@ -1,40 +1,119 @@
-# CLAUDE.md — controler
-
-## Memória automática
-
-Este projeto usa o servidor MCP `memory-mcp` para armazenar contexto entre sessões.
-Ao iniciar: `memory_search` com o tema da tarefa. Ao terminar: `memory_save` com o que foi feito.
-
----
+# CLAUDE.md — controler v3
 
 ## Sobre o projeto
 
-**controler** — ferramenta Python de automação para desenvolvimento com IA.
+**controler** — Command Center operacional para toda a infraestrutura de desenvolvimento.
 
-**Localização:** `~/Documents/DEV/controler/`
+**Localização:** `~/Documents/DEV/controler/`  
+**Produção:** `https://controler.net.br` (Basic Auth protegido)  
+**Versão atual:** `3.0.0`
 
-**O que faz:**
-- Monitora pastas de projetos para detectar mudanças
-- Usa Claude API para auto-commit e deploy
-- Integra com GitHub via git commands
-- Tem DevOps scripts para deploy do myclinicsoft
+---
 
-**Stack:**
-- Python 3.12 (via brew: `/opt/homebrew/bin/python3.12`)
-- Claude API (Anthropic SDK)
-- Shell scripts + subprocess
+## Stack
 
-**Arquivos principais:**
-- `controler.py` — entry point, SCAN_DIRS aponta para ~/Documents/DEV/
-- `core/agent.py` — agente principal com prompt do sistema
-- `core/tools.py` — ferramentas disponíveis para o agente
-- `config/settings.yaml` — configuração geral
-- `devops/deploy_myclinicsoft.py` — script de deploy
-- `devops/whatsdev_sync.py` — sincronização WhatsApp dev
+- **Backend:** Python 3.12 + FastAPI + SQLite + APScheduler
+- **Frontend:** Preact 10 + HTM via `https://esm.sh` — zero build step
+- **Infra:** Docker socket + AWS SSM + Coolify (UUID `hksw4kg8owgs0wwg0o8k4kk0`) em srv1 (62.72.63.18)
+- **Alertas:** Zapi (WhatsApp) + Infobip (SMS) → `556598466555`
 
-**Configuração:**
-- SCAN_DIRS em `controler.py`: `["/Users/jhgm/Documents/DEV/myclinicsoft", "/Users/jhgm/Documents/DEV/controler"]`
-- Chaves de API em variáveis de ambiente ou `config/settings.yaml`
+---
+
+## Estrutura de arquivos
+
+```
+controler/
+├── controler.py          — FastAPI app (entry point, todos os endpoints)
+├── requirements.txt      — fastapi, uvicorn, apscheduler, httpx, boto3, psutil...
+├── core/
+│   ├── alerts.py         — AlertManager (Zapi + SMS, cooldown, janela silêncio)
+│   ├── database.py       — SQLite schema + helpers (get_db_conn)
+│   ├── scanner.py        — Resource Scanner (containers, images, volumes, branches, SSM, crons)
+│   ├── ssm.py            — get_ssm_param() com lru_cache
+│   ├── agent.py          — Agente Claude (legado)
+│   └── tools.py          — Ferramentas do agente (legado)
+├── static/
+│   └── v3/
+│       ├── index.html    — Shell Preact sci-fi (sidebar, router, Cmd+K, mobile)
+│       ├── components.js — StatusBadge, ProgressBar, GaugeCircle, SparkLine, TerminalLog, StepTracker, DrillCard
+│       └── screens/
+│           ├── mission-control.js  — Home KPIs + containers + timeline
+│           ├── srv1.js             — srv1 Deep Dive com gauges + restart
+│           ├── fisiomt.js          — FisioMT VPS + HestiaCP accounts
+│           ├── projects.js         — Projetos + deploy history
+│           ├── openclaw.js         — APScheduler jobs + agentes OpenClaw
+│           ├── scanner.js          — Resource Scanner UI
+│           ├── timeline.js         — Feed de eventos com filtros
+│           ├── alerts.js           — Alert log + painel de teste
+│           └── vault.js            — SSM params agrupados com reveal
+├── CHANGELOG.md          — Histórico de versões
+├── PLANEJAMENTO.md       — Planejamento original v3 (auditoria)
+└── PROMPTS_FASES.md      — Prompts das fases de execução
+```
+
+---
+
+## Tabelas SQLite
+
+| Tabela | Propósito |
+|--------|-----------|
+| `timeline_events` | Feed cronológico de eventos (deploys, alertas, crons) |
+| `metrics_snapshots` | Snapshots CPU/RAM por container a cada 2min |
+| `alert_log` | Log de alertas enviados (WhatsApp/SMS) |
+| `alert_config` | Configuração de regras de alerta |
+| `deploy_history` | Histórico completo de deploys |
+| `projects` | Projetos monitorados |
+| `agent_findings` | Reports dos agentes OpenClaw |
+| `memories` | Memórias do agente |
+| `rules_text` | Regras em texto |
+
+---
+
+## Endpoints principais
+
+| Endpoint | Descrição |
+|----------|-----------|
+| `GET /api/health` | Health check (version: 3.0.0) |
+| `GET /api/kpis` | KPIs globais do sistema |
+| `GET /api/timeline` | Feed de eventos paginado |
+| `GET /api/metrics/history` | Histórico CPU/RAM |
+| `GET /api/alerts` | Log de alertas |
+| `POST /api/alerts/test` | Disparo manual de alerta |
+| `GET /api/deploy/history` | Histórico de deploys |
+| `GET /api/scheduler/jobs` | Status APScheduler jobs |
+| `GET /api/scanner/run` | Executar Resource Scanner |
+| `GET /api/scanner/last` | Último resultado do scanner |
+| `POST /api/scanner/fix` | Executar ação segura |
+| `GET /api/vault/params` | SSM params agrupados |
+| `GET /api/openclaw/agents` | Status agentes OpenClaw |
+| `GET /api/server/docker/stats` | Stats Docker via socket |
+| `GET /api/vps-fisiomt/stats` | Métricas VPS FisioMT |
+| `GET /api/vps-fisiomt/hestia/accounts` | Contas HestiaCP |
+
+---
+
+## APScheduler — Cron jobs nativos
+
+| Job | Intervalo | Função |
+|-----|-----------|--------|
+| `metrics_snapshot` | 2 minutos | Snapshot CPU/RAM de todos containers |
+| `health_check` | 5 minutos | Verifica saúde de containers + alertas |
+| `deploy_sync` | 10 minutos | Sincroniza estado DEV/GIT/PROD |
+| `daily_digest` | 8h BRT | Digest WhatsApp com status do sistema |
+
+---
+
+## Parâmetros SSM (`/controler/*`)
+
+| Parâmetro SSM | Uso |
+|---------------|-----|
+| `/controler/agent_api_token` | Auth para agentes OpenClaw |
+| `/controler/coolify_token` | API do Coolify |
+| `/controler/auth_user` | Basic Auth usuário |
+| `/controler/auth_pass` | Basic Auth senha |
+| `/controler/zapi_token` | API Zapi (WhatsApp) |
+| `/controler/zapi_instance_id` | Instância Zapi |
+| `/controler/srv1_ssh_password` | SSH srv1 (substituir por chave) |
 
 ---
 
@@ -42,32 +121,48 @@ Ao iniciar: `memory_search` com o tema da tarefa. Ao terminar: `memory_save` com
 
 **NUNCA editar diretamente no servidor (srv1/Coolify/prod).**
 
-O fluxo correto é sempre:
-
 ```
 Mac (dev local) → GitHub (main) → Coolify (prod)
 ```
 
-1. **Mac (dev local)** — todas as edições de código acontecem aqui
-2. **GitHub** — `git push origin main` — Coolify detecta e inicia o build
-3. **Coolify (prod)** — deploy automático via webhook GitHub
+```bash
+# 1. Validar sintaxe
+cd ~/Documents/DEV/controler
+python3 -m py_compile controler.py
 
-**Script padrão:** `python3 devops/deploy_controler.py`
-- Valida ausência de credenciais hardcoded (`devops/validate_no_secrets.sh`) antes de `git add`
-- Faz commit + push para o GitHub
-- Aciona o deploy no Coolify via API
-- Aguarda status `running:healthy` e verifica HTTPS
+# 2. Commit e push
+git add -A
+git commit -m "tipo(escopo): descrição"
+git push origin main
 
-**Segredos:** nunca no código. Ficam no **AWS SSM Parameter Store** (`/controler/*`).
-- Em prod: IAM role do container busca automaticamente
-- Em dev local: `aws ssm get-parameter --profile cowork-admin`
+# 3. Deploy via Coolify MCP ou API
+# coolify_deploy uuid=hksw4kg8owgs0wwg0o8k4kk0 force=true
+
+# 4. Verificar
+curl -s https://controler.net.br/api/health
+```
+
+**Coolify UUID:** `hksw4kg8owgs0wwg0o8k4kk0`  
+**Env vars obrigatórias no Coolify:**
+- `PROJECTS_PATH=/projects`
+- `AGENT_API_TOKEN` (ou SSM)
 
 ---
 
-## Credenciais no SSM
+## Variáveis de ambiente (dev local)
 
-| Parâmetro SSM | Variável de Ambiente |
-|---|---|
-| `/controler/coolify_token` | `COOLIFY_TOKEN` |
-| `/controler/auth_user` | `BASIC_AUTH_USER` |
-| `/controler/auth_pass` | `BASIC_AUTH_PASS` |
+```bash
+export PROJECTS_PATH=~/Documents/DEV
+export AGENT_API_TOKEN=<valor do SSM>
+```
+
+Credenciais SSM em dev: `aws ssm get-parameter --profile cowork-admin --name /controler/xxx`
+
+---
+
+## Pendências conhecidas (v3.1)
+
+- SEC-06: Rate limiting Basic Auth (brute force protection)
+- SEC-07: `/api/credentials/{id}/reveal` separado
+- Remover sshpass → chave SSH pura
+- PWA manifest para instalação mobile

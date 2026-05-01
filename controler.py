@@ -190,12 +190,59 @@ app = FastAPI(title="Controler", version="3.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-# ── Basic Auth ──────────────────────────────────────────────────────────────
+# ── Basic Auth + Rate Limiting ──────────────────────────────────────────────
 import base64 as _b64
 import hmac as _hmac
+from collections import defaultdict
 
 _BASIC_USER = os.getenv("BASIC_AUTH_USER", "")
 _BASIC_PASS = os.getenv("BASIC_AUTH_PASS", "")
+
+# SEC-06: Rate limiting — máx 5 tentativas/IP em 5min, bloqueio 15min
+_AUTH_MAX_ATTEMPTS  = 5
+_AUTH_WINDOW_SEC    = 5 * 60   # 5 minutos
+_AUTH_BLOCK_SEC     = 15 * 60  # 15 minutos bloqueado
+_auth_failures: dict[str, list[float]] = defaultdict(list)  # ip → [timestamps]
+_auth_blocked:  dict[str, float]       = {}                  # ip → unblock_at
+
+
+def _get_client_ip(request: Request) -> str:
+    """Extrai IP real do cliente respeitando X-Forwarded-For (Coolify proxy)."""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _is_rate_limited(ip: str) -> bool:
+    """Retorna True se o IP está bloqueado ou excedeu tentativas."""
+    now = datetime.now().timestamp()
+
+    # Verificar bloqueio ativo
+    if ip in _auth_blocked:
+        if now < _auth_blocked[ip]:
+            return True
+        else:
+            del _auth_blocked[ip]
+            _auth_failures.pop(ip, None)
+
+    # Limpar tentativas fora da janela
+    window_start = now - _AUTH_WINDOW_SEC
+    _auth_failures[ip] = [t for t in _auth_failures[ip] if t > window_start]
+
+    if len(_auth_failures[ip]) >= _AUTH_MAX_ATTEMPTS:
+        _auth_blocked[ip] = now + _AUTH_BLOCK_SEC
+        logger.warning(f"[SEC-06] IP {ip} bloqueado por {_AUTH_BLOCK_SEC//60}min após {_AUTH_MAX_ATTEMPTS} tentativas falhas")
+        return True
+
+    return False
+
+
+def _record_auth_failure(ip: str) -> None:
+    """Registra tentativa de autenticação falha."""
+    _auth_failures[ip].append(datetime.now().timestamp())
+    attempts = len(_auth_failures[ip])
+    logger.warning(f"[SEC-06] Auth falhou para IP {ip} — tentativa {attempts}/{_AUTH_MAX_ATTEMPTS}")
 
 
 def _check_credentials(username: str, password: str) -> bool:
@@ -240,6 +287,16 @@ async def basic_auth_middleware(request: Request, call_next):
     if request.url.path == "/api/agent-findings" and request.method == "POST":
         return await call_next(request)
 
+    ip = _get_client_ip(request)
+
+    # SEC-06: Verificar rate limit antes de processar credenciais
+    if _is_rate_limited(ip):
+        return Response(
+            content="429 Too Many Requests — IP temporariamente bloqueado",
+            status_code=429,
+            headers={"Retry-After": str(_AUTH_BLOCK_SEC)},
+        )
+
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Basic "):
         try:
@@ -249,6 +306,8 @@ async def basic_auth_middleware(request: Request, call_next):
                 return await call_next(request)
         except Exception:
             pass
+        # Credenciais inválidas — registrar falha
+        _record_auth_failure(ip)
 
     return Response(
         content="401 Unauthorized — Acesso restrito",
@@ -712,13 +771,16 @@ _COOLIFY_BASE   = f"http://{os.getenv('COOLIFY_HOST','62.72.63.18')}:8000/api/v1
 _COOLIFY_SERVER_UUID = "j4ws844wcg400kwsc0sswocg"
 
 # ── SSH Helpers ──────────────────────────────────────────────────────────────
-_SSHPASS_BIN = "/usr/local/bin/sshpass"
-_SRV1_HOST   = "62.72.63.18"
-_SRV1_USER   = "root"
+# SEC-04: Usar chave SSH (~/.ssh/coolify_server) — sshpass REMOVIDO
+_SRV1_HOST    = "62.72.63.18"
+_SRV1_USER    = "root"
 _FISIOMT_HOST = "187.77.246.214"
 _FISIOMT_USER = "root"
 
-# SEC-05: senhas carregadas por lazy-load (não no startup global)
+# Chave SSH preferida; fallback para senha via SSM apenas se chave não existir
+_SSH_KEY_PATH = Path.home() / ".ssh" / "coolify_server"
+
+# SEC-05: senhas carregadas por lazy-load (fallback apenas — chave SSH é preferida)
 @functools.lru_cache(maxsize=None)
 def _get_srv1_pass() -> str:
     return get_ssm_param("/controler/srv1_ssh_password") or ""
@@ -733,13 +795,32 @@ def _get_fisiomt_hestia_pass() -> str:
 
 
 async def _ssh_run(host: str, user: str, password: str, command: str, port: int = 22) -> dict:
-    """Executa comando remoto via sshpass."""
-    sshpass = _SSHPASS_BIN if os.path.exists(_SSHPASS_BIN) else "sshpass"
-    cmd = [
-        sshpass, "-p", password,
-        "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
-        "-p", str(port), f"{user}@{host}", command,
-    ]
+    """Executa comando remoto via SSH.
+    Usa chave SSH (~/.ssh/coolify_server) se disponível.
+    Fallback para senha via SSM apenas se a chave não existir.
+    NUNCA usa sshpass (senha no process list).
+    """
+    if _SSH_KEY_PATH.exists():
+        # SEC-04: chave SSH — sem senha no process list
+        cmd = [
+            "ssh",
+            "-i", str(_SSH_KEY_PATH),
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "ConnectTimeout=10",
+            "-o", "BatchMode=yes",
+            "-p", str(port),
+            f"{user}@{host}",
+            command,
+        ]
+    else:
+        # Fallback: usa sshpass com senha do SSM (menos seguro — logar aviso)
+        logger.warning(f"[SEC-04] Chave SSH {_SSH_KEY_PATH} não encontrada — usando fallback por senha SSM para {host}")
+        sshpass_bin = "/usr/local/bin/sshpass" if Path("/usr/local/bin/sshpass").exists() else "sshpass"
+        cmd = [
+            sshpass_bin, "-p", password,
+            "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+            "-p", str(port), f"{user}@{host}", command,
+        ]
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE,
