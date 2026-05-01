@@ -145,6 +145,71 @@ def init_db():
         updated_at  TEXT DEFAULT (datetime('now'))
     );
 
+    -- ── Fase 1: Novas tabelas v3 ─────────────────────────────────────────
+
+    -- Feed cronológico de todos os eventos do sistema
+    CREATE TABLE IF NOT EXISTS timeline_events (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts          TEXT NOT NULL DEFAULT (datetime('now')),
+        event_type  TEXT NOT NULL,
+        severity    TEXT NOT NULL DEFAULT 'info',
+        project     TEXT,
+        title       TEXT NOT NULL,
+        detail      TEXT,
+        actor       TEXT DEFAULT 'system',
+        metadata    TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_timeline_ts ON timeline_events(ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_timeline_project ON timeline_events(project, ts DESC);
+
+    -- Histórico de métricas para sparklines e gráficos (janela deslizante 7 dias)
+    CREATE TABLE IF NOT EXISTS metrics_snapshots (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts              TEXT NOT NULL DEFAULT (datetime('now')),
+        server          TEXT NOT NULL DEFAULT 'srv1',
+        container_name  TEXT NOT NULL,
+        cpu_percent     REAL DEFAULT 0,
+        mem_mb          REAL DEFAULT 0,
+        mem_percent     REAL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics_snapshots(ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_metrics_container ON metrics_snapshots(container_name, ts DESC);
+
+    -- Log de alertas enviados e falhas de entrega
+    CREATE TABLE IF NOT EXISTS alert_log (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts       TEXT NOT NULL DEFAULT (datetime('now')),
+        severity TEXT NOT NULL,
+        title    TEXT NOT NULL,
+        body     TEXT,
+        channel  TEXT NOT NULL,
+        sent     INTEGER DEFAULT 0,
+        error    TEXT
+    );
+
+    -- Configuração das regras de alerta por tipo
+    CREATE TABLE IF NOT EXISTS alert_config (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        rule_name    TEXT NOT NULL UNIQUE,
+        enabled      INTEGER DEFAULT 1,
+        threshold    REAL,
+        cooldown_min INTEGER DEFAULT 30,
+        min_severity TEXT DEFAULT 'warning'
+    );
+
+    -- Histórico completo de todos os deploys
+    CREATE TABLE IF NOT EXISTS deploy_history (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts           TEXT NOT NULL DEFAULT (datetime('now')),
+        project      TEXT NOT NULL,
+        status       TEXT NOT NULL,
+        triggered_by TEXT DEFAULT 'manual',
+        commit_hash  TEXT,
+        duration_sec REAL,
+        log_summary  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_deploy_project ON deploy_history(project, ts DESC);
+
     """)
     conn.commit()
     conn.close()
@@ -543,3 +608,125 @@ def get_agent_findings_count():
     ).fetchone()
     conn.close()
     return row['n'] if row else 0
+
+
+# ── Alias para uso em core/alerts.py e core/scanner.py ──────────────────────
+# Retorna conexão com context manager (with get_db_conn() as conn: ...)
+from contextlib import contextmanager
+
+@contextmanager
+def get_db_conn():
+    """Context manager wrapper em torno de get_conn() para uso com 'with'."""
+    conn = get_conn()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ── Timeline Events ──────────────────────────────────────────────────────────
+
+def add_timeline_event(event_type: str, title: str, severity: str = "info",
+                       project: str = None, detail: str = None,
+                       actor: str = "system", metadata: dict = None):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO timeline_events (event_type, severity, project, title, detail, actor, metadata) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (event_type, severity, project, title, detail, actor,
+         __import__('json').dumps(metadata) if metadata else None)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_timeline_events(project: str = None, severity: str = None,
+                         limit: int = 50, offset: int = 0) -> list:
+    conn = get_conn()
+    q = "SELECT * FROM timeline_events WHERE 1=1"
+    params = []
+    if project:
+        q += " AND project=?"
+        params.append(project)
+    if severity:
+        q += " AND severity=?"
+        params.append(severity)
+    q += " ORDER BY ts DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+    return list_from_rows(rows)
+
+
+# ── Metrics Snapshots ────────────────────────────────────────────────────────
+
+def save_metrics_snapshot(container_name: str, cpu_percent: float,
+                           mem_mb: float, mem_percent: float,
+                           server: str = "srv1"):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO metrics_snapshots (server, container_name, cpu_percent, mem_mb, mem_percent) "
+        "VALUES (?,?,?,?,?)",
+        (server, container_name, cpu_percent, mem_mb, mem_percent)
+    )
+    # Limpar snapshots com mais de 7 dias para manter tamanho do banco
+    conn.execute("DELETE FROM metrics_snapshots WHERE ts < datetime('now', '-7 days')")
+    conn.commit()
+    conn.close()
+
+
+def get_metrics_history(container_name: str, hours: int = 24) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM metrics_snapshots "
+        "WHERE container_name=? AND ts > datetime('now', ? || ' hours') "
+        "ORDER BY ts ASC",
+        (container_name, f"-{hours}")
+    ).fetchall()
+    conn.close()
+    return list_from_rows(rows)
+
+
+# ── Alert Log ────────────────────────────────────────────────────────────────
+
+def get_alert_log(limit: int = 100) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM alert_log ORDER BY ts DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return list_from_rows(rows)
+
+
+# ── Deploy History ───────────────────────────────────────────────────────────
+
+def add_deploy_history(project: str, status: str, triggered_by: str = "manual",
+                       commit_hash: str = None, duration_sec: float = None,
+                       log_summary: str = None):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO deploy_history (project, status, triggered_by, commit_hash, duration_sec, log_summary) "
+        "VALUES (?,?,?,?,?,?)",
+        (project, status, triggered_by, commit_hash, duration_sec, log_summary)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_deploy_history(project: str = None, limit: int = 20) -> list:
+    conn = get_conn()
+    if project:
+        rows = conn.execute(
+            "SELECT * FROM deploy_history WHERE project=? ORDER BY ts DESC LIMIT ?",
+            (project, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM deploy_history ORDER BY ts DESC LIMIT ?", (limit,)
+        ).fetchall()
+    conn.close()
+    return list_from_rows(rows)

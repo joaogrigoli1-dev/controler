@@ -35,7 +35,6 @@ import subprocess
 from core.database import (
     init_db, get_projects, get_project, get_actions, get_rules,
     get_memory, save_memory, get_recent_logs,
-    # get_setting, set_setting — importados mas sem uso ativo (reservados para futuro)
     upsert_project, add_action, add_rule,
     get_memories, get_memories_count_by_type, get_memories_total,
     add_memory_entry, delete_memory_entry,
@@ -43,6 +42,10 @@ from core.database import (
     log_agent_usage, get_daily_cost, get_today_cost,
     add_agent_finding, get_agent_findings, get_agent_findings_summary,
     update_finding_status, delete_agent_finding, get_agent_findings_count,
+    # v3 — novas tabelas
+    add_timeline_event, get_timeline_events,
+    save_metrics_snapshot, get_metrics_history,
+    get_alert_log, add_deploy_history, get_deploy_history,
 )
 
 from core.ssm import get_ssm_param
@@ -75,6 +78,103 @@ AGENT_API_TOKEN = _load_agent_api_token()
 
 
 # ════════════════════════════════════════
+# APScheduler — Cron jobs nativos v3
+# ════════════════════════════════════════
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
+
+_scheduler = AsyncIOScheduler(timezone="America/Sao_Paulo")
+
+
+async def _job_metrics_snapshot():
+    """A cada 2 min: salva CPU/RAM de cada container no histórico."""
+    try:
+        if not _has_docker_socket():
+            return
+        containers = await _docker_stats_via_socket()
+        for c in containers:
+            name = c.get("name", "")
+            if not name:
+                continue
+            cpu_str = c.get("cpu_percent", "0%").replace("%", "")
+            mem_str = c.get("mem_percent", "0%").replace("%", "")
+            mem_mb_str = c.get("mem_usage", "0MiB").split("/")[0].replace("MiB", "").replace("MB", "").strip()
+            try:
+                cpu = float(cpu_str)
+                mem_pct = float(mem_str)
+                mem_mb = float(mem_mb_str)
+            except (ValueError, TypeError):
+                cpu = mem_pct = mem_mb = 0.0
+            save_metrics_snapshot(name, cpu, mem_mb, mem_pct)
+    except Exception as exc:
+        import logging
+        logging.getLogger("controler.scheduler").warning(f"metrics_snapshot falhou: {exc}")
+
+
+async def _job_health_check():
+    """A cada 5 min: verifica saúde dos containers e registra na timeline."""
+    try:
+        if not _has_docker_socket():
+            return
+        containers = await _docker_stats_via_socket()
+        stopped = [c["name"] for c in containers if c.get("state") != "running"]
+        if stopped:
+            add_timeline_event(
+                event_type="health_check",
+                title=f"{len(stopped)} container(s) parado(s): {', '.join(stopped[:3])}",
+                severity="warning",
+                detail=str(stopped),
+                actor="scheduler"
+            )
+    except Exception as exc:
+        import logging
+        logging.getLogger("controler.scheduler").warning(f"health_check falhou: {exc}")
+
+
+async def _job_deploy_sync():
+    """A cada 10 min: verifica sync DEV/GIT/PROD e registra divergências."""
+    try:
+        local_hash = _git_run(_MYCLINICSOFT_PATH, "rev-parse", "HEAD")
+        if not local_hash:
+            return
+        remote_hash = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: _git_remote_hash(_MYCLINICSOFT_PATH)
+        )
+        if remote_hash and local_hash != remote_hash:
+            add_timeline_event(
+                event_type="sync_drift",
+                title="MyClinicSoft: DEV divergiu do GIT",
+                severity="warning",
+                project="myclinicsoft",
+                detail=f"local={local_hash[:8]} remote={remote_hash[:8]}",
+                actor="scheduler"
+            )
+    except Exception as exc:
+        import logging
+        logging.getLogger("controler.scheduler").warning(f"deploy_sync falhou: {exc}")
+
+
+async def _job_daily_digest():
+    """Às 8h BRT: envia digest diário via WhatsApp (implementado na Fase 2)."""
+    try:
+        from core.alerts import send_daily_digest
+        await send_daily_digest()
+    except ImportError:
+        pass  # core/alerts.py ainda não existe — será criado na Fase 2
+    except Exception as exc:
+        import logging
+        logging.getLogger("controler.scheduler").warning(f"daily_digest falhou: {exc}")
+
+
+def _setup_schedulers():
+    _scheduler.add_job(_job_metrics_snapshot, IntervalTrigger(minutes=2),  id="metrics_snapshot",  replace_existing=True)
+    _scheduler.add_job(_job_health_check,     IntervalTrigger(minutes=5),  id="health_check",      replace_existing=True)
+    _scheduler.add_job(_job_deploy_sync,      IntervalTrigger(minutes=10), id="deploy_sync",       replace_existing=True)
+    _scheduler.add_job(_job_daily_digest,     CronTrigger(hour=8, minute=0, timezone="America/Sao_Paulo"), id="daily_digest", replace_existing=True)
+
+
+# ════════════════════════════════════════
 # Lifespan
 # ════════════════════════════════════════
 
@@ -82,10 +182,13 @@ AGENT_API_TOKEN = _load_agent_api_token()
 async def lifespan(app):
     init_db()
     _seed_initial_data()
+    _setup_schedulers()
+    _scheduler.start()
     yield
+    _scheduler.shutdown(wait=False)
 
 
-app = FastAPI(title="Controler", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="Controler", version="3.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -278,109 +381,7 @@ async def api_project(project_id: str):
 # ════════════════════════════════════════
 # API: Containers (Coolify Docker)
 # ════════════════════════════════════════
-
-@app.get("/api/containers")
-async def api_containers():
-    """Lista containers Docker do srv1 via SSH + docker stats em tempo real."""
-    import re as _re
-
-    # SSH commands (paralelo)
-    STATS_CMD = (
-        "docker stats --no-stream --format "
-        "'{{.Name}}|||{{.CPUPerc}}|||{{.MemUsage}}|||{{.MemPerc}}|||{{.BlockIO}}'"
-    )
-    PS_CMD = (
-        "docker ps --format "
-        "'{{.Names}}|||{{.ID}}|||{{.Image}}|||{{.Status}}|||{{.Ports}}'"
-    )
-    SYS_CMD = "df -h / && echo '---FREE---' && free -m | grep Mem"
-
-    stats_r, ps_r, sys_r = await asyncio.gather(
-        _ssh_run(_SRV1_HOST, _SRV1_USER, _get_srv1_pass(), STATS_CMD),
-        _ssh_run(_SRV1_HOST, _SRV1_USER, _get_srv1_pass(), PS_CMD),
-        _ssh_run(_SRV1_HOST, _SRV1_USER, _get_srv1_pass(), SYS_CMD),
-    )
-
-    # Parse docker stats
-    stats_map: dict = {}
-    for line in stats_r["stdout"].splitlines():
-        parts = line.split("|||")
-        if len(parts) >= 5:
-            name = parts[0].strip().lstrip("/")
-            stats_map[name] = {
-                "cpu": parts[1].strip(),
-                "mem_usage": parts[2].strip(),
-                "mem_pct": parts[3].strip(),
-                "block": parts[4].strip(),
-            }
-
-    # Parse docker ps
-    containers = []
-    for line in ps_r["stdout"].splitlines():
-        parts = line.split("|||")
-        if len(parts) < 4:
-            continue
-        name   = parts[0].strip().lstrip("/")
-        cid    = parts[1].strip()
-        image  = parts[2].strip()
-        status = parts[3].strip()
-        ports  = parts[4].strip() if len(parts) > 4 else ""
-
-        s = stats_map.get(name, {})
-        mem_raw = s.get("mem_usage", "")   # e.g. "123.4MiB / 7.77GiB"
-        mem_mb  = None
-        try:
-            m = _re.match(r"([\d.]+)\s*(MiB|GiB|MB|GB)", mem_raw)
-            if m:
-                v, unit = float(m.group(1)), m.group(2)
-                mem_mb = v if "Mi" in unit or "MB" in unit else v * 1024
-        except Exception:
-            pass
-
-        display = _friendly_name(name)
-        containers.append({
-            "id":     cid,
-            "name":   display,
-            "image":  image,
-            "status": status,
-            "cpu":    s.get("cpu"),
-            "mem_mb": round(mem_mb, 1) if mem_mb is not None else None,
-            "mem_pct": s.get("mem_pct"),
-            "block":  s.get("block"),
-            "ports":  ports[:60] if ports else "",
-        })
-
-    # Parse system stats (df raw output + free -m)
-    disk_used = disk_total = disk_pct = total_mem_gb = "?"
-    sys_lines = sys_r["stdout"].splitlines()
-    in_free = False
-    for sline in sys_lines:
-        if "---FREE---" in sline:
-            in_free = True
-            continue
-        if not in_free:
-            parts = sline.split()
-            if len(parts) >= 5 and parts[0] != "Filesystem":
-                disk_total, disk_used = parts[1], parts[2]
-                disk_pct = parts[4].replace("%", "")
-        else:
-            parts = sline.split()
-            if len(parts) >= 3 and parts[0] == "Mem:":
-                try:
-                    total_mem_gb = f"{int(parts[1]) / 1024:.1f}"
-                except Exception:
-                    pass
-
-    return {
-        "containers":   containers,
-        "disk_used":    disk_used,
-        "disk_total":   disk_total,
-        "disk_pct":     disk_pct,
-        "total_mem_gb": total_mem_gb,
-        "source":       "ssh_docker_stats" if stats_r["success"] else "error",
-        "ssh_error":    stats_r.get("stderr") if not stats_r["success"] else None,
-    }
-
+# FASE 1: /api/containers (SSH legado) removido — usar /api/server/docker/stats (Docker socket)
 
 @app.post("/api/containers/{app_uuid}/restart")
 async def api_container_restart(app_uuid: str):
@@ -1588,6 +1589,108 @@ async def api_vps_fisiomt_hestia_domains(username: str):
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=503)
 
+
+
+# ════════════════════════════════════════
+# API v3 — Timeline
+# ════════════════════════════════════════
+
+@app.get("/api/timeline")
+async def api_timeline(
+    project:  str = Query(None),
+    severity: str = Query(None),
+    limit:    int = Query(50),
+    offset:   int = Query(0),
+):
+    events = get_timeline_events(project=project, severity=severity, limit=limit, offset=offset)
+    return {"events": events, "total": len(events)}
+
+
+# ════════════════════════════════════════
+# API v3 — Métricas históricas
+# ════════════════════════════════════════
+
+@app.get("/api/metrics/history")
+async def api_metrics_history(
+    container: str = Query(...),
+    hours:     int = Query(24),
+):
+    snapshots = get_metrics_history(container_name=container, hours=hours)
+    return {"snapshots": snapshots, "container": container, "hours": hours}
+
+
+@app.get("/api/metrics/containers")
+async def api_metrics_containers():
+    """Lista containers com snapshots disponíveis."""
+    from core.database import get_conn
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT DISTINCT container_name FROM metrics_snapshots ORDER BY container_name"
+    ).fetchall()
+    conn.close()
+    return {"containers": [r["container_name"] for r in rows]}
+
+
+# ════════════════════════════════════════
+# API v3 — Alertas
+# ════════════════════════════════════════
+
+@app.get("/api/alerts")
+async def api_alerts_list(limit: int = Query(100)):
+    alerts = get_alert_log(limit=limit)
+    active = [a for a in alerts if not a.get("sent")]
+    return {"alerts": alerts, "active_count": len(active), "total": len(alerts)}
+
+
+@app.post("/api/alerts/test")
+async def api_alerts_test(request: Request):
+    """Endpoint para testar envio de alertas manualmente."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON inválido"}, status_code=400)
+    severity = body.get("severity", "warning")
+    title    = body.get("title", "Teste de alerta — Controler v3")
+    message  = body.get("message", "Mensagem de teste gerada manualmente.")
+    try:
+        from core.alerts import alert_manager
+        result = await alert_manager.send(severity, title, message, rule_key="manual_test")
+    except ImportError:
+        # core/alerts.py ainda não existe — será criado na Fase 2
+        result = {"skipped": True, "reason": "core/alerts.py não implementado ainda (Fase 2)"}
+    return result
+
+
+# ════════════════════════════════════════
+# API v3 — Deploy History
+# ════════════════════════════════════════
+
+@app.get("/api/deploy/history")
+async def api_deploy_history(
+    project: str = Query(None),
+    limit:   int = Query(20),
+):
+    history = get_deploy_history(project=project, limit=limit)
+    return {"history": history, "total": len(history)}
+
+
+# ════════════════════════════════════════
+# API v3 — Scheduler Status
+# ════════════════════════════════════════
+
+@app.get("/api/scheduler/jobs")
+async def api_scheduler_jobs():
+    """Lista os cron jobs nativos em execução."""
+    jobs = []
+    for job in _scheduler.get_jobs():
+        next_run = job.next_run_time.isoformat() if job.next_run_time else None
+        jobs.append({
+            "id":       job.id,
+            "name":     job.name,
+            "next_run": next_run,
+            "trigger":  str(job.trigger),
+        })
+    return {"jobs": jobs, "running": _scheduler.running}
 
 
 @app.get("/")
