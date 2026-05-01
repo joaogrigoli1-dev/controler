@@ -217,10 +217,10 @@ async def security_headers_middleware(request: Request, call_next):
     # SEC-08: Content Security Policy
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com unpkg.com esm.sh; "
-        "style-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com; "
-        "font-src 'self' fonts.gstatic.com; "
-        "connect-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://esm.sh https://fonts.googleapis.com https://cdnjs.cloudflare.com https://unpkg.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "connect-src 'self' https://esm.sh; "
         "img-src 'self' data:; "
         "frame-ancestors 'none';"
     )

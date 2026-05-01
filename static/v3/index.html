@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Controler v3</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ── Design System — Sci-fi tokens ─────────────────────────────────── */
+    :root {
+      --cyan:    #00d4ff;
+      --green:   #00e87a;
+      --red:     #ff3366;
+      --yellow:  #ffcc00;
+      --purple:  #9945ff;
+      --blue:    #2563eb;
+      --bg:      #020308;
+      --surface: #080c18;
+      --surface2:#0d1625;
+      --border:  #0d1f3c;
+      --border2: #1a2f50;
+      --text:    #e2e8f0;
+      --muted:   #64748b;
+
+      --glow-cyan:  0 0 20px rgba(0,212,255,0.3);
+      --glow-green: 0 0 20px rgba(0,232,122,0.3);
+      --glow-red:   0 0 20px rgba(255,51,102,0.3);
+
+      --sidebar-w: 220px;
+      --header-h:  52px;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --font-sans: 'Inter', system-ui, sans-serif;
+      --radius:    8px;
+    }
+
+    /* ── Reset ──────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--cyan); }
+
+    /* ── Animations ─────────────────────────────────────────────────────── */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 6px currentColor; }
+      50% { opacity: 0.5; box-shadow: 0 0 2px currentColor; }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes scanline {
+      0%   { transform: translateY(-100%); }
+      100% { transform: translateY(100vh); }
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────────── */
+    #app {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────────── */
+    .sidebar {
+      width: var(--sidebar-w);
+      min-height: 100vh;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 100;
+    }
+
+    .sidebar-logo {
+      padding: 20px 16px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-logo .logo-mark {
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--cyan);
+      letter-spacing: -0.03em;
+      text-shadow: 0 0 20px rgba(0,212,255,0.5);
+    }
+
+    .sidebar-logo .logo-version {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-top: 2px;
+    }
+
+    .sidebar-nav {
+      flex: 1;
+      padding: 12px 8px;
+      overflow-y: auto;
+    }
+
+    .nav-section {
+      margin-bottom: 16px;
+    }
+
+    .nav-section-label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 4px 8px;
+      margin-bottom: 4px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.15s ease;
+      text-decoration: none;
+      border: 1px solid transparent;
+    }
+
+    .nav-item:hover {
+      background: var(--surface2);
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    .nav-item.active {
+      background: rgba(0,212,255,0.08);
+      color: var(--cyan);
+      border-color: rgba(0,212,255,0.2);
+    }
+
+    .nav-icon {
+      font-size: 15px;
+      width: 18px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .sidebar-footer {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .sidebar-footer .version-badge {
+      display: inline-block;
+      background: rgba(0,212,255,0.1);
+      color: var(--cyan);
+      border: 1px solid rgba(0,212,255,0.2);
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── Main Content ────────────────────────────────────────────────────── */
+    .main {
+      margin-left: var(--sidebar-w);
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    .topbar {
+      height: var(--header-h);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .page-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .breadcrumb {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .topbar-clock {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--cyan);
+      letter-spacing: 0.05em;
+    }
+
+    .indicator-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .page-content {
+      flex: 1;
+      padding: 24px;
+      animation: fadeIn 0.2s ease;
+    }
+
+    /* ── Cards ───────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+
+    .card-title {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+
+    /* ── Grid utilities ──────────────────────────────────────────────────── */
+    .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+
+    @media (max-width: 1200px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 900px)  { .grid-3 { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 640px) {
+      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+      .sidebar { transform: translateX(-100%); transition: transform 0.2s ease; }
+      .sidebar.open { transform: translateX(0); }
+      .main { margin-left: 0; }
+    }
+
+    /* ── Loading spinner ─────────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--cyan);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    /* ── Skeleton loader ─────────────────────────────────────────────────── */
+    .skeleton {
+      background: linear-gradient(90deg, var(--surface) 25%, var(--surface2) 50%, var(--surface) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s ease infinite;
+      border-radius: 4px;
+    }
+
+    @keyframes shimmer {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* ── Btn ─────────────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border2);
+      background: var(--surface2);
+      color: var(--text);
+      transition: all 0.15s ease;
+      letter-spacing: 0.03em;
+    }
+
+    .btn:hover { border-color: var(--cyan); color: var(--cyan); }
+    .btn:active { transform: scale(0.97); }
+    .btn-cyan { background: rgba(0,212,255,0.1); border-color: rgba(0,212,255,0.4); color: var(--cyan); }
+    .btn-red  { background: rgba(255,51,102,0.1); border-color: rgba(255,51,102,0.4); color: var(--red); }
+    .btn-green{ background: rgba(0,232,122,0.1); border-color: rgba(0,232,122,0.4); color: var(--green); }
+
+    /* ── Table ───────────────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th {
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+    }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+    tbody tr:hover { background: var(--surface2); }
+    tbody td { padding: 10px 12px; color: var(--text); }
+    tbody tr:last-child { border-bottom: none; }
+
+    /* ── Empty state ─────────────────────────────────────────────────────── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 24px;
+      color: var(--muted);
+      text-align: center;
+      gap: 8px;
+    }
+
+    .empty-icon { font-size: 32px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="module">
+  import { h, render } from "https://esm.sh/preact@10";
+  import { useState, useEffect, useCallback } from "https://esm.sh/preact@10/hooks";
+  import htm from "https://esm.sh/htm@3";
+
+  const html = htm.bind(h);
+
+  // ── Lazy-loaded screens ─────────────────────────────────────────────────
+  let screenModules = {};
+
+  async function loadScreen(name) {
+    if (!screenModules[name]) {
+      try {
+        screenModules[name] = await import(`./screens/${name}.js`);
+      } catch {
+        return null;
+      }
+    }
+    return screenModules[name];
+  }
+
+  // ── Navigation config ───────────────────────────────────────────────────
+  const NAV = [
+    {
+      section: "Monitor",
+      items: [
+        { hash: "/",          icon: "⬡", label: "Mission Control" },
+        { hash: "/srv1",      icon: "🖥", label: "srv1" },
+        { hash: "/projects",  icon: "📦", label: "Projects" },
+      ],
+    },
+    {
+      section: "Automação",
+      items: [
+        { hash: "/openclaw",  icon: "🤖", label: "OpenClaw" },
+        { hash: "/scanner",   icon: "🔍", label: "Scanner" },
+      ],
+    },
+    {
+      section: "Ops",
+      items: [
+        { hash: "/timeline",  icon: "⏱", label: "Timeline" },
+        { hash: "/alerts",    icon: "🔔", label: "Alert Center" },
+        { hash: "/vault",     icon: "🔐", label: "Vault SSM" },
+      ],
+    },
+  ];
+
+  // ── Hash router ─────────────────────────────────────────────────────────
+  function getCurrentRoute() {
+    return window.location.hash.replace("#", "") || "/";
+  }
+
+  function navigate(hash) {
+    window.location.hash = hash;
+  }
+
+  // ── Clock ───────────────────────────────────────────────────────────────
+  function Clock() {
+    const [time, setTime] = useState(new Date());
+    useEffect(() => {
+      const t = setInterval(() => setTime(new Date()), 1000);
+      return () => clearInterval(t);
+    }, []);
+    const fmt = time.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    return html`<span class="topbar-clock">${fmt}</span>`;
+  }
+
+  // ── Screen renderer (lazy + fallback) ───────────────────────────────────
+  function ScreenLoader({ route }) {
+    const [Screen, setScreen] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+      setLoading(true);
+      setScreen(null);
+      const seg = route === "/" ? "mission-control" : route.replace("/", "").split("/")[0];
+      loadScreen(seg).then(mod => {
+        setScreen(() => mod ? mod.default : null);
+        setLoading(false);
+      });
+    }, [route]);
+
+    if (loading) return html`
+      <div class="page-content">
+        <div style=${{ display: "grid", gap: "16px" }}>
+          <div class="skeleton" style=${{ height: "120px", borderRadius: "10px" }}/>
+          <div class="grid-4">
+            ${[1,2,3,4].map(i => html`<div key=${i} class="skeleton" style=${{ height: "90px", borderRadius: "10px" }}/>`)}
+          </div>
+          <div class="skeleton" style=${{ height: "300px", borderRadius: "10px" }}/>
+        </div>
+      </div>
+    `;
+
+    if (!Screen) return html`
+      <div class="page-content">
+        <div class="empty-state">
+          <div class="empty-icon">🚧</div>
+          <div style=${{ fontWeight: 600, color: "var(--text)" }}>Tela em construção</div>
+          <div style=${{ fontSize: "12px" }}>Esta seção será implementada em breve.</div>
+        </div>
+      </div>
+    `;
+
+    return html`
+      <div class="page-content">
+        <${Screen} route=${route}/>
+      </div>
+    `;
+  }
+
+  // ── Page title from route ────────────────────────────────────────────────
+  function routeTitle(route) {
+    const titles = {
+      "/":         "Mission Control",
+      "/srv1":     "srv1 — Deep Dive",
+      "/projects": "Projects",
+      "/openclaw": "OpenClaw Agents",
+      "/scanner":  "Resource Scanner",
+      "/timeline": "Timeline",
+      "/alerts":   "Alert Center",
+      "/vault":    "Vault SSM",
+    };
+    return titles[route] || route;
+  }
+
+  // ── App root ─────────────────────────────────────────────────────────────
+  function App() {
+    const [route, setRoute] = useState(getCurrentRoute);
+
+    useEffect(() => {
+      const handler = () => setRoute(getCurrentRoute());
+      window.addEventListener("hashchange", handler);
+      return () => window.removeEventListener("hashchange", handler);
+    }, []);
+
+    return html`
+      <aside class="sidebar">
+        <!-- Logo -->
+        <div class="sidebar-logo">
+          <div class="logo-mark">⬡ Controler</div>
+          <div class="logo-version">v3.0.0 — Mission Control</div>
+        </div>
+
+        <!-- Nav -->
+        <nav class="sidebar-nav">
+          ${NAV.map(section => html`
+            <div key=${section.section} class="nav-section">
+              <div class="nav-section-label">${section.section}</div>
+              ${section.items.map(item => html`
+                <a
+                  key=${item.hash}
+                  class=${"nav-item" + (route === item.hash ? " active" : "")}
+                  href=${"#" + item.hash}
+                  onClick=${(e) => { e.preventDefault(); navigate(item.hash); }}
+                >
+                  <span class="nav-icon">${item.icon}</span>
+                  <span>${item.label}</span>
+                </a>
+              `)}
+            </div>
+          `)}
+        </nav>
+
+        <!-- Footer -->
+        <div class="sidebar-footer">
+          <div style=${{ marginBottom: "4px" }}>
+            <span class="version-badge">v3.0.0</span>
+          </div>
+          <div>srv1 · 62.72.63.18</div>
+        </div>
+      </aside>
+
+      <!-- Main -->
+      <div class="main">
+        <!-- Top bar -->
+        <header class="topbar">
+          <div class="topbar-left">
+            <div class="page-title">${routeTitle(route)}</div>
+          </div>
+          <div class="topbar-right">
+            <${Clock}/>
+            <div class="indicator-dot" title="Online"/>
+          </div>
+        </header>
+
+        <!-- Screen -->
+        <${ScreenLoader} route=${route}/>
+      </div>
+    `;
+  }
+
+  render(html`<${App}/>`, document.getElementById("app"));
+</script>
+</body>
+</html>
