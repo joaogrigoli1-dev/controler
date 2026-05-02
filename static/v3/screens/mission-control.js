@@ -104,8 +104,8 @@ function ContainerTable({ containers, loading }) {
               </td>
               <td>
                 <${StatusBadge} status=${
-                  c.status === "running" || c.State === "running" ? "running" :
-                  c.status === "exited"  || c.State === "exited"  ? "stopped" :
+                  (c.state || c.status || c.State) === "running" ? "running" :
+                  (c.state || c.status || c.State) === "exited"  ? "stopped" :
                   "unknown"
                 }/>
               </td>
@@ -123,7 +123,7 @@ function ContainerTable({ containers, loading }) {
               </td>
               <td>
                 <span style=${{ fontSize: "12px", color: "var(--muted)" }}>
-                  ${c.uptime || c.Status || "—"}
+                  ${c.docker_status || c.uptime || c.Status || "—"}
                 </span>
               </td>
             </tr>
@@ -246,7 +246,7 @@ export default function MissionControl() {
       const memTotalGb = hw.memory ? hw.memory.total / 1073741824 : null;
 
       setStats({
-        running_containers: containerList.filter(c => c.status === "running" || c.State === "running").length,
+        running_containers: containerList.filter(c => (c.state || c.status || c.State) === "running").length,
         total_containers:   containerList.length,
         cpu_percent:        hw.cpu?.percent ?? null,
         mem_percent:        hw.memory?.percent ?? null,

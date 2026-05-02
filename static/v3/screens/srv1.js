@@ -28,8 +28,8 @@ function ServerMetrics({ health, loading }) {
   const cpu  = health.cpu?.percent ?? health.cpu_percent ?? 0;
   const mem  = health.memory?.percent ?? health.mem_percent ?? 0;
   const disk = health.disk?.[0]?.percent ?? health.disk_percent ?? 0;
-  const uptimeH = health.system?.uptime_hours ?? health.uptime_days != null ? (health.uptime_days * 24) : null;
-  const uptime = uptimeH != null
+  const uptimeH = health.system?.uptime_hours ?? (health.uptime_days != null ? (health.uptime_days * 24) : null);
+  const uptime = (uptimeH != null && !isNaN(uptimeH))
     ? `${Math.floor(uptimeH / 24)}d ${Math.floor(uptimeH % 24)}h`
     : "—";
   const memUsedGb  = health.memory ? (health.memory.used  / 1073741824).toFixed(1) : (health.mem_used_gb?.toFixed(1)  ?? "—");
@@ -99,7 +99,7 @@ function ContainerDetails({ containers, loading, onRestart }) {
         <tbody>
           ${containers.map((c, i) => {
             const name = c.name || c.Names?.[0]?.replace("/","") || "—";
-            const status = c.status || c.State || "unknown";
+            const status = c.state || c.status || c.State || "unknown";
             const isRunning = status === "running";
             return html`
               <tr key=${i}>
