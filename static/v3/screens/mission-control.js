@@ -227,29 +227,31 @@ export default function MissionControl() {
   const loadAll = useCallback(async () => {
     try {
       // Fetch in parallel
-      const [healthRes, dockerRes, timelineRes, historyRes, alertsRes] = await Promise.allSettled([
-        fetchJSON("/api/health"),
+      const [hwRes, dockerRes, timelineRes, historyRes, alertsRes] = await Promise.allSettled([
+        fetchJSON("/api/hardware"),
         fetchJSON("/api/server/docker/stats"),
         fetchJSON("/api/timeline?limit=10"),
         fetchJSON("/api/metrics/history?hours=24"),
         fetchJSON("/api/alerts"),
       ]);
 
-      const health   = healthRes.status === "fulfilled"   ? healthRes.value   : {};
+      const hw       = hwRes.status === "fulfilled"       ? hwRes.value       : {};
       const docker   = dockerRes.status === "fulfilled"   ? dockerRes.value   : {};
       const tl       = timelineRes.status === "fulfilled" ? timelineRes.value : {};
       const hist     = historyRes.status === "fulfilled"  ? historyRes.value  : {};
       const alerts   = alertsRes.status === "fulfilled"   ? alertsRes.value   : {};
 
       const containerList = docker.containers || docker.stats || [];
+      const memUsedGb  = hw.memory ? hw.memory.used  / 1073741824 : null;
+      const memTotalGb = hw.memory ? hw.memory.total / 1073741824 : null;
 
       setStats({
         running_containers: containerList.filter(c => c.status === "running" || c.State === "running").length,
         total_containers:   containerList.length,
-        cpu_percent:        health.srv1?.cpu_percent ?? null,
-        mem_percent:        health.srv1?.mem_percent ?? null,
-        mem_used_gb:        health.srv1?.mem_used_gb ?? null,
-        mem_total_gb:       health.srv1?.mem_total_gb ?? null,
+        cpu_percent:        hw.cpu?.percent ?? null,
+        mem_percent:        hw.memory?.percent ?? null,
+        mem_used_gb:        memUsedGb,
+        mem_total_gb:       memTotalGb,
         active_alerts:      alerts.active_count ?? 0,
         critical_alerts:    (alerts.alerts || []).filter(a => a.severity === "critical" && !a.sent).length,
       });

@@ -73,8 +73,8 @@ export default function OpenClawScreen() {
                         <tr key=${i}>
                           <td style=${{ fontFamily: "var(--font-mono)", fontSize: "12px", color: "var(--cyan)" }}>${j.id}</td>
                           <td style=${{ fontSize: "12px" }}>
-                            ${j.next_run_time
-                              ? new Date(j.next_run_time).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
+                            ${(j.next_run || j.next_run_time)
+                              ? new Date(j.next_run || j.next_run_time).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
                               : html`<span style=${{ color: "var(--muted)" }}>—</span>`
                             }
                           </td>
@@ -82,7 +82,7 @@ export default function OpenClawScreen() {
                             ${j.trigger || "—"}
                           </td>
                           <td>
-                            <${StatusBadge} status=${j.next_run_time ? "running" : "stopped"}/>
+                            <${StatusBadge} status=${(j.next_run || j.next_run_time) ? "running" : "stopped"}/>
                           </td>
                         </tr>
                       `)}

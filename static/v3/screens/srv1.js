@@ -24,10 +24,18 @@ function ServerMetrics({ health, loading }) {
     </div>
   `;
 
-  const cpu = health.cpu_percent ?? 0;
-  const mem = health.mem_percent ?? 0;
-  const disk = health.disk_percent ?? 0;
-  const uptime = health.uptime_days != null ? `${Math.floor(health.uptime_days)}d ${Math.floor((health.uptime_days % 1) * 24)}h` : "—";
+  // /api/hardware returns nested: cpu.percent, memory.percent, disk[0].percent, system.uptime_hours
+  const cpu  = health.cpu?.percent ?? health.cpu_percent ?? 0;
+  const mem  = health.memory?.percent ?? health.mem_percent ?? 0;
+  const disk = health.disk?.[0]?.percent ?? health.disk_percent ?? 0;
+  const uptimeH = health.system?.uptime_hours ?? health.uptime_days != null ? (health.uptime_days * 24) : null;
+  const uptime = uptimeH != null
+    ? `${Math.floor(uptimeH / 24)}d ${Math.floor(uptimeH % 24)}h`
+    : "—";
+  const memUsedGb  = health.memory ? (health.memory.used  / 1073741824).toFixed(1) : (health.mem_used_gb?.toFixed(1)  ?? "—");
+  const memTotalGb = health.memory ? (health.memory.total / 1073741824).toFixed(1) : (health.mem_total_gb?.toFixed(1) ?? "—");
+  const diskUsedGb  = health.disk?.[0] ? (health.disk[0].used  / 1073741824).toFixed(0) : (health.disk_used_gb?.toFixed(0)  ?? "—");
+  const diskTotalGb = health.disk?.[0] ? (health.disk[0].total / 1073741824).toFixed(0) : (health.disk_total_gb?.toFixed(0) ?? "—");
 
   return html`
     <div class="grid-4">
@@ -39,14 +47,14 @@ function ServerMetrics({ health, loading }) {
         <div class="card-title">Memória</div>
         <${GaugeCircle} value=${mem} max=${100} label="RAM" size=${80}/>
         <div style=${{ fontSize: "11px", color: "var(--muted)", marginTop: "4px" }}>
-          ${health.mem_used_gb?.toFixed(1) ?? "—"}GB / ${health.mem_total_gb?.toFixed(1) ?? "—"}GB
+          ${memUsedGb}GB / ${memTotalGb}GB
         </div>
       </div>
       <div class="card" style=${{ textAlign: "center" }}>
         <div class="card-title">Disco</div>
         <${GaugeCircle} value=${disk} max=${100} label="DISK" size=${80}/>
         <div style=${{ fontSize: "11px", color: "var(--muted)", marginTop: "4px" }}>
-          ${health.disk_used_gb?.toFixed(0) ?? "—"}GB / ${health.disk_total_gb?.toFixed(0) ?? "—"}GB
+          ${diskUsedGb}GB / ${diskTotalGb}GB
         </div>
       </div>
       <div class="card" style=${{ textAlign: "center" }}>
@@ -194,11 +202,11 @@ export default function Srv1Screen() {
 
   const loadAll = useCallback(async () => {
     const [h, d, dep] = await Promise.allSettled([
-      fetchJSON("/api/health"),
+      fetchJSON("/api/hardware"),
       fetchJSON("/api/server/docker/stats"),
       fetchJSON("/api/deploy/history?limit=20"),
     ]);
-    if (h.status === "fulfilled")   setHealth(h.value?.srv1 || h.value || {});
+    if (h.status === "fulfilled")   setHealth(h.value || {});
     if (d.status === "fulfilled")   setContainers(d.value?.containers || d.value?.stats || []);
     if (dep.status === "fulfilled") setDeploys(dep.value?.deploys || []);
     setLoading(false);

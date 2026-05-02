@@ -412,15 +412,40 @@ async def api_delete_finding(finding_id: int):
 
 @app.get("/api/projects")
 async def api_projects():
+    """Lista projetos: combina diretórios do PROJECTS_PATH com projetos do banco."""
     dev_path = PROJECTS_PATH
+    seen = set()
     result = []
+
+    # 1. Projetos do banco (sempre disponíveis em prod)
+    db_projects = get_projects() or []
+    for p in db_projects:
+        pid = p.get("id") or p.get("name") or ""
+        seen.add(pid)
+        result.append({
+            "name":        pid,
+            "label":       p.get("name") or pid,
+            "icon":        p.get("icon") or "📦",
+            "description": p.get("description") or "",
+            "status":      "active",
+            "source":      "db",
+            "memoryCount": get_memories_total(pid),
+        })
+
+    # 2. Pastas do filesystem (dev local / CI)
     if dev_path.exists():
         for folder in sorted(dev_path.iterdir()):
-            if folder.is_dir() and not folder.name.startswith('.'):
+            if folder.is_dir() and not folder.name.startswith('.') and folder.name not in seen:
                 result.append({
-                    "name": folder.name,
-                    "memoryCount": get_memories_total(folder.name)
+                    "name":        folder.name,
+                    "label":       folder.name,
+                    "icon":        "📁",
+                    "description": "",
+                    "status":      "unknown",
+                    "source":      "filesystem",
+                    "memoryCount": get_memories_total(folder.name),
                 })
+
     return result
 
 
@@ -1881,14 +1906,18 @@ async def api_vault_params():
                 "version":       p.get("version") or p.get("Version") or 1,
             })
         # Fallback: se não há params diretos, usar services
+        # _fetch_ssm_parameters armazena com "key" (sem o prefix do serviço) e "value"
         if not params:
             for svc in creds_data.get("services", []):
+                svc_name = svc.get("service", "")
                 for item in svc.get("params", []):
+                    key = item.get("key") or item.get("name") or ""
+                    full_name = f"/{svc_name}/{key}" if svc_name and key else key
                     params.append({
-                        "name":          item.get("name") or "",
+                        "name":          full_name,
                         "type":          item.get("type") or "String",
                         "value":         item.get("value") or "",
-                        "last_modified": item.get("last_modified") or None,
+                        "last_modified": item.get("lastModified") or item.get("last_modified") or None,
                         "version":       item.get("version") or 1,
                     })
         return {"params": params, "total": len(params)}

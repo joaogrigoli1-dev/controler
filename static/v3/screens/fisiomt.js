@@ -9,10 +9,18 @@ import { StatusBadge, ProgressBar, DrillCard } from "../components.js";
 
 const html = htm.bind(h);
 
-async function fetchJSON(path) {
-  const r = await fetch(path);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+async function fetchJSON(path, timeout = 12000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    const r = await fetch(path, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  } catch (e) {
+    clearTimeout(timer);
+    throw e;
+  }
 }
 
 export default function FisioMTScreen() {
