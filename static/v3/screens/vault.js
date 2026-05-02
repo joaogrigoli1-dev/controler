@@ -36,8 +36,8 @@ export default function VaultScreen() {
   useEffect(() => { load(); }, [load]);
 
   const grouped = params.reduce((acc, p) => {
-    const parts = (p.name || "").split("/");
-    const prefix = parts.slice(0, 3).join("/") || "/";
+    const parts = (p.name || "").split("/").filter(Boolean);
+    const prefix = parts.length > 0 ? `/${parts[0]}` : "/";
     if (!acc[prefix]) acc[prefix] = [];
     acc[prefix].push(p);
     return acc;
