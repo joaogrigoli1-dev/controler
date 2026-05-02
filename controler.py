@@ -12,9 +12,12 @@ import threading
 import os
 import sys
 import functools
+import logging
 from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
+
+logger = logging.getLogger("controler")
 
 # Auto-install
 DEPS = ["fastapi", "uvicorn", "pyyaml", "psutil", "httpx", "boto3"]
