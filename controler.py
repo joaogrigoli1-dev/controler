@@ -1929,16 +1929,36 @@ async def api_vault_params():
 
 
 # ════════════════════════════════════════
-# Root — serve frontend v3
+# Root — serve frontend v4 (NOC)
 # ════════════════════════════════════════
 
 @app.get("/")
 async def root():
-    # v3 cutover: servir novo frontend sci-fi
+    # v4 NOC — novo frontend
+    v4_path = STATIC_DIR / "v4" / "index.html"
+    if v4_path.exists():
+        return FileResponse(str(v4_path))
+    # fallback v3
     v3_path = STATIC_DIR / "v3" / "index.html"
     if v3_path.exists():
         return FileResponse(str(v3_path))
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+@app.get("/v3")
+async def serve_v3():
+    """Acesso direto ao frontend v3 legado."""
+    v3_path = STATIC_DIR / "v3" / "index.html"
+    if v3_path.exists():
+        return FileResponse(str(v3_path))
+    return JSONResponse({"error": "v3 not found"}, status_code=404)
+
+@app.get("/v4")
+async def serve_v4():
+    """Acesso direto ao frontend v4 NOC."""
+    v4_path = STATIC_DIR / "v4" / "index.html"
+    if v4_path.exists():
+        return FileResponse(str(v4_path))
+    return JSONResponse({"error": "v4 not found"}, status_code=404)
 
 
 # ════════════════════════════════════════
