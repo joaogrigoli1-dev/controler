@@ -1,0 +1,174 @@
+/**
+ * AlertsService — roteamento de alertas:
+ *   CRITICAL → WhatsApp (Z-API) + SMS (Infobip), 24/7
+ *   WARNING  → WhatsApp, respeita janela silêncio 22h-7h BRT (a menos que rule.silencedUntil)
+ *   INFO     → apenas log + WebSocket
+ *
+ * Espelho do core/alerts.py + zapi-guard kill switch (kind="alert_admin" bypass)
+ */
+
+import { Injectable, Logger } from "@nestjs/common";
+import axios from "axios";
+import { PrismaService } from "../common/prisma.service";
+import { SsmService } from "../common/ssm.service";
+import { RedisService } from "../common/redis.service";
+
+const ALERT_PHONE = process.env.ALERT_PHONE_DEFAULT || "556598466555";
+const COOLDOWN_PREFIX = "alert:cooldown:";
+const DEFAULT_COOLDOWN_MIN = 30;
+
+export interface DispatchInput {
+  ruleKey: string;
+  ruleId?: string;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+  forceChannels?: string[];
+}
+
+@Injectable()
+export class AlertsService {
+  private readonly log = new Logger("Alerts");
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ssm: SsmService,
+    private readonly redis: RedisService
+  ) {}
+
+  // ─── 1. Dispatch ────────────────────────────────────────
+  async dispatch(input: DispatchInput): Promise<{ sent: boolean; reason?: string }> {
+    const sev = input.severity;
+    const channels = input.forceChannels || this.channelsFor(sev);
+
+    // Cooldown check (per ruleKey)
+    const cooldownKey = `${COOLDOWN_PREFIX}${input.ruleKey}`;
+    const cooled = await this.redis.client.get(cooldownKey).catch(() => null);
+    if (cooled && sev !== "critical") {
+      return { sent: false, reason: "cooldown" };
+    }
+
+    // Silence window (22h-7h BRT) só bloqueia WARNING e INFO
+    if (sev !== "critical" && this.inSilenceWindow()) {
+      await this.persistLog({ ...input, channels, sent: false, error: "silence_window" });
+      return { sent: false, reason: "silence_window" };
+    }
+
+    // Send channels in parallel
+    const results = await Promise.all(channels.map(ch => this.sendVia(ch, input)));
+    const allOk = results.every(r => r.ok);
+    const error = results.find(r => !r.ok)?.error;
+
+    await this.persistLog({ ...input, channels, sent: allOk, error });
+    if (allOk) {
+      await this.redis.client.setex(cooldownKey, DEFAULT_COOLDOWN_MIN * 60, "1").catch(() => {});
+    }
+    return { sent: allOk, reason: error };
+  }
+
+  // ─── 2. Channels ────────────────────────────────────────
+  private channelsFor(sev: string): string[] {
+    if (sev === "critical") return ["whatsapp", "sms"];
+    if (sev === "warning") return ["whatsapp"];
+    return ["internal"]; // info
+  }
+
+  private inSilenceWindow(): boolean {
+    const brt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+    const h = brt.getHours();
+    return h >= 22 || h < 7;
+  }
+
+  private async sendVia(ch: string, input: DispatchInput): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (ch === "whatsapp") {
+        const instance = process.env.ZAPI_INSTANCE_ID || (await this.ssm.get("/controler/zapi_instance_id")) || (await this.ssm.get("/myclinicsoft/zapi_instance_id"));
+        const token = process.env.ZAPI_TOKEN || (await this.ssm.get("/controler/zapi_token")) || (await this.ssm.get("/myclinicsoft/zapi_token"));
+        const clientToken = await this.ssm.get("/myclinicsoft/zapi_client_token");
+        if (!instance || !token) return { ok: false, error: "zapi-not-configured" };
+        const url = `https://api.z-api.io/instances/${instance}/token/${token}/send-text`;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (clientToken) headers["Client-Token"] = clientToken;
+        const txt = `${this.icon(input.severity)} *${input.title}*\n\n${input.message}\n\n_controler-v4 NOC_`;
+        await axios.post(url, { phone: ALERT_PHONE, message: txt }, { headers, timeout: 12_000 });
+        return { ok: true };
+      }
+      if (ch === "sms") {
+        const apiKey = await this.ssm.get("/myclinicsoft/infobip_api_key");
+        if (!apiKey) return { ok: false, error: "infobip-not-configured" };
+        const base = (await this.ssm.get("/myclinicsoft/infobip_base_url")) || "6zjrk8.api.infobip.com";
+        await axios.post(
+          `https://${base}/sms/2/text/advanced`,
+          { messages: [{ from: "Controler", destinations: [{ to: ALERT_PHONE }], text: `[${input.severity.toUpperCase()}] ${input.title}: ${input.message}` }] },
+          { headers: { Authorization: `App ${apiKey}` }, timeout: 12_000 }
+        );
+        return { ok: true };
+      }
+      // internal = só log + websocket (broadcast)
+      return { ok: true };
+    } catch (err: any) {
+      this.log.warn(`sendVia(${ch}) failed: ${err?.message}`);
+      return { ok: false, error: err?.message };
+    }
+  }
+
+  private icon(sev: string): string {
+    return sev === "critical" ? "🔴" : sev === "warning" ? "🟡" : "🔵";
+  }
+
+  private async persistLog(args: any) {
+    await this.prisma.alertLog.create({
+      data: {
+        ruleKey: args.ruleKey,
+        ruleId: args.ruleId,
+        severity: args.severity,
+        title: args.title,
+        message: args.message,
+        channels: args.channels,
+        sent: args.sent,
+        error: args.error,
+        metadata: args.metadata || undefined
+      }
+    });
+  }
+
+  // ─── 3. Rules CRUD ──────────────────────────────────────
+  listRules() {
+    return this.prisma.alertRule.findMany({ orderBy: { createdAt: "desc" } });
+  }
+  createRule(data: any) {
+    return this.prisma.alertRule.create({ data });
+  }
+  updateRule(id: string, data: any) {
+    return this.prisma.alertRule.update({ where: { id }, data });
+  }
+  deleteRule(id: string) {
+    return this.prisma.alertRule.delete({ where: { id } });
+  }
+
+  async silenceRule(id: string, hours: number) {
+    return this.prisma.alertRule.update({
+      where: { id },
+      data: { silencedUntil: new Date(Date.now() + hours * 3600_000) }
+    });
+  }
+
+  // ─── 4. Logs / summary ──────────────────────────────────
+  recentLogs(limit = 100) {
+    return this.prisma.alertLog.findMany({ orderBy: { createdAt: "desc" }, take: limit });
+  }
+
+  async summary() {
+    const since = new Date(Date.now() - 24 * 3600_000);
+    const [total, critical, warning, info, last24, silenced] = await Promise.all([
+      this.prisma.alertLog.count(),
+      this.prisma.alertLog.count({ where: { severity: "critical" } }),
+      this.prisma.alertLog.count({ where: { severity: "warning" } }),
+      this.prisma.alertLog.count({ where: { severity: "info" } }),
+      this.prisma.alertLog.count({ where: { createdAt: { gte: since } } }),
+      this.prisma.alertRule.count({ where: { silencedUntil: { gt: new Date() } } })
+    ]);
+    return { total, critical, warning, info, last24h: last24, silenced };
+  }
+}

@@ -1,0 +1,14 @@
+node_modules
+.next
+dist
+build
+.turbo
+.env
+.env.local
+*.log
+.DS_Store
+prisma/migrations/_legacy
+coverage
+playwright-report
+test-results
+.pnpm-store

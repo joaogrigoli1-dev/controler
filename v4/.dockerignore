@@ -1,0 +1,9 @@
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+**/.env
+**/*.log
+**/.git
+**/coverage
+**/playwright-report

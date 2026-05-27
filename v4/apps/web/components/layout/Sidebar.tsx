@@ -1,0 +1,77 @@
+"use client";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { cn } from "@/lib/utils";
+import {
+  LayoutGrid, Server, Boxes, Globe, KeyRound, Plug, Bell, BarChart3,
+  Search, LogOut, Activity
+} from "lucide-react";
+
+const NAV = [
+  { href: "/overview", label: "Overview", icon: LayoutGrid, hint: "G H" },
+  { href: "/srv1", label: "SRV1", icon: Server, hint: "G S" },
+  { href: "/coolify", label: "Coolify", icon: Boxes, hint: "G C" },
+  { href: "/hestia", label: "Mail & Sites", icon: Globe, hint: "G M" },
+  { href: "/vault", label: "Vault", icon: KeyRound, hint: "G V" },
+  { href: "/apis", label: "APIs", icon: Plug, hint: "G A" },
+  { href: "/alerts", label: "Alertas", icon: Bell, hint: "G N" },
+  { href: "/analytics", label: "Analytics", icon: BarChart3, hint: "G T" }
+];
+
+export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
+  const path = usePathname() || "";
+  return (
+    <aside
+      className="fixed top-0 left-0 h-full bg-surface-0/80 backdrop-blur-xl border-r border-white/5 flex flex-col z-50"
+      style={{ width: "var(--sidebar-w)" }}
+    >
+      <div className="p-5 border-b border-white/5 flex items-center justify-between">
+        <Link href="/overview" className="flex items-center gap-2.5 group">
+          <div className="w-8 h-8 rounded-md bg-accent/20 border border-accent/30 flex items-center justify-center group-hover:bg-accent/30 transition">
+            <Activity size={16} className="text-accent" />
+          </div>
+          <div>
+            <div className="text-display font-bold text-sm tracking-tight">controler</div>
+            <div className="text-[9px] text-white/40 uppercase tracking-[0.2em]">v4 noc</div>
+          </div>
+        </Link>
+      </div>
+
+      <button
+        onClick={onCmdK}
+        className="mx-3 mt-3 flex items-center gap-2 px-3 py-2 rounded-md text-xs text-white/40 bg-white/[0.03] border border-white/5 hover:bg-white/5 transition"
+      >
+        <Search size={12} />
+        <span className="flex-1 text-left">Buscar...</span>
+        <kbd className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-white/50">⌘K</kbd>
+      </button>
+
+      <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto">
+        {NAV.map(({ href, label, icon: Icon, hint }) => (
+          <Link
+            key={href}
+            href={href}
+            className={cn("nav-link", path.startsWith(href) && "active")}
+          >
+            <Icon size={15} />
+            <span className="flex-1">{label}</span>
+            <span className="text-[9px] text-white/30 font-mono">{hint}</span>
+          </Link>
+        ))}
+      </nav>
+
+      <div className="p-3 border-t border-white/5">
+        <button
+          onClick={() => {
+            localStorage.clear();
+            location.href = "/login";
+          }}
+          className="nav-link w-full text-white/40 hover:text-red"
+        >
+          <LogOut size={14} />
+          <span>Sair</span>
+        </button>
+      </div>
+    </aside>
+  );
+}

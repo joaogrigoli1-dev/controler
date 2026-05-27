@@ -1,0 +1,25 @@
+{
+  "name": "controler-v4",
+  "version": "4.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "start": "pnpm -r --parallel start",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "check": "pnpm -r check",
+    "prisma:generate": "pnpm --filter @controler/api prisma:generate",
+    "prisma:migrate": "pnpm --filter @controler/api prisma:migrate",
+    "prisma:seed": "pnpm --filter @controler/api prisma:seed"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "prettier": "^3.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}

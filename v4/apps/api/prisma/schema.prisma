@@ -1,0 +1,309 @@
+// Controler v4 — Prisma Schema
+// PostgreSQL 16 — banco controler_v4 (postgres-main:5433 em prod, container local em dev)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────
+// AUTH
+// ─────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  phone     String   @unique
+  role      String   @default("admin") // admin | viewer
+  active    Boolean  @default(true)
+  blocked   Boolean  @default(false)
+  lastLogin DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tokens    OtpToken[]
+  sessions  Session[]
+  auditLogs VaultAuditLog[]
+  actions   AuditLog[]
+
+  @@map("users")
+}
+
+model OtpToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String   // sha256(code)
+  channel   String   @default("whatsapp")
+  purpose   String   @default("login") // login | reveal | sensitive_action
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, used, expiresAt])
+  @@map("otp_tokens")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String   @unique
+  refreshHash  String?  @unique
+  ipAddress    String
+  userAgent    String
+  status       String   @default("active") // active | revoked_by_new_login | expired | logged_out | blocked
+  expiresAt    DateTime
+  lastActivity DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([userId, status])
+  @@map("sessions")
+}
+
+// ─────────────────────────────────────────────────────────
+// AUDIT
+// ─────────────────────────────────────────────────────────
+
+model VaultAuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String   // REVEAL | LIST | EXPORT
+  resource  String   // /myclinicsoft/zapi_token
+  ipAddress String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([resource, createdAt])
+  @@map("vault_audit_logs")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────────────────
+// TIMELINE / EVENTOS
+// ─────────────────────────────────────────────────────────
+
+model TimelineEvent {
+  id        String   @id @default(cuid())
+  eventType String   // deploy | health_check | sync_drift | alert | scanner | manual_action
+  title     String
+  severity  String   @default("info") // info | warning | critical
+  project   String?
+  detail    String?
+  actor     String   // scheduler | user:id | system
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([severity, createdAt(sort: Desc)])
+  @@index([project, createdAt(sort: Desc)])
+  @@map("timeline_events")
+}
+
+// ─────────────────────────────────────────────────────────
+// METRICS
+// ─────────────────────────────────────────────────────────
+
+model MetricSnapshot {
+  id            String   @id @default(cuid())
+  containerName String?
+  scope         String   @default("container") // container | host | service
+  cpuPercent    Float?
+  memMb         Float?
+  memPercent    Float?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  @@index([containerName, createdAt(sort: Desc)])
+  @@index([scope, createdAt(sort: Desc)])
+  @@map("metric_snapshots")
+}
+
+model HostMetricSnapshot {
+  id           String   @id @default(cuid())
+  cpuPercent   Float
+  loadAvg1m    Float?
+  loadAvg5m    Float?
+  loadAvg15m   Float?
+  memTotalMb   Int
+  memUsedMb    Int
+  memCachedMb  Int?
+  swapUsedMb   Int?
+  diskTotalGb  Float?
+  diskUsedGb   Float?
+  netInBytes   BigInt?
+  netOutBytes  BigInt?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@map("host_metric_snapshots")
+}
+
+// ─────────────────────────────────────────────────────────
+// ALERTAS
+// ─────────────────────────────────────────────────────────
+
+model AlertRule {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  condition   Json     // { type: "cpu_above", target: "host", threshold: 80, duration: "5m" }
+  severity    String   // info | warning | critical
+  channels    String[] // ["whatsapp", "sms", "internal"]
+  cooldownMin Int      @default(30)
+  enabled     Boolean  @default(true)
+  silencedUntil DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  logs        AlertLog[]
+
+  @@map("alert_rules")
+}
+
+model AlertLog {
+  id        String   @id @default(cuid())
+  ruleId    String?
+  rule      AlertRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  ruleKey   String
+  severity  String
+  title     String
+  message   String
+  channels  String[]
+  sent      Boolean
+  error     String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([severity, createdAt(sort: Desc)])
+  @@map("alert_logs")
+}
+
+// ─────────────────────────────────────────────────────────
+// DEPLOYS
+// ─────────────────────────────────────────────────────────
+
+model DeployHistory {
+  id          String   @id @default(cuid())
+  project     String
+  coolifyUuid String?
+  status      String   // success | failed | running | cancelled
+  commitSha   String?
+  commitMsg   String?
+  branch      String?
+  author      String?
+  durationSec Int?
+  triggeredBy String?
+  startedAt   DateTime
+  finishedAt  DateTime?
+  logsUrl     String?
+  createdAt   DateTime @default(now())
+
+  @@index([project, startedAt(sort: Desc)])
+  @@index([status, startedAt(sort: Desc)])
+  @@map("deploy_history")
+}
+
+// ─────────────────────────────────────────────────────────
+// PROJETOS, APIs, SITES
+// ─────────────────────────────────────────────────────────
+
+model Project {
+  id          String   @id @default(cuid())
+  slug        String   @unique // myclinicsoft, fisiomt, libertakidz
+  name        String
+  icon        String?
+  description String?
+  coolifyUuids String[]  // pode ter mais de 1 app no Coolify
+  repoUrl     String?
+  prodUrl     String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  apis        ProjectApi[]
+
+  @@map("projects")
+}
+
+model ProjectApi {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name          String   // Z-API, OpenAI, Stripe
+  baseUrl       String
+  environment   String   @default("prod")
+  healthUrl     String?
+  ssmKeyPath    String?  // /myclinicsoft/zapi_token
+  status        String?  // healthy | degraded | down | unknown
+  responseTimeMs Int?
+  lastChecked   DateTime?
+  rateLimit     Json?
+  docsUrl       String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([projectId, status])
+  @@map("project_apis")
+}
+
+model Site {
+  id          String   @id @default(cuid())
+  domain      String   @unique
+  scope       String   @default("nginx") // nginx | coolify | mail | webmail | nextcloud
+  containerName String?
+  sslIssuer   String?
+  sslExpiresAt DateTime?
+  lastCheckedAt DateTime?
+  statusCode  Int?
+  responseMs  Int?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("sites")
+}
+
+// ─────────────────────────────────────────────────────────
+// SCANNER FINDINGS
+// ─────────────────────────────────────────────────────────
+
+model ScannerFinding {
+  id          String   @id @default(cuid())
+  category    String   // stopped_containers | dangling_images | dangling_volumes | stale_branches | orphan_ssm | failing_crons
+  severity    String   @default("info")
+  title       String
+  detail      String?
+  metadata    Json?
+  actionSafe  Boolean  @default(false)
+  action      String?
+  resolved    Boolean  @default(false)
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([category, resolved])
+  @@index([createdAt(sort: Desc)])
+  @@map("scanner_findings")
+}

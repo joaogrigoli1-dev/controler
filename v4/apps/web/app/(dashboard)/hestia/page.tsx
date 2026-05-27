@@ -1,0 +1,71 @@
+"use client";
+import useSWR from "swr";
+import { api } from "@/lib/api";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { ShieldCheck, ExternalLink, Globe, Mail } from "lucide-react";
+
+export default function HestiaPage() {
+  const { data: sites } = useSWR("sites-all", () => api.sites(), { refreshInterval: 60000 });
+  const { data: mail } = useSWR("mail-stack", () => api.mail(), { refreshInterval: 60000 });
+
+  const grouped: Record<string, any[]> = {};
+  (sites || []).forEach((s: any) => {
+    const k = s.scope || "other";
+    if (!grouped[k]) grouped[k] = [];
+    grouped[k].push(s);
+  });
+
+  return (
+    <div className="space-y-6 animate-fade-up">
+      <div className="glass-card p-6">
+        <div className="section-title flex items-center gap-2"><Mail size={12} /> Mail Stack</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {(mail || []).map((m: any) => (
+            <div key={m.name} className="p-3 rounded-md bg-white/[0.03] border border-white/5">
+              <div className="text-sm text-mono">{m.name}</div>
+              <div className="text-[10px] text-white/40 mt-1">{m.image}</div>
+              <div className="mt-2"><StatusBadge status={m.status?.startsWith("Up") ? "healthy" : "muted"} pulse /></div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {Object.entries(grouped).map(([scope, items]) => (
+        <div key={scope} className="glass-card p-6">
+          <div className="section-title flex items-center gap-2"><Globe size={12} /> {scope.toUpperCase()} ({items.length})</div>
+          <div className="space-y-2">
+            {items.map((s: any) => {
+              const sslDaysLeft = s.sslExpiresAt
+                ? Math.ceil((new Date(s.sslExpiresAt).getTime() - Date.now()) / (24 * 3600 * 1000))
+                : null;
+              return (
+                <div key={s.domain} className="flex items-center gap-4 p-3 rounded-md bg-white/[0.02] hover:bg-white/[0.04] transition">
+                  <span className={`w-2 h-2 rounded-full ${s.online ? "bg-green" : "bg-red"}`} />
+                  <div className="flex-1 min-w-0">
+                    <a href={`https://${s.domain}`} target="_blank" rel="noreferrer" className="font-medium text-mono hover:text-cyan flex items-center gap-1">
+                      {s.domain} <ExternalLink size={10} className="opacity-50" />
+                    </a>
+                    <div className="text-[10px] text-white/40 text-mono">{s.containerName || "—"}</div>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs">
+                    {s.statusCode && (
+                      <StatusBadge status={s.statusCode < 400 ? "green" : s.statusCode < 500 ? "yellow" : "red"} label={`HTTP ${s.statusCode}`} />
+                    )}
+                    {s.responseMs != null && (
+                      <span className="text-mono text-white/40">{s.responseMs}ms</span>
+                    )}
+                    {sslDaysLeft != null && (
+                      <span className={`flex items-center gap-1 text-mono ${sslDaysLeft < 30 ? "text-yellow" : "text-white/60"}`}>
+                        <ShieldCheck size={10} /> {sslDaysLeft}d
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

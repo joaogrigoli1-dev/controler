@@ -1,0 +1,42 @@
+{
+  "name": "@controler/web",
+  "version": "4.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "check": "tsc --noEmit",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "14.2.13",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "socket.io-client": "^4.7.5",
+    "swr": "^2.2.5",
+    "zod": "^3.23.8",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.5.2",
+    "lucide-react": "^0.445.0",
+    "framer-motion": "^11.5.6",
+    "recharts": "^2.12.7",
+    "date-fns": "^4.1.0",
+    "cmdk": "^1.0.0",
+    "sonner": "^1.5.0",
+    "jose": "^5.9.3",
+    "class-variance-authority": "^0.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.5",
+    "@types/react": "^18.3.8",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "14.2.13",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.5.4"
+  }
+}

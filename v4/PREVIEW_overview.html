@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Controler v4 NOC — Preview Mission Control</title>
+<link rel="preconnect" href="https://api.fontshare.com" />
+<link href="https://api.fontshare.com/v2/css?f[]=clash-display@600,700&display=swap" rel="stylesheet" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --bg: #050505; --s0: #0a0a0f; --s1: #0f0f1a; --s2: #141428;
+  --b: rgba(255,255,255,0.06); --bh: rgba(255,255,255,0.12);
+  --accent: #7C6EFA; --cyan: #22D3EE; --green: #4ADE80;
+  --yellow: #FACC15; --red: #F87171; --orange: #FB923C; --purple: #C084FC;
+  --text: #F1F5F9; --muted: #64748B;
+  --display: 'Clash Display', system-ui; --body: 'Plus Jakarta Sans', system-ui;
+  --mono: 'JetBrains Mono', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--body); font-size: 14px; -webkit-font-smoothing: antialiased; }
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 20% 0%, rgba(124,110,250,0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 100%, rgba(34,211,238,0.06) 0%, transparent 60%);
+}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+
+/* SIDEBAR */
+.sidebar { position: fixed; top: 0; left: 0; height: 100vh; width: 240px;
+  background: rgba(10,10,15,0.8); backdrop-filter: blur(20px);
+  border-right: 1px solid var(--b); display: flex; flex-direction: column; z-index: 50; }
+.logo-row { padding: 20px; border-bottom: 1px solid var(--b); display: flex; align-items: center; gap: 10px; }
+.logo-mark { width: 32px; height: 32px; border-radius: 8px; background: rgba(124,110,250,0.2);
+  border: 1px solid rgba(124,110,250,0.3); display: grid; place-items: center; color: var(--accent); font-weight: 700; }
+.logo-text { font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: -0.02em; }
+.logo-sub { font-size: 9px; color: rgba(255,255,255,0.4); text-transform: uppercase; letter-spacing: 0.3em; }
+.search-btn { margin: 12px; padding: 8px 12px; border-radius: 8px;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--b); color: rgba(255,255,255,0.4);
+  font-size: 12px; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.search-btn kbd { margin-left: auto; padding: 2px 5px; background: rgba(255,255,255,0.05); border-radius: 3px; font-size: 9px; }
+.nav { flex: 1; padding: 16px 8px; display: flex; flex-direction: column; gap: 2px; }
+.nav-link { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 6px;
+  color: rgba(255,255,255,0.6); font-size: 13px; text-decoration: none; cursor: pointer; transition: all 200ms; }
+.nav-link:hover { color: white; background: rgba(255,255,255,0.05); }
+.nav-link.active { color: white; background: linear-gradient(90deg, rgba(124,110,250,0.15), transparent);
+  border-left: 2px solid var(--accent); padding-left: 10px; }
+.nav-link .hint { margin-left: auto; font-family: var(--mono); font-size: 9px; color: rgba(255,255,255,0.3); }
+
+/* TOPBAR */
+.topbar { position: fixed; top: 0; right: 0; left: 240px; height: 56px;
+  background: rgba(10,10,15,0.6); backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--b); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; z-index: 40; overflow: hidden; }
+.topbar::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, transparent 49%, rgba(124,110,250,0.15) 50%, transparent 51%);
+  animation: scanline 8s linear infinite;
+}
+@keyframes scanline { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
+.topbar h1 { font-family: var(--display); font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
+.topbar-row { display: flex; align-items: center; gap: 12px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.b-cyan { background: rgba(34,211,238,0.12); color: var(--cyan); }
+.b-green { background: rgba(74,222,128,0.12); color: var(--green); }
+.b-yellow { background: rgba(250,204,21,0.12); color: var(--yellow); }
+.b-red { background: rgba(248,113,113,0.12); color: var(--red); }
+.b-muted { background: rgba(100,116,139,0.12); color: var(--muted); }
+.b-accent { background: rgba(124,110,250,0.12); color: var(--accent); }
+.b-purple { background: rgba(192,132,252,0.12); color: var(--purple); }
+.dot-pulse { width: 8px; height: 8px; border-radius: 50%; background: currentColor;
+  box-shadow: 0 0 0 0 currentColor; animation: pulse 1.8s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 currentColor; } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.time { font-family: var(--mono); font-size: 12px; color: rgba(255,255,255,0.4); }
+.btn { padding: 6px 10px; border-radius: 6px; background: rgba(255,255,255,0.05);
+  border: 1px solid var(--b); color: white; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+
+/* MAIN */
+main { padding-left: 240px; padding-top: 56px; min-height: 100vh; position: relative; z-index: 10; }
+.page { padding: 24px; display: flex; flex-direction: column; gap: 24px; }
+
+/* CARDS */
+.card { background: linear-gradient(180deg, var(--s1) 0%, var(--s0) 100%);
+  border: 1px solid var(--b); border-radius: 18px;
+  box-shadow: 0 1px 0 var(--bh) inset, 0 20px 40px -20px rgba(0,0,0,0.5); padding: 24px; }
+.bezel { background: var(--s1); border-radius: 18px; padding: 1px;
+  background-image: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0)); }
+.bezel > .inner { background: var(--s0); border-radius: 17px; padding: 24px; }
+.section-title { font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.2em; color: rgba(255,255,255,0.5); margin-bottom: 12px;
+  display: flex; align-items: center; gap: 8px; }
+
+/* KPI */
+.kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; }
+.kpi { background: linear-gradient(180deg, var(--s1) 0%, var(--s0) 100%);
+  border: 1px solid var(--b); border-radius: 18px; padding: 18px;
+  transition: all 300ms; display: flex; flex-direction: column; gap: 4px; }
+.kpi:hover { border-color: rgba(124,110,250,0.4); box-shadow: 0 0 16px rgba(124,110,250,0.35); }
+.kpi-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.2em; color: rgba(255,255,255,0.4);
+  display: flex; justify-content: space-between; align-items: center; }
+.kpi-value { font-family: var(--mono); font-size: 30px; font-weight: 700; margin-top: 4px; line-height: 1; }
+.kpi-sub { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 4px; }
+.kpi-cyan { border-color: rgba(34,211,238,0.3); }
+.kpi-green { border-color: rgba(74,222,128,0.3); }
+.kpi-yellow { border-color: rgba(250,204,21,0.3); }
+.kpi-red { border-color: rgba(248,113,113,0.3); }
+.kpi-accent { border-color: rgba(124,110,250,0.3); }
+
+/* GAUGE */
+.gauge { display: grid; place-items: center; }
+.gauge svg { display: block; }
+
+/* RIGHT COLUMN */
+.row-3 { display: grid; grid-template-columns: 1fr 2fr; gap: 24px; }
+.row-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+.app-row { display: flex; align-items: center; justify-content: space-between; padding: 10px;
+  border-radius: 8px; transition: all 200ms; }
+.app-row:hover { background: rgba(255,255,255,0.03); }
+.app-left { display: flex; align-items: center; gap: 12px; }
+.app-dot { width: 8px; height: 8px; border-radius: 50%; }
+.app-name { font-size: 14px; font-weight: 500; }
+.app-fqdn { font-family: var(--mono); font-size: 11px; color: rgba(255,255,255,0.4); }
+.timeline-item { display: flex; align-items: flex-start; gap: 12px; padding: 10px;
+  border-radius: 8px; transition: all 200ms; }
+.timeline-item:hover { background: rgba(255,255,255,0.03); }
+.timeline-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 6px; flex: none; }
+.timeline-title { font-size: 13px; }
+.timeline-meta { font-family: var(--mono); font-size: 10px; color: rgba(255,255,255,0.4); margin-top: 2px; }
+.status-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+.status-row .label { font-size: 13px; color: rgba(255,255,255,0.6); }
+
+.icon { width: 14px; height: 14px; display: inline-block; vertical-align: middle; }
+.icon svg { width: 100%; height: 100%; }
+
+.divider { height: 1px; background: var(--b); margin: 12px 0; }
+
+@media (max-width: 1400px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="logo-row">
+    <div class="logo-mark">⚡</div>
+    <div>
+      <div class="logo-text">controler</div>
+      <div class="logo-sub">v4 noc</div>
+    </div>
+  </div>
+  <div class="search-btn">
+    🔍 <span>Buscar...</span> <kbd>⌘K</kbd>
+  </div>
+  <nav class="nav">
+    <a class="nav-link active">▦ Overview <span class="hint">G H</span></a>
+    <a class="nav-link">▢ SRV1 <span class="hint">G S</span></a>
+    <a class="nav-link">⊞ Coolify <span class="hint">G C</span></a>
+    <a class="nav-link">⊕ Mail & Sites <span class="hint">G M</span></a>
+    <a class="nav-link">🔐 Vault <span class="hint">G V</span></a>
+    <a class="nav-link">⚙ APIs <span class="hint">G A</span></a>
+    <a class="nav-link">🔔 Alertas <span class="hint">G N</span></a>
+    <a class="nav-link">📈 Analytics <span class="hint">G T</span></a>
+  </nav>
+  <div style="padding: 12px; border-top: 1px solid var(--b);">
+    <a class="nav-link" style="color: rgba(255,255,255,0.4);">↪ Sair</a>
+  </div>
+</aside>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <h1>Mission Control</h1>
+    <span class="badge b-cyan"><span class="dot-pulse"></span> LIVE</span>
+  </div>
+  <div class="topbar-row">
+    <span class="badge b-green">● WS conectado</span>
+    <span class="time">13:56:47</span>
+    <button class="btn">↻</button>
+    <button class="btn">🔔</button>
+  </div>
+</header>
+
+<main>
+<div class="page">
+
+  <!-- KPI HERO -->
+  <div class="kpi-grid">
+    <div class="kpi kpi-cyan">
+      <div class="kpi-label"><span>CONTAINERS</span><span>📦</span></div>
+      <div class="kpi-value">37</div>
+      <div class="kpi-sub">38 total · 9 healthy</div>
+    </div>
+    <div class="kpi kpi-accent">
+      <div class="kpi-label"><span>APPS COOLIFY</span><span>⚙</span></div>
+      <div class="kpi-value">7</div>
+      <div class="kpi-sub">repos prod</div>
+    </div>
+    <div class="kpi kpi-green">
+      <div class="kpi-label"><span>SITES</span><span>🌐</span></div>
+      <div class="kpi-value">14/15</div>
+      <div class="kpi-sub">online HTTP 2xx</div>
+    </div>
+    <div class="kpi kpi-green">
+      <div class="kpi-label"><span>CPU SRV1</span><span>⚡</span></div>
+      <div class="kpi-value">14.0%</div>
+      <div class="kpi-sub">load 1.22 / 1.19 / 1.23</div>
+    </div>
+    <div class="kpi kpi-green">
+      <div class="kpi-label"><span>RAM SRV1</span><span>▤</span></div>
+      <div class="kpi-value">31%</div>
+      <div class="kpi-sub">4.8GB / 15.6GB</div>
+    </div>
+    <div class="kpi kpi-green">
+      <div class="kpi-label"><span>ALERTAS</span><span>⚠</span></div>
+      <div class="kpi-value">0</div>
+      <div class="kpi-sub">0 críticos</div>
+    </div>
+  </div>
+
+  <!-- GAUGES + APPS -->
+  <div class="row-3">
+    <div class="card">
+      <div class="section-title">SRV1 — Real-time</div>
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; place-items: center;">
+        <!-- 3 gauges SVG -->
+        <svg width="110" height="110" viewBox="0 0 110 110">
+          <circle cx="55" cy="55" r="47" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="8"
+            stroke-dasharray="295" stroke-dashoffset="73" transform="rotate(135 55 55)" stroke-linecap="round" />
+          <circle cx="55" cy="55" r="47" fill="none" stroke="#4ADE80" stroke-width="8"
+            stroke-dasharray="295" stroke-dashoffset="232" transform="rotate(135 55 55)" stroke-linecap="round"
+            style="filter: drop-shadow(0 0 8px #4ADE80);" />
+          <text x="55" y="55" dy="-2" text-anchor="middle" fill="white" font-family="JetBrains Mono" font-size="24" font-weight="700">14%</text>
+          <text x="55" y="55" dy="18" text-anchor="middle" fill="rgba(255,255,255,0.4)" font-size="9" letter-spacing="2">CPU</text>
+        </svg>
+        <svg width="110" height="110" viewBox="0 0 110 110">
+          <circle cx="55" cy="55" r="47" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="8"
+            stroke-dasharray="295" stroke-dashoffset="73" transform="rotate(135 55 55)" stroke-linecap="round" />
+          <circle cx="55" cy="55" r="47" fill="none" stroke="#4ADE80" stroke-width="8"
+            stroke-dasharray="295" stroke-dashoffset="195" transform="rotate(135 55 55)" stroke-linecap="round"
+            style="filter: drop-shadow(0 0 8px #4ADE80);" />
+          <text x="55" y="55" dy="-2" text-anchor="middle" fill="white" font-family="JetBrains Mono" font-size="24" font-weight="700">31%</text>
+          <text x="55" y="55" dy="18" text-anchor="middle" fill="rgba(255,255,255,0.4)" font-size="9" letter-spacing="2">RAM</text>
+        </svg>
+        <svg width="110" height="110" viewBox="0 0 110 110">
+          <circle cx="55" cy="55" r="47" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="8"
+            stroke-dasharray="295" stroke-dashoffset="73" transform="rotate(135 55 55)" stroke-linecap="round" />
+          <circle cx="55" cy="55" r="47" fill="none" stroke="#FACC15" stroke-width="8"
+            stroke-dasharray="295" stroke-dashoffset="170" transform="rotate(135 55 55)" stroke-linecap="round"
+            style="filter: drop-shadow(0 0 8px #FACC15);" />
+          <text x="55" y="55" dy="-2" text-anchor="middle" fill="white" font-family="JetBrains Mono" font-size="24" font-weight="700">47%</text>
+          <text x="55" y="55" dy="18" text-anchor="middle" fill="rgba(255,255,255,0.4)" font-size="9" letter-spacing="2">DISK</text>
+        </svg>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; margin-top: 16px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: rgba(255,255,255,0.4);">
+        <div>⏱ <span style="color: rgba(255,255,255,0.8);">26d 19h</span><div>uptime</div></div>
+        <div>↓ <span style="color: rgba(255,255,255,0.8);">6.4 MB</span><div>in / período</div></div>
+        <div>▤ <span style="color: rgba(255,255,255,0.8);">91/200 GB</span><div>disco</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <div class="section-title" style="margin: 0;">Apps Coolify</div>
+        <a style="font-size: 11px; color: var(--accent);">Ver tudo →</a>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 4px; max-height: 280px; overflow-y: auto;">
+        <div class="app-row"><div class="app-left"><span class="app-dot" style="background: #4ADE80;"></span><div><div class="app-name">controler</div><div class="app-fqdn">controler.net.br</div></div></div><span class="badge b-green"><span class="dot-pulse"></span>HEALTHY</span></div>
+        <div class="app-row"><div class="app-left"><span class="app-dot" style="background: #4ADE80;"></span><div><div class="app-name">myclinicsoft</div><div class="app-fqdn">myclinicsoft.com.br</div></div></div><span class="badge b-green"><span class="dot-pulse"></span>HEALTHY</span></div>
+        <div class="app-row"><div class="app-left"><span class="app-dot" style="background: #4ADE80;"></span><div><div class="app-name">libertakidz-backend</div><div class="app-fqdn">libertakidz.com.br</div></div></div><span class="badge b-green"><span class="dot-pulse"></span>HEALTHY</span></div>
+        <div class="app-row"><div class="app-left"><span class="app-dot" style="background: #22D3EE;"></span><div><div class="app-name">manalista</div><div class="app-fqdn">manalista.com.br</div></div></div><span class="badge b-cyan"><span class="dot-pulse"></span>RUNNING</span></div>
+        <div class="app-row"><div class="app-left"><span class="app-dot" style="background: #22D3EE;"></span><div><div class="app-name">fisiomt-laudo</div><div class="app-fqdn">laudo.fisiomt.com.br</div></div></div><span class="badge b-cyan"><span class="dot-pulse"></span>RUNNING</span></div>
+        <div class="app-row"><div class="app-left"><span class="app-dot" style="background: #22D3EE;"></span><div><div class="app-name">fisiomt-painel</div><div class="app-fqdn">painel.fisiomt.com.br</div></div></div><span class="badge b-cyan"><span class="dot-pulse"></span>RUNNING</span></div>
+        <div class="app-row"><div class="app-left"><span class="app-dot" style="background: #22D3EE;"></span><div><div class="app-name">passaro-professor</div><div class="app-fqdn">passaroprofessor.com.br</div></div></div><span class="badge b-cyan"><span class="dot-pulse"></span>RUNNING</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TIMELINE + STATUS -->
+  <div class="row-2">
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <div class="section-title" style="margin: 0;">Timeline recente</div>
+        <a style="font-size: 11px; color: var(--accent);">Filtrar →</a>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <div class="timeline-item"><span class="timeline-dot" style="background: var(--cyan);"></span><div style="flex:1"><div class="timeline-title">Metrics snapshot — 38 containers</div><div class="timeline-meta">13:55:30 · scheduler</div></div><span class="badge b-cyan">INFO</span></div>
+        <div class="timeline-item"><span class="timeline-dot" style="background: var(--cyan);"></span><div style="flex:1"><div class="timeline-title">Health check passed (all)</div><div class="timeline-meta">13:55:00 · scheduler</div></div><span class="badge b-cyan">INFO</span></div>
+        <div class="timeline-item"><span class="timeline-dot" style="background: var(--yellow);"></span><div style="flex:1"><div class="timeline-title">3 serviços systemd em estado failed</div><div class="timeline-meta">13:30:00 · scanner · system</div></div><span class="badge b-yellow">WARNING</span></div>
+        <div class="timeline-item"><span class="timeline-dot" style="background: var(--cyan);"></span><div style="flex:1"><div class="timeline-title">Deploy myclinicsoft: success em 47s</div><div class="timeline-meta">09:42:11 · coolify · myclinicsoft</div></div><span class="badge b-cyan">INFO</span></div>
+        <div class="timeline-item"><span class="timeline-dot" style="background: var(--yellow);"></span><div style="flex:1"><div class="timeline-title">Build cache reclamável: 2.18 GB</div><div class="timeline-meta">08:30:00 · scanner</div></div><span class="badge b-yellow">WARNING</span></div>
+        <div class="timeline-item"><span class="timeline-dot" style="background: var(--cyan);"></span><div style="flex:1"><div class="timeline-title">Daily digest enviado via WhatsApp</div><div class="timeline-meta">08:00:00 · scheduler</div></div><span class="badge b-cyan">INFO</span></div>
+        <div class="timeline-item"><span class="timeline-dot" style="background: var(--cyan);"></span><div style="flex:1"><div class="timeline-title">Backup postgres-main: 287 MB OK</div><div class="timeline-meta">03:00:14 · cron</div></div><span class="badge b-cyan">INFO</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Status Geral</div>
+      <div class="status-row"><span class="label">Mail Stack</span><span class="badge b-green"><span class="dot-pulse"></span>OK</span></div>
+      <div class="status-row"><span class="label">Postgres main</span><span class="badge b-green">UP</span></div>
+      <div class="status-row"><span class="label">Traefik proxy</span><span class="badge b-green">80/443</span></div>
+      <div class="status-row"><span class="label">Backup diário</span><span class="badge b-cyan">3h BRT</span></div>
+      <div class="status-row"><span class="label">Failed services</span><span class="badge b-yellow">3 atenção</span></div>
+      <div class="divider"></div>
+      <div class="status-row"><span class="label">🛡 Last scan</span><span style="font-family: var(--mono); font-size: 11px; color: rgba(255,255,255,0.4);">há 6 min</span></div>
+    </div>
+  </div>
+
+</div>
+</main>
+</body>
+</html>
