@@ -56,7 +56,7 @@ export function CommandPalette({ open, onOpenChange }: Props) {
                 <Command.Item
                   key={it.href}
                   onSelect={() => { router.push(it.href); onOpenChange(false); }}
-                  className="flex items-center justify-between px-3 py-2 rounded-md text-sm text-white/80 cursor-pointer aria-selected:bg-white/8"
+                  className="flex items-center justify-between px-3 py-2 rounded-md text-sm text-white/80 cursor-pointer aria-selected:bg-white/10"
                 >
                   <span>{it.title}</span>
                   <kbd className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-white/40">{it.shortcut}</kbd>
