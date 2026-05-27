@@ -7,7 +7,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { HostingerService } from "../common/hostinger.service";
 import { SshService } from "../common/ssh.service";
 import { RedisService } from "../common/redis.service";
-import type { HostMetrics, ContainerSummary } from "@controler/shared";
+import type { HostMetrics, ContainerSummary } from "../../../../packages/shared/src";
 
 const SYSTEMD_TARGETS = [
   "docker.service",

@@ -6,7 +6,7 @@ import {
 } from "@nestjs/websockets";
 import { Server, Socket } from "socket.io";
 import { Logger } from "@nestjs/common";
-import { RT_CHANNELS } from "@controler/shared";
+import { RT_CHANNELS } from "../../../../packages/shared/src";
 
 @WebSocketGateway({
   cors: { origin: true, credentials: true },

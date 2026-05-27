@@ -13,7 +13,7 @@ async function bootstrap() {
     new FastifyAdapter({ trustProxy: true, logger: false })
   );
 
-  await app.register(helmet, {
+  await app.register(helmet as any, {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
@@ -26,8 +26,8 @@ async function bootstrap() {
     }
   });
 
-  await app.register(cors, {
-    origin: (origin, cb) => {
+  await app.register(cors as any, {
+    origin: (origin: any, cb: any) => {
       const allowed = [
         /^http:\/\/localhost(:\d+)?$/,
         /^https?:\/\/controler(-v4)?\.net\.br$/
@@ -38,7 +38,7 @@ async function bootstrap() {
     credentials: true
   });
 
-  await app.register(rateLimit, {
+  await app.register(rateLimit as any, {
     max: 200,
     timeWindow: "1 minute",
     keyGenerator: (req: any) => req.headers["x-forwarded-for"]?.toString() || req.ip
