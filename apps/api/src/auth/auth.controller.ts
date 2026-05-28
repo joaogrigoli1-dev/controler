@@ -1,4 +1,5 @@
 import { Body, Controller, ForbiddenException, Get, Post, Req, UseGuards } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
 import { WhatsappService } from "./whatsapp.service";
 import { JwtAuthGuard, AuthUser } from "./jwt-auth.guard";
@@ -18,18 +19,21 @@ export class AuthController {
     private readonly prisma: PrismaService
   ) {}
 
+  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
   @Post("request-code")
   async requestCode(@Body() body: any, @Req() req: any) {
     const parsed = RequestCodeSchema.parse(body);
     return this.auth.requestCode(parsed.phone, getIp(req));
   }
 
+  @Throttle({ auth: { limit: 10, ttl: 60_000 } })
   @Post("verify-code")
   async verifyCode(@Body() body: any, @Req() req: any) {
     const parsed = VerifyCodeSchema.parse(body);
     return this.auth.verifyCode(parsed.phone, parsed.code, getIp(req), req.headers["user-agent"] || "");
   }
 
+  @Throttle({ auth: { limit: 20, ttl: 60_000 } })
   @Post("refresh")
   async refresh(@Body() body: { refreshToken: string }, @Req() req: any) {
     return this.auth.refresh(body.refreshToken, getIp(req));
@@ -80,6 +84,7 @@ export class AuthController {
    * Retorna o código no response — NÃO envia para WhatsApp/SMS.
    * Requer env `DEV_BACKDOOR_TOKEN` configurada (se não, endpoint retorna 403).
    */
+  @Throttle({ sensitive: { limit: 3, ttl: 60_000 } })
   @Post("dev-otp")
   async devOtp(@Body() body: { phone: string }, @Req() req: any) {
     const backdoor = process.env.DEV_BACKDOOR_TOKEN;

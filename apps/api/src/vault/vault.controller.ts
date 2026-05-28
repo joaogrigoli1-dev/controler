@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { VaultService } from "./vault.service";
 import { JwtAuthGuard, AuthUser } from "../auth/jwt-auth.guard";
 import { OtpReauthGuard } from "../auth/otp-reauth.guard";
@@ -17,6 +18,7 @@ export class VaultController {
     return this.vault.listByProject(project ? `/${project}` : undefined);
   }
 
+  @Throttle({ sensitive: { limit: 10, ttl: 60_000 } })
   @UseGuards(OtpReauthGuard)
   @Post("reveal")
   reveal(@Body() body: { name: string }, @AuthUser() user: any, @Req() req: any) {

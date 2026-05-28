@@ -39,14 +39,45 @@ async function bootstrap() {
     credentials: true
   });
 
+  // Rate limit global (catch-all) + por rota crítica
+  // Convenção: usa X-Forwarded-For (Coolify Traefik) > X-Real-IP > req.ip
+  const ipKey = (req: any) =>
+    req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() ||
+    req.headers["x-real-ip"]?.toString() ||
+    req.ip;
+
   await app.register(rateLimit as any, {
-    max: 200,
+    global: true,
+    max: 300,
     timeWindow: "1 minute",
-    keyGenerator: (req: any) => req.headers["x-forwarded-for"]?.toString() || req.ip
+    keyGenerator: ipKey,
+    errorResponseBuilder: (req: any, ctx: any) => ({
+      statusCode: 429,
+      error: "Too Many Requests",
+      message: `Limite ${ctx.max}/${ctx.after} excedido. Tente novamente em ${Math.ceil(ctx.ttl / 1000)}s.`,
+      retryAfter: Math.ceil(ctx.ttl / 1000)
+    }),
+    skipOnError: true,
+    // Per-route customization: rotas mais sensíveis ganham limites menores
+    onExceeding: (req: any) => {
+      Logger.warn(`[RATE_LIMIT] near limit ip=${ipKey(req)} path=${req.url}`, "RateLimit");
+    },
+    onExceeded: (req: any) => {
+      Logger.error(`[RATE_LIMIT] EXCEEDED ip=${ipKey(req)} path=${req.url}`, "RateLimit");
+    }
   });
 
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }));
   app.setGlobalPrefix("api", { exclude: ["health", "/"] });
+
+  // Warning visível se backdoor admin estiver habilitado em prod
+  if (process.env.DEV_BACKDOOR_TOKEN) {
+    Logger.warn(
+      `⚠ DEV_BACKDOOR_TOKEN está SET. Endpoint /be/auth/dev-otp ativo. ` +
+      `Remova essa env var quando OTP estiver 100% confiável.`,
+      "Security"
+    );
+  }
 
   const port = parseInt(process.env.PORT || "4000", 10);
   await app.listen(port, "0.0.0.0");
