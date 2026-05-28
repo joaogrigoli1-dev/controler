@@ -153,7 +153,7 @@ export class WhatsappService {
    */
   async statusInstance(): Promise<{ connected: boolean; raw: unknown; error?: string }> {
     try {
-      const { instance, token, clientToken } = await this.creds();
+      const { instance, token, clientToken } = await this.credsZapi();
       const headers: Record<string, string> = {};
       if (clientToken) headers["Client-Token"] = clientToken;
       const { data, status } = await axios.get(
