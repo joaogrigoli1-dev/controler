@@ -56,7 +56,7 @@ export default function LoginPage() {
             </div>
             <div>
               <div className="text-display text-xl font-bold tracking-tight">controler</div>
-              <div className="text-[10px] text-white/40 uppercase tracking-[0.3em]">v4 noc</div>
+              <div className="text-[10px] text-white/40 uppercase tracking-[0.3em]">noc</div>
             </div>
           </div>
 

@@ -32,7 +32,7 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
           </div>
           <div>
             <div className="text-display font-bold text-sm tracking-tight">controler</div>
-            <div className="text-[9px] text-white/40 uppercase tracking-[0.2em]">v4 noc</div>
+            <div className="text-[9px] text-white/40 uppercase tracking-[0.2em]">noc</div>
           </div>
         </Link>
       </div>
