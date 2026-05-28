@@ -13,7 +13,7 @@
 
 - **Backend:** Node 20 + NestJS 10 + Fastify + Prisma 5 + Postgres 16 + Redis 7 + Socket.IO
 - **Frontend:** Next.js 14 + TypeScript + TailwindCSS + Recharts + Framer Motion
-- **Auth:** OTP WhatsApp via Z-API + JWT (15min access + 7d refresh) + re-auth OTP em ações sensíveis
+- **Auth:** OTP via WhatsApp (Z-API principal + Meta oficial fallback) ou SMS (Infobip). JWT 15min access + 7d refresh. Re-auth OTP em ações sensíveis.
 - **Realtime:** WebSocket (host metrics 30s, container metrics 30s)
 - **Infra:** Docker socket + AWS SSM + Coolify API + SSH para SRV1 + Cloudflare DNS
 
@@ -65,6 +65,19 @@ controler/
 
 **NUNCA editar arquivos direto em srv1.** Sempre DEV → GIT → PROD.
 
+## Convenção de canais (João — IMPORTANTE)
+
+| Canal | Convenção | Providers |
+|-------|-----------|-----------|
+| **WhatsApp** | SEMPRE 2 rotas | **Z-API** (principal) + **Meta API oficial** (fallback) |
+| **SMS** | SEMPRE Infobip | **Infobip** |
+
+Toda mensagem WhatsApp deve tentar Z-API primeiro; se falhar (sessão morta, ban, 4xx),
+cai para Meta API oficial. SMS é canal independente, sempre via Infobip.
+
+Implementação: `apps/api/src/auth/whatsapp.service.ts` (OTP) e
+`apps/api/src/alerts/alerts.service.ts` (alertas).
+
 ## Secrets
 
 Tudo no AWS SSM (profile `cowork-admin`):
@@ -72,9 +85,10 @@ Tudo no AWS SSM (profile `cowork-admin`):
 - `/controler/coolify_token` — Coolify API
 - `/controler/srv1_ssh_password` — SSH SRV1 (fallback se key falhar)
 - `/cloudflare/token` — Cloudflare API (zone aa5b42d654cc842a66d931bbf3a64817)
-- `/myclinicsoft/zapi_token`, `/myclinicsoft/zapi_client_token` — Z-API WhatsApp
-- `/shared/zapi/instance_id` — Z-API instance
-- `/myclinicsoft/infobip_api_key` — SMS críticos
+- `/shared/zapi/instance_id` + `/shared/zapi/token` — Z-API WhatsApp (principal)
+- `/myclinicsoft/zapi_token`, `/myclinicsoft/zapi_client_token` — Z-API (fallback paths)
+- `/myclinicsoft/whatsapp/access_token` + `/myclinicsoft/whatsapp/phone_number_id` — Meta WhatsApp Business API oficial
+- `/myclinicsoft/infobip_api_key` + `/shared/infobip/base_url` — SMS Infobip
 - `/myclinicsoft/hostinger_api_token` — Hostinger VPS API
 - `/myclinicsoft/installers_aws_access_key_id` + `*_secret_access_key` — AWS creds para o container
 

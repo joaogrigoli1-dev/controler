@@ -1,15 +1,23 @@
 /**
- * WhatsappService — envio de OTP com 3 canais em fallback:
- *   1. Meta WhatsApp Business API (free-form text)  → primário
- *   2. Z-API (WhatsApp não-oficial)                 → secundário
- *   3. Infobip SMS                                  → terciário (garantido)
+ * OtpDeliveryService — envio de OTP seguindo a convenção do João:
+ *   - WhatsApp: SEMPRE 2 rotas, Z-API (principal) + Meta API oficial (fallback)
+ *   - SMS:      SEMPRE Infobip
  *
- * Em 28/05/2026 descobrimos:
- *   - Z-API instance 3EF4B042... retorna "Instance not found" (morta)
- *   - Meta phone 1097542773446130 retorna "account is not registered" (133010)
- *   - Solução: SMS via Infobip vira o canal funcional + admin backdoor /be/auth/dev-otp
+ * Ordem de tentativa (3 canais em cascade — primeiro `sent=true` ganha):
+ *   1. Z-API     (WhatsApp principal — não-oficial, free-form text)
+ *   2. Meta API  (WhatsApp oficial fallback — Business API, free-form ou template)
+ *   3. Infobip   (SMS — canal final garantido)
  *
- * Throttle de 60s/destinatário aplicado em qualquer canal para anti-abuso.
+ * Em 28/05/2026 ambos WhatsApp estavam quebrados:
+ *   - Z-API instance 3EF4B042... → "Instance not found" (sessão WhatsApp morta)
+ *   - Meta phone 1097542773446130 → "account is not registered" (133010)
+ *   → Solução: SMS via Infobip vira o canal funcional enquanto WhatsApp não volta
+ *   → Backdoor admin /be/auth/dev-otp para recuperar acesso sem nenhum canal
+ *
+ * Throttle de 60s/destinatário aplicado em qualquer canal (anti-abuso).
+ *
+ * NOTA: classe mantém nome `WhatsappService` (sem renomear) para evitar break
+ *       de imports. A intenção é "service de delivery de OTP via WhatsApp/SMS".
  */
 
 import { Injectable, Logger } from "@nestjs/common";
@@ -76,11 +84,13 @@ export class WhatsappService {
     ];
     const msg = variants[Math.floor(Math.random() * variants.length)];
 
-    // Tenta canais em ordem: Meta → Z-API → SMS Infobip. Primeiro que retornar `sent` ganha.
+    // Convenção João: WhatsApp = Z-API (principal) + Meta (oficial fallback).
+    // SMS = sempre Infobip (canal independente).
+    // Ordem de tentativa: Z-API → Meta → Infobip SMS.
     const channels: Array<() => Promise<{ sent: boolean; provider: string; error?: string }>> = [
-      () => this.trySendMeta(phoneWith55, msg, code),
-      () => this.trySendZapi(phoneWith55, msg),
-      () => this.trySendSms(phoneWith55, code)
+      () => this.trySendZapi(phoneWith55, msg),     // WhatsApp principal (Z-API)
+      () => this.trySendMeta(phoneWith55, msg, code), // WhatsApp oficial Meta (fallback)
+      () => this.trySendInfobipSms(phoneWith55, code) // SMS Infobip (final)
     ];
     for (const ch of channels) {
       const result = await ch().catch((e) => ({ sent: false, provider: "?", error: String(e?.message || e) }));
@@ -90,7 +100,25 @@ export class WhatsappService {
     return { sent: false, provider: "all-failed", error: "todos os canais falharam" };
   }
 
-  // ─── Canal 1: Meta WhatsApp Business API ────────────────
+  // ─── Canal 1: WhatsApp principal — Z-API ────────────────
+  private async trySendZapi(phone: string, msg: string): Promise<{ sent: boolean; provider: string; error?: string }> {
+    try {
+      const { instance, token, clientToken } = await this.credsZapi();
+      const url = `https://api.z-api.io/instances/${instance}/token/${token}/send-text`;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (clientToken) headers["Client-Token"] = clientToken;
+      const { data, status } = await axios.post(url, { phone, message: msg }, { headers, timeout: 15_000, validateStatus: () => true });
+      if (status >= 400 || data?.error || !data?.messageId) {
+        return { sent: false, provider: "whatsapp-zapi", error: `status=${status} ${JSON.stringify(data).slice(0, 150)}` };
+      }
+      this.log.log(`[WhatsApp/Z-API] OTP enviado phone=${phone} id=${data.messageId}`);
+      return { sent: true, provider: "whatsapp-zapi" };
+    } catch (err: any) {
+      return { sent: false, provider: "whatsapp-zapi", error: err?.message };
+    }
+  }
+
+  // ─── Canal 2: WhatsApp oficial — Meta Business API (fallback) ─
   private async trySendMeta(phone: string, msg: string, _code: string): Promise<{ sent: boolean; provider: string; error?: string }> {
     try {
       const { token, phoneId } = await this.credsMeta();
@@ -100,35 +128,17 @@ export class WhatsappService {
         { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, timeout: 15_000, validateStatus: () => true }
       );
       if (status >= 400 || data?.error) {
-        return { sent: false, provider: "meta", error: `status=${status} ${data?.error?.message || ""}`.slice(0, 200) };
+        return { sent: false, provider: "whatsapp-meta", error: `status=${status} ${data?.error?.message || ""}`.slice(0, 200) };
       }
-      this.log.log(`[Meta] OTP enviado phone=${phone} id=${data?.messages?.[0]?.id}`);
-      return { sent: true, provider: "meta" };
+      this.log.log(`[WhatsApp/Meta] OTP enviado phone=${phone} id=${data?.messages?.[0]?.id}`);
+      return { sent: true, provider: "whatsapp-meta" };
     } catch (err: any) {
-      return { sent: false, provider: "meta", error: err?.message };
+      return { sent: false, provider: "whatsapp-meta", error: err?.message };
     }
   }
 
-  // ─── Canal 2: Z-API ─────────────────────────────────────
-  private async trySendZapi(phone: string, msg: string): Promise<{ sent: boolean; provider: string; error?: string }> {
-    try {
-      const { instance, token, clientToken } = await this.credsZapi();
-      const url = `https://api.z-api.io/instances/${instance}/token/${token}/send-text`;
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (clientToken) headers["Client-Token"] = clientToken;
-      const { data, status } = await axios.post(url, { phone, message: msg }, { headers, timeout: 15_000, validateStatus: () => true });
-      if (status >= 400 || data?.error || !data?.messageId) {
-        return { sent: false, provider: "zapi", error: `status=${status} ${JSON.stringify(data).slice(0, 150)}` };
-      }
-      this.log.log(`[Z-API] OTP enviado phone=${phone} id=${data.messageId}`);
-      return { sent: true, provider: "zapi" };
-    } catch (err: any) {
-      return { sent: false, provider: "zapi", error: err?.message };
-    }
-  }
-
-  // ─── Canal 3: SMS via Infobip ───────────────────────────
-  private async trySendSms(phone: string, code: string): Promise<{ sent: boolean; provider: string; error?: string }> {
+  // ─── Canal 3: SMS — Infobip (sempre Infobip) ────────────
+  private async trySendInfobipSms(phone: string, code: string): Promise<{ sent: boolean; provider: string; error?: string }> {
     try {
       const { apiKey, baseUrl } = await this.credsInfobip();
       const text = `Controler NOC: ${code}\n(valido por 10 min)`;
@@ -138,12 +148,12 @@ export class WhatsappService {
         { headers: { Authorization: `App ${apiKey}`, "Content-Type": "application/json" }, timeout: 15_000, validateStatus: () => true }
       );
       if (status >= 400 || data?.requestError) {
-        return { sent: false, provider: "sms", error: `status=${status} ${JSON.stringify(data).slice(0, 150)}` };
+        return { sent: false, provider: "sms-infobip", error: `status=${status} ${JSON.stringify(data).slice(0, 150)}` };
       }
-      this.log.log(`[SMS] OTP enviado phone=${phone} id=${data?.messages?.[0]?.messageId}`);
-      return { sent: true, provider: "sms" };
+      this.log.log(`[SMS/Infobip] OTP enviado phone=${phone} id=${data?.messages?.[0]?.messageId}`);
+      return { sent: true, provider: "sms-infobip" };
     } catch (err: any) {
-      return { sent: false, provider: "sms", error: err?.message };
+      return { sent: false, provider: "sms-infobip", error: err?.message };
     }
   }
 

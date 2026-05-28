@@ -1,10 +1,12 @@
 /**
- * AlertsService — roteamento de alertas:
- *   CRITICAL → WhatsApp (Z-API) + SMS (Infobip), 24/7
- *   WARNING  → WhatsApp, respeita janela silêncio 22h-7h BRT (a menos que rule.silencedUntil)
- *   INFO     → apenas log + WebSocket
+ * AlertsService — roteamento de alertas, convenção João:
+ *   - WhatsApp: SEMPRE 2 rotas, Z-API (principal) + Meta API oficial (fallback)
+ *   - SMS:      SEMPRE Infobip
  *
- * Espelho do core/alerts.py + zapi-guard kill switch (kind="alert_admin" bypass)
+ * Roteamento por severidade:
+ *   CRITICAL → WhatsApp (Z-API → Meta fallback) + SMS Infobip, 24/7
+ *   WARNING  → WhatsApp (Z-API → Meta fallback), respeita janela silêncio 22h-7h BRT
+ *   INFO     → apenas log + WebSocket
  */
 
 import { Injectable, Logger } from "@nestjs/common";
@@ -83,27 +85,18 @@ export class AlertsService {
   private async sendVia(ch: string, input: DispatchInput): Promise<{ ok: boolean; error?: string }> {
     try {
       if (ch === "whatsapp") {
-        const instance = process.env.ZAPI_INSTANCE_ID || (await this.ssm.get("/controler/zapi_instance_id")) || (await this.ssm.get("/myclinicsoft/zapi_instance_id"));
-        const token = process.env.ZAPI_TOKEN || (await this.ssm.get("/controler/zapi_token")) || (await this.ssm.get("/myclinicsoft/zapi_token"));
-        const clientToken = await this.ssm.get("/myclinicsoft/zapi_client_token");
-        if (!instance || !token) return { ok: false, error: "zapi-not-configured" };
-        const url = `https://api.z-api.io/instances/${instance}/token/${token}/send-text`;
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (clientToken) headers["Client-Token"] = clientToken;
-        const txt = `${this.icon(input.severity)} *${input.title}*\n\n${input.message}\n\n_controler-v4 NOC_`;
-        await axios.post(url, { phone: ALERT_PHONE, message: txt }, { headers, timeout: 12_000 });
-        return { ok: true };
+        // Convenção João: WhatsApp = Z-API (principal) → Meta (oficial fallback)
+        const txt = `${this.icon(input.severity)} *${input.title}*\n\n${input.message}\n\n_controler NOC_`;
+        const zapiResult = await this.sendWhatsappZapi(ALERT_PHONE, txt);
+        if (zapiResult.ok) return zapiResult;
+        this.log.warn(`[Alert] WhatsApp Z-API falhou (${zapiResult.error}), tentando Meta oficial`);
+        const metaResult = await this.sendWhatsappMeta(ALERT_PHONE, txt);
+        if (metaResult.ok) return metaResult;
+        return { ok: false, error: `whatsapp falhou em Z-API + Meta: ${metaResult.error}` };
       }
       if (ch === "sms") {
-        const apiKey = await this.ssm.get("/myclinicsoft/infobip_api_key");
-        if (!apiKey) return { ok: false, error: "infobip-not-configured" };
-        const base = (await this.ssm.get("/myclinicsoft/infobip_base_url")) || "6zjrk8.api.infobip.com";
-        await axios.post(
-          `https://${base}/sms/2/text/advanced`,
-          { messages: [{ from: "Controler", destinations: [{ to: ALERT_PHONE }], text: `[${input.severity.toUpperCase()}] ${input.title}: ${input.message}` }] },
-          { headers: { Authorization: `App ${apiKey}` }, timeout: 12_000 }
-        );
-        return { ok: true };
+        // Convenção João: SMS = sempre Infobip
+        return await this.sendSmsInfobip(ALERT_PHONE, `[${input.severity.toUpperCase()}] ${input.title}: ${input.message}`);
       }
       // internal = só log + websocket (broadcast)
       return { ok: true };
@@ -111,6 +104,52 @@ export class AlertsService {
       this.log.warn(`sendVia(${ch}) failed: ${err?.message}`);
       return { ok: false, error: err?.message };
     }
+  }
+
+  // ─── Canais individuais (separados para testabilidade) ──
+  private async sendWhatsappZapi(phone: string, text: string): Promise<{ ok: boolean; error?: string }> {
+    const instance = process.env.ZAPI_INSTANCE_ID || (await this.ssm.get("/shared/zapi/instance_id")) || (await this.ssm.get("/myclinicsoft/zapi_instance_id"));
+    const token = process.env.ZAPI_TOKEN || (await this.ssm.get("/shared/zapi/token")) || (await this.ssm.get("/myclinicsoft/zapi_token"));
+    const clientToken = await this.ssm.get("/myclinicsoft/zapi_client_token");
+    if (!instance || !token) return { ok: false, error: "zapi-not-configured" };
+    const url = `https://api.z-api.io/instances/${instance}/token/${token}/send-text`;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (clientToken) headers["Client-Token"] = clientToken;
+    const { data, status } = await axios.post(url, { phone, message: text }, { headers, timeout: 12_000, validateStatus: () => true });
+    if (status >= 400 || data?.error || !data?.messageId) {
+      return { ok: false, error: `zapi status=${status} ${JSON.stringify(data).slice(0, 120)}` };
+    }
+    return { ok: true };
+  }
+
+  private async sendWhatsappMeta(phone: string, text: string): Promise<{ ok: boolean; error?: string }> {
+    const token = process.env.META_WHATSAPP_TOKEN || (await this.ssm.get("/myclinicsoft/whatsapp/access_token"));
+    const phoneId = process.env.META_WHATSAPP_PHONE_ID || (await this.ssm.get("/myclinicsoft/whatsapp/phone_number_id")) || "1097542773446130";
+    if (!token || !phoneId) return { ok: false, error: "meta-not-configured" };
+    const { data, status } = await axios.post(
+      `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+      { messaging_product: "whatsapp", to: phone, type: "text", text: { body: text } },
+      { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, timeout: 12_000, validateStatus: () => true }
+    );
+    if (status >= 400 || data?.error) {
+      return { ok: false, error: `meta status=${status} ${data?.error?.message || ""}`.slice(0, 150) };
+    }
+    return { ok: true };
+  }
+
+  private async sendSmsInfobip(phone: string, text: string): Promise<{ ok: boolean; error?: string }> {
+    const apiKey = process.env.INFOBIP_API_KEY || (await this.ssm.get("/myclinicsoft/infobip_api_key")) || (await this.ssm.get("/shared/infobip/api_key"));
+    const base = (await this.ssm.get("/shared/infobip/base_url")) || (await this.ssm.get("/myclinicsoft/infobip_base_url")) || "6zjrk8.api.infobip.com";
+    if (!apiKey) return { ok: false, error: "infobip-not-configured" };
+    const { data, status } = await axios.post(
+      `https://${base}/sms/2/text/advanced`,
+      { messages: [{ from: "Controler", destinations: [{ to: phone }], text }] },
+      { headers: { Authorization: `App ${apiKey}` }, timeout: 12_000, validateStatus: () => true }
+    );
+    if (status >= 400 || data?.requestError) {
+      return { ok: false, error: `infobip status=${status}` };
+    }
+    return { ok: true };
   }
 
   private icon(sev: string): string {
