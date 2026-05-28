@@ -5,6 +5,7 @@
     "lib": ["ES2022"],
     "moduleResolution": "node",
     "outDir": "./dist",
+    "rootDir": "./src",
     "strict": false,
     "noImplicitAny": false,
     "strictNullChecks": false,
@@ -15,13 +16,8 @@
     "resolveJsonModule": true,
     "declaration": false,
     "sourceMap": true,
-    "baseUrl": "./",
-    "paths": {
-      "@/*": ["src/*"],
-      "@controler/shared": ["../../packages/shared/src/index.ts"],
-      "@controler/shared/*": ["../../packages/shared/src/*"]
-    }
+    "baseUrl": "./"
   },
-  "include": ["src/**/*", "../../packages/shared/src/**/*"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "prisma"]
 }

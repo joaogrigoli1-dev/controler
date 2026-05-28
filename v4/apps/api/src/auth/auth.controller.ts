@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Post, Req, UseGuards } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { JwtAuthGuard, AuthUser } from "./jwt-auth.guard";
-import { RequestCodeSchema, VerifyCodeSchema } from "../../../../packages/shared/src";
+import { RequestCodeSchema, VerifyCodeSchema } from "../shared";
 
 function getIp(req: any): string {
   return req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() || req.ip || "unknown";

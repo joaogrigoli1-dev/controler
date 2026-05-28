@@ -39,4 +39,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD wget -qO- http://localhost:4000/health || exit 1
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["sh", "-c", "npx prisma migrate deploy --schema=./prisma/schema.prisma || true; node dist/main.js"]
+CMD ["sh", "-c", "(./node_modules/.bin/prisma migrate deploy --schema=./prisma/schema.prisma 2>&1 || echo 'migrate skipped'); node dist/main.js"]

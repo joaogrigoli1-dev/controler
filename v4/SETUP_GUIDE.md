@@ -1,30 +1,60 @@
 # Controler v4 — Setup Guide pós-deploy
 
-## Status atual (2026-05-27)
+## Status atual (2026-05-27 19h BRT)
 
-✅ Código v4 commitado em `main` (commit `156e083`)
+✅ Código v4 commitado em `main` (último: `c0240de`)
 ✅ App Coolify criada — UUID `a8u2gdchrpjnn6era2i8kh8d`, nome `controler-v4`
 ✅ Projeto Coolify: **Infraestrutura** (`wwkksgsok8wkswwsk0sskgss`)
 ✅ Build pack: `dockercompose` apontando para `/v4/docker-compose.yml`
 ✅ Branch: `main` · Base directory: `/v4`
-✅ Deploy disparado — UUID `r7m93barna2pll1nck6yb1pm`
-✅ Env vars principais configuradas (POSTGRES_PASSWORD, JWT_*, SRV1_SSH_*, etc)
+✅ **Build passou** — API + Web compilaram (após 6 fixes iterativos)
+✅ **Deploy funcional** — 4 containers UP (postgres, redis, api, web — todos healthy)
+✅ **Secrets reais populados** via API Coolify (ZAPI, AWS, Hostinger, Infobip)
+✅ Labels Traefik **já estão lá** automaticamente
+⚠ FQDN `controler-v4.net.br` configurado em `docker_compose_domains`, mas precisa do DNS apontar
+
+### URLs atuais:
+- Temporária sslip.io (404 enquanto não tem Host correto): http://a8u2gdchrpjnn6era2i8kh8d.62.72.63.18.sslip.io
+- Final esperada: https://controler-v4.net.br ← criar DNS
 
 ## Pendências para você completar
 
-### 1. DNS Cloudflare (PRIORIDADE)
+### 1. DNS Cloudflare (ÚNICA PENDÊNCIA REAL — 60 segundos)
 
-O token Cloudflare do SSM está **expirado** — bloqueia a criação programática.
+**Comprovado:** o domínio `controler.net.br` está mesmo no Cloudflare (NS angela/kevin.ns.cloudflare.com).
+**Comprovado:** o token CF salvo em `/myclinicsoft/cloudflare_api_token` (prefixo `cfk_…`) está **expirado**.
 
-**Passos manuais:**
-1. Acesse Cloudflare Dashboard → zona `controler.net.br`
-2. DNS → Add record:
+**Caminho mais rápido (recomendado, 30s):**
+
+1. Abra https://dash.cloudflare.com → escolha conta → **controler.net.br** → **DNS** → **Records** → **+ Add record**
+2. Preencha:
    - Type: **A**
    - Name: **controler-v4**
    - IPv4 address: **62.72.63.18**
-   - Proxy status: **Proxied** ✅
+   - Proxy status: **Proxied** ✅ (laranja)
    - TTL: Auto
-3. Após criar, Traefik + acme.sh gera o SSL automaticamente em ~60s
+3. **Save**. Em ~60s, Traefik + acme.sh detectam e geram SSL Let's Encrypt automaticamente.
+4. Teste: `curl -I https://controler-v4.net.br` deve voltar `200 OK` ou `307 redirect` para `/overview`.
+
+**Caminho automático (se quiser API):**
+
+Gere novo CF API token em https://dash.cloudflare.com/profile/api-tokens com permissão:
+- **Zone** · **DNS** · **Edit** · em `controler.net.br`
+
+Depois rode:
+```bash
+NEW_CF_TOKEN="<seu_novo_token>"
+ZONE_ID=$(curl -s -H "Authorization: Bearer $NEW_CF_TOKEN" \
+  "https://api.cloudflare.com/client/v4/zones?name=controler.net.br" | jq -r '.result[0].id')
+echo "Zone: $ZONE_ID"
+curl -X POST -H "Authorization: Bearer $NEW_CF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"type":"A","name":"controler-v4","content":"62.72.63.18","proxied":true,"ttl":1}' \
+  "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records"
+# Salve o novo token rotacionado no SSM:
+aws ssm put-parameter --profile cowork-admin --name /controler/cloudflare_api_token --type SecureString --value "$NEW_CF_TOKEN" --overwrite
+# E atualize o /myclinicsoft/cloudflare_api_token também:
+aws ssm put-parameter --profile cowork-admin --name /myclinicsoft/cloudflare_api_token --type SecureString --value "$NEW_CF_TOKEN" --overwrite
+```
 
 **Ou via API (gere um novo token com permissão Zone.DNS:Edit em controler.net.br):**
 
