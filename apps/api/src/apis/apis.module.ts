@@ -6,6 +6,7 @@ import { AuthModule } from "../auth/auth.module";
 @Module({
   imports: [AuthModule],
   controllers: [ApisController],
-  providers: [ApisService]
+  providers: [ApisService],
+  exports: [ApisService]
 })
 export class ApisModule {}

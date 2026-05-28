@@ -102,29 +102,54 @@ async function main() {
     console.log(`✓ Project: ${p.name}`);
   }
 
-  // ─── APIs (semeadas para myclinicsoft) ──────────────────
-  const myclinicsoft = await prisma.project.findUnique({ where: { slug: "myclinicsoft" } });
-  if (myclinicsoft) {
-    const apis = [
-      { name: "Z-API (WhatsApp)", baseUrl: "https://api.z-api.io", ssmKeyPath: "/myclinicsoft/zapi_token", environment: "prod" },
-      { name: "Infobip (SMS)", baseUrl: "https://6zjrk8.api.infobip.com", ssmKeyPath: "/myclinicsoft/infobip_api_key", environment: "prod" },
-      { name: "Google AI", baseUrl: "https://generativelanguage.googleapis.com", ssmKeyPath: "/myclinicsoft/google_ai_api_key", environment: "prod" },
-      { name: "Voyage AI", baseUrl: "https://api.voyageai.com", ssmKeyPath: "/myclinicsoft/voyage_api_key", environment: "prod" },
-      { name: "WhatsApp Cloud (Meta)", baseUrl: "https://graph.facebook.com", ssmKeyPath: "/myclinicsoft/whatsapp/access_token", environment: "prod" },
-      { name: "Hostinger API", baseUrl: "https://developers.hostinger.com", ssmKeyPath: "/myclinicsoft/hostinger_api_token", environment: "prod" },
-      { name: "Cloudflare", baseUrl: "https://api.cloudflare.com", ssmKeyPath: "/myclinicsoft/cloudflare_api_token", environment: "prod" },
-      { name: "Focus NFE", baseUrl: "https://api.focusnfe.com.br", ssmKeyPath: "/myclinicsoft/focusnfe/token_homologacao", environment: "homologacao" }
-    ];
+  // ─── APIs por projeto (com healthUrl quando disponível) ─
+  const apisByProject: Record<string, Array<{ name: string; baseUrl: string; ssmKeyPath?: string; environment?: string; healthUrl?: string; docsUrl?: string }>> = {
+    controler: [
+      { name: "Cloudflare", baseUrl: "https://api.cloudflare.com", ssmKeyPath: "/cloudflare/token", healthUrl: "https://api.cloudflare.com/client/v4/", docsUrl: "https://developers.cloudflare.com/api" },
+      { name: "Coolify", baseUrl: "http://10.0.6.1:8000", ssmKeyPath: "/controler/coolify_token", docsUrl: "https://coolify.io/docs" },
+      { name: "Hostinger API", baseUrl: "https://developers.hostinger.com", ssmKeyPath: "/myclinicsoft/hostinger_api_token", healthUrl: "https://developers.hostinger.com", docsUrl: "https://developers.hostinger.com" }
+    ],
+    myclinicsoft: [
+      { name: "Z-API (WhatsApp)", baseUrl: "https://api.z-api.io", ssmKeyPath: "/shared/zapi/token", healthUrl: "https://api.z-api.io", docsUrl: "https://developer.z-api.io" },
+      { name: "WhatsApp Cloud (Meta)", baseUrl: "https://graph.facebook.com", ssmKeyPath: "/myclinicsoft/whatsapp/access_token", docsUrl: "https://developers.facebook.com/docs/whatsapp/cloud-api" },
+      { name: "Infobip (SMS)", baseUrl: "https://6zjrk8.api.infobip.com", ssmKeyPath: "/myclinicsoft/infobip_api_key", docsUrl: "https://www.infobip.com/docs" },
+      { name: "Google AI", baseUrl: "https://generativelanguage.googleapis.com", ssmKeyPath: "/myclinicsoft/google_ai_api_key", docsUrl: "https://ai.google.dev" },
+      { name: "Voyage AI", baseUrl: "https://api.voyageai.com", ssmKeyPath: "/myclinicsoft/voyage_api_key" },
+      { name: "Focus NFE", baseUrl: "https://api.focusnfe.com.br", ssmKeyPath: "/myclinicsoft/focusnfe/token_homologacao", environment: "homologacao", docsUrl: "https://focusnfe.com.br/doc" }
+    ],
+    libertakidz: [
+      { name: "Stripe", baseUrl: "https://api.stripe.com", docsUrl: "https://stripe.com/docs/api" }
+    ],
+    manalista: [
+      { name: "Stripe", baseUrl: "https://api.stripe.com", ssmKeyPath: "/manalista/stripe-secret-key", docsUrl: "https://stripe.com/docs/api" },
+      { name: "Resend", baseUrl: "https://api.resend.com", ssmKeyPath: "/manalista/resend-api-key", docsUrl: "https://resend.com/docs" },
+      { name: "Google OAuth", baseUrl: "https://accounts.google.com", ssmKeyPath: "/manalista/google-client-id" }
+    ],
+    "mail-stack": [
+      { name: "Stalwart Admin", baseUrl: "https://nas.controler.net.br", ssmKeyPath: "/myclinicsoft/nas/password", docsUrl: "https://stalw.art/docs" }
+    ],
+    xospam: [
+      { name: "Google OAuth", baseUrl: "https://accounts.google.com", ssmKeyPath: "/xospam/google/client_id" },
+      { name: "Ollama local", baseUrl: "http://localhost:11434", healthUrl: "http://10.0.6.1:11434/" }
+    ]
+  };
 
+  let totalApis = 0;
+  for (const [slug, apis] of Object.entries(apisByProject)) {
+    const project = await prisma.project.findUnique({ where: { slug } });
+    if (!project) { console.log(`⚠ projeto ${slug} não existe, pulando APIs`); continue; }
     for (const api of apis) {
+      const id = `${project.id}-${api.name.replace(/[\s()\/]/g, '-').toLowerCase()}`;
       await prisma.projectApi.upsert({
-        where: { id: `${myclinicsoft.id}-${api.name.replace(/\s/g, '-').toLowerCase()}` },
-        update: { ...api, projectId: myclinicsoft.id },
-        create: { ...api, id: `${myclinicsoft.id}-${api.name.replace(/\s/g, '-').toLowerCase()}`, projectId: myclinicsoft.id }
+        where: { id },
+        update: { ...api, projectId: project.id, environment: api.environment || "prod" },
+        create: { id, ...api, projectId: project.id, environment: api.environment || "prod" }
       });
+      totalApis++;
     }
-    console.log(`✓ ${apis.length} APIs cadastradas para MyClinicSoft`);
+    console.log(`✓ ${apis.length} APIs cadastradas para ${slug}`);
   }
+  console.log(`Total APIs: ${totalApis}`);
 
   // ─── Alert rules padrão ─────────────────────────────────
   const rules = [

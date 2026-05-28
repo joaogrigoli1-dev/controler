@@ -6,6 +6,7 @@ import { AuthModule } from "../auth/auth.module";
 @Module({
   imports: [AuthModule],
   controllers: [HestiaController],
-  providers: [HestiaService]
+  providers: [HestiaService],
+  exports: [HestiaService]
 })
 export class HestiaModule {}
