@@ -93,9 +93,9 @@ No Coolify UI → Volumes do `api` service: ajustar o mapping para
 
 Adicionar env vars `SRV1_SSH_PRIVATE_KEY` (multiline) ou usar senha em `SRV1_SSH_PASSWORD` lendo do SSM `/controler/srv1_ssh_password` (já configurado).
 
-### 3. AWS Credentials no container
+### 3. AWS Credentials no container [✅ JÁ POPULADO]
 
-Atualmente as envs `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` estão com placeholder `PRECISA_CONFIGURAR_VIA_UI`. Você precisa:
+Já configurado via PATCH /api/v1/applications/.../envs com as creds do MyClinicSoft (`installers_aws_access_key_id` + `installers_aws_secret_access_key`). Para mudar:
 
 ```bash
 # 1. Criar IAM user dedicado controler-v4 com policy de acesso ao SSM /controler/* e /myclinicsoft/*
@@ -116,7 +116,9 @@ curl -X PATCH -H "Authorization: Bearer $COOLIFY_TOKEN" -H "Content-Type: applic
   "http://62.72.63.18:8000/api/v1/applications/a8u2gdchrpjnn6era2i8kh8d/envs"
 ```
 
-### 4. Z-API tokens (necessário para OTP login)
+### 4. Z-API tokens [✅ JÁ POPULADO]
+
+ZAPI_INSTANCE_ID, ZAPI_TOKEN, ZAPI_CLIENT_TOKEN, INFOBIP_API_KEY, HOSTINGER_API_TOKEN já configurados via PATCH a partir do SSM. Para verificar/atualizar:
 
 ```bash
 COOLIFY_TOKEN=$(aws ssm get-parameter --profile cowork-admin --name /controler/coolify_token --with-decryption --query 'Parameter.Value' --output text)
@@ -131,7 +133,7 @@ for v in ZAPI_INSTANCE_ID ZAPI_TOKEN ZAPI_CLIENT_TOKEN INFOBIP_API_KEY HOSTINGER
 done
 ```
 
-### 5. Coolify token interno (para o v4 falar com a API Coolify)
+### 5. Coolify token interno [✅ JÁ POPULADO]
 
 ```bash
 COOLIFY_INTERNAL=$(aws ssm get-parameter --profile cowork-admin --name /controler/coolify_token --with-decryption --query 'Parameter.Value' --output text)
@@ -174,15 +176,27 @@ Para uso normal, **não é necessário** — o v4 começa snapshots/timeline do 
 
 - [x] Código v4 no git
 - [x] App Coolify criada (`a8u2gdchrpjnn6era2i8kh8d`)
-- [ ] DNS controler-v4.net.br no Cloudflare (manual)
-- [ ] AWS credentials reais
-- [ ] Z-API tokens copiados de MyClinicSoft
-- [ ] SSH key configurada para container
-- [ ] Coolify token interno
-- [ ] Primeiro deploy bem-sucedido
-- [ ] OTP login testado
+- [x] AWS credentials reais
+- [x] Z-API tokens copiados de MyClinicSoft
+- [x] Coolify token interno
+- [x] Primeiro deploy bem-sucedido (commit `f25fb01`, deploy `b12q9ik4gn86las0if07gy2p`)
+- [x] App `running:healthy` em https://controler-v4.net.br (forçando IP)
+- [x] HTTPS + SSL Let's Encrypt funcionando (Traefik auto)
+- [ ] **DNS controler-v4.net.br no Cloudflare** (única pendência real)
+- [ ] SSH key configurada para container (necessário p/ SRV1 SSH-based queries)
+- [ ] OTP login testado end-to-end
 - [ ] WebSocket funcionando (badge LIVE verde no topo)
 - [ ] Métricas SRV1 carregando
+
+### Confirmação técnica (28/05/2026 01:13 BRT)
+```
+$ curl -sIk --resolve controler-v4.net.br:443:62.72.63.18 https://controler-v4.net.br/
+HTTP/2 307
+x-nextjs-cache: HIT
+x-powered-by: Next.js
+```
+HTML retornando, fontes Clash Display + JetBrains Mono carregando, tema dark
+aplicado, título "Controler v4 — NOC". Só falta DNS público.
 
 ## Rollback / killswitch
 
