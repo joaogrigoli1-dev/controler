@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: "standalone",
+  // output: "standalone",  // desligado — usando pnpm start (single-stage Dockerfile)
   reactStrictMode: true,
   experimental: {
     serverActions: { allowedOrigins: ["localhost:3000", "controler-v4.net.br"] }
