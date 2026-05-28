@@ -4,7 +4,7 @@
  * mas comunica via rewrite Next (`/api/v1/...` → backend).
  */
 
-const BASE = "/api/v1";
+const BASE = "/be";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public body?: any) {

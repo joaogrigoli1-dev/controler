@@ -7,9 +7,15 @@ const nextConfig = {
   },
   async rewrites() {
     const apiUrl = process.env.API_INTERNAL_URL || "http://localhost:4000";
-    return [
-      { source: "/api/v1/:path*", destination: `${apiUrl}/:path*` }
-    ];
+    return {
+      beforeFiles: [
+        // /be/ = backend NestJS (prefixo /api do Nest é mantido)
+        { source: "/be/:path*", destination: `${apiUrl}/api/:path*` },
+        { source: "/be-health", destination: `${apiUrl}/health` }
+      ],
+      afterFiles: [],
+      fallback: []
+    };
   }
 };
 export default nextConfig;
