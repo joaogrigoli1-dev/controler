@@ -39,7 +39,7 @@ export class MetricsScheduler {
     private readonly coolify: CoolifyService
   ) {}
 
-  @Interval("host-metrics", 30_000)
+  @Interval("host-metrics", 60_000)
   async hostMetricsTick() {
     try {
       const m = await this.srv1.getHostMetrics();
@@ -70,7 +70,7 @@ export class MetricsScheduler {
     }
   }
 
-  @Interval("container-metrics", 30_000)
+  @Interval("container-metrics", 60_000)
   async containerMetricsTick() {
     try {
       const containers = await this.srv1.getContainers();
@@ -122,7 +122,7 @@ export class MetricsScheduler {
     }
   }
 
-  @Interval("sites-check", 5 * 60_000)
+  @Interval("sites-check", 15 * 60_000)
   async sitesCheckTick() {
     try {
       const sites = await this.hestia.listSites();
@@ -154,7 +154,7 @@ export class MetricsScheduler {
     }
   }
 
-  @Interval("apis-ping", 10 * 60_000)
+  @Interval("apis-ping", 30 * 60_000)
   async apisPingTick() {
     try {
       const results = await this.apis.pingAll();
@@ -173,7 +173,7 @@ export class MetricsScheduler {
     }
   }
 
-  @Interval("coolify-deploys", 2 * 60_000)
+  @Interval("coolify-deploys", 5 * 60_000)
   async coolifyDeploysTick() {
     try {
       const apps = await this.coolify.listApplications();
