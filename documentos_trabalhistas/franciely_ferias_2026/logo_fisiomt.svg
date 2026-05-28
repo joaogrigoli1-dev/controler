@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 110" preserveAspectRatio="xMidYMid meet">
+  <!-- Logo FisioMT - fundo 100% transparente -->
+  <!-- Símbolo: caduceu/cruz médica estilizada em círculo -->
+  <g transform="translate(8,5)">
+    <!-- Anel externo -->
+    <circle cx="48" cy="48" r="44" fill="none" stroke="#0F5C4D" stroke-width="3.5"/>
+    <!-- Anel interno (preenchimento sutil) -->
+    <circle cx="48" cy="48" r="38" fill="#0F5C4D" fill-opacity="0.05"/>
+
+    <!-- Cruz médica (vertical + horizontal) -->
+    <rect x="42" y="20" width="12" height="56" rx="2" fill="#0F5C4D"/>
+    <rect x="20" y="42" width="56" height="12" rx="2" fill="#0F5C4D"/>
+
+    <!-- Detalhe: linhas de "movimento" (referência fisioterapia) -->
+    <path d="M 16 70 Q 30 64 44 70" fill="none" stroke="#1A8A75" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M 52 70 Q 66 64 80 70" fill="none" stroke="#1A8A75" stroke-width="2.2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Texto "FISIOMT" -->
+  <g transform="translate(108,0)">
+    <text x="0" y="52"
+          font-family="Helvetica, Arial, sans-serif"
+          font-size="38"
+          font-weight="800"
+          letter-spacing="1"
+          fill="#0F5C4D">FISIO<tspan fill="#1A8A75">MT</tspan></text>
+    <text x="2" y="74"
+          font-family="Helvetica, Arial, sans-serif"
+          font-size="10"
+          font-weight="500"
+          letter-spacing="3.5"
+          fill="#6B7280">CLÍNICA DE FISIOTERAPIA</text>
+  </g>
+</svg>

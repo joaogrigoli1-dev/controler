@@ -3,7 +3,7 @@ const nextConfig = {
   // output: "standalone",  // desligado — usando pnpm start (single-stage Dockerfile)
   reactStrictMode: true,
   experimental: {
-    serverActions: { allowedOrigins: ["localhost:3000", "v4.controler.net.br", "controler-v4.net.br"] }
+    serverActions: { allowedOrigins: ["localhost:3000", "painel.controler.net.br", "controler.net.br"] }
   },
   async rewrites() {
     // No container Docker, o service NestJS é alcançável em http://api:4000

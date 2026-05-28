@@ -30,7 +30,7 @@ async function bootstrap() {
     origin: (origin: any, cb: any) => {
       const allowed = [
         /^http:\/\/localhost(:\d+)?$/,
-        /^https?:\/\/(controler|v4\.controler)\.net\.br$/,
+        /^https?:\/\/(painel\.controler|controler)\.net\.br$/,
         /^https?:\/\/[a-z0-9-]+\.62\.72\.63\.18\.sslip\.io$/
       ];
       if (!origin || allowed.some(rx => rx.test(origin))) return cb(null, true);

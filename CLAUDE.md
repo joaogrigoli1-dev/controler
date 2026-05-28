@@ -1,168 +1,112 @@
-# CLAUDE.md — controler v3
+# CLAUDE.md — controler
 
-## Sobre o projeto
+## Sobre
 
-**controler** — Command Center operacional para toda a infraestrutura de desenvolvimento.
+**controler** — Command Center NOC (Network Operations Center) para gestão centralizada da infraestrutura SRV1.
 
-**Localização:** `~/Documents/DEV/controler/`  
-**Produção:** `https://controler.net.br` (Basic Auth protegido)  
-**Versão atual:** `3.0.0`
-
----
+**Localização:** `~/DEV/controler/`
+**Produção:** `https://painel.controler.net.br`
+**Coolify UUID:** `a8u2gdchrpjnn6era2i8kh8d`
+**Versão:** 4.0.0
 
 ## Stack
 
-- **Backend:** Python 3.12 + FastAPI + SQLite + APScheduler
-- **Frontend:** Preact 10 + HTM via `https://esm.sh` — zero build step
-- **Infra:** Docker socket + AWS SSM + Coolify (UUID `hksw4kg8owgs0wwg0o8k4kk0`) em srv1 (62.72.63.18)
-- **Alertas:** Zapi (WhatsApp) + Infobip (SMS) → `556598466555`
+- **Backend:** Node 20 + NestJS 10 + Fastify + Prisma 5 + Postgres 16 + Redis 7 + Socket.IO
+- **Frontend:** Next.js 14 + TypeScript + TailwindCSS + Recharts + Framer Motion
+- **Auth:** OTP WhatsApp via Z-API + JWT (15min access + 7d refresh) + re-auth OTP em ações sensíveis
+- **Realtime:** WebSocket (host metrics 30s, container metrics 30s)
+- **Infra:** Docker socket + AWS SSM + Coolify API + SSH para SRV1 + Cloudflare DNS
 
----
-
-## Estrutura de arquivos
+## Estrutura
 
 ```
 controler/
-├── controler.py          — FastAPI app (entry point, todos os endpoints)
-├── requirements.txt      — fastapi, uvicorn, apscheduler, httpx, boto3, psutil...
-├── core/
-│   ├── alerts.py         — AlertManager (Zapi + SMS, cooldown, janela silêncio)
-│   ├── database.py       — SQLite schema + helpers (get_db_conn)
-│   ├── scanner.py        — Resource Scanner (containers, images, volumes, branches, SSM, crons)
-│   ├── ssm.py            — get_ssm_param() com lru_cache
-│   ├── agent.py          — Agente Claude (legado)
-│   └── tools.py          — Ferramentas do agente (legado)
-├── static/
-│   └── v3/
-│       ├── index.html    — Shell Preact sci-fi (sidebar, router, Cmd+K, mobile)
-│       ├── components.js — StatusBadge, ProgressBar, GaugeCircle, SparkLine, TerminalLog, StepTracker, DrillCard
-│       └── screens/
-│           ├── mission-control.js  — Home KPIs + containers + timeline
-│           ├── srv1.js             — srv1 Deep Dive com gauges + restart
-│           ├── fisiomt.js          — FisioMT VPS + HestiaCP accounts
-│           ├── projects.js         — Projetos + deploy history
-│           ├── openclaw.js         — APScheduler jobs + agentes OpenClaw
-│           ├── scanner.js          — Resource Scanner UI
-│           ├── timeline.js         — Feed de eventos com filtros
-│           ├── alerts.js           — Alert log + painel de teste
-│           └── vault.js            — SSM params agrupados com reveal
-├── CHANGELOG.md          — Histórico de versões
-├── PLANEJAMENTO.md       — Planejamento original v3 (auditoria)
-└── PROMPTS_FASES.md      — Prompts das fases de execução
+├── apps/
+│   ├── api/         NestJS (REST + WebSocket + BullMQ + Schedulers)
+│   │   ├── prisma/  schema + seed
+│   │   ├── src/     14 módulos: auth, srv1, coolify, hestia, vault,
+│   │   │            alerts, scanner, realtime, timeline, deploys,
+│   │   │            apis, analytics, users, common
+│   │   └── Dockerfile
+│   └── web/         Next.js 14 (App Router)
+│       ├── app/     login + 8 telas dashboard
+│       ├── components/
+│       └── Dockerfile
+├── packages/
+│   ├── shared/      tipos + Zod schemas
+│   └── ui/          design tokens
+├── mcps/
+│   └── hestia/      MCP server HestiaCP (futuro)
+├── docker-compose.yml
+└── README.md
 ```
 
----
+## 8 Telas
 
-## Tabelas SQLite
+1. **Overview** (`/overview`) — Mission Control: KPIs, gauges SRV1, apps Coolify, timeline, status
+2. **SRV1** (`/srv1`) — gauges + histórico 6h + systemd + top procs + ports
+3. **Coolify** (`/coolify`) — 7+ apps com status, envs, logs, deploy
+4. **Mail & Sites** (`/hestia`) — 15 sites: HTTP, SSL expiry, mail stack
+5. **Vault** (`/vault`) — SSM por projeto + reveal com re-auth + audit log
+6. **APIs** (`/apis`) — APIs por projeto + ping de saúde
+7. **Alertas** (`/alerts`) — CRUD regras + log disparos + teste
+8. **Analytics** (`/analytics`) — MTTR + heatmap 24h + comparativos
 
-| Tabela | Propósito |
-|--------|-----------|
-| `timeline_events` | Feed cronológico de eventos (deploys, alertas, crons) |
-| `metrics_snapshots` | Snapshots CPU/RAM por container a cada 2min |
-| `alert_log` | Log de alertas enviados (WhatsApp/SMS) |
-| `alert_config` | Configuração de regras de alerta |
-| `deploy_history` | Histórico completo de deploys |
-| `projects` | Projetos monitorados |
-| `agent_findings` | Reports dos agentes OpenClaw |
-| `memories` | Memórias do agente |
-| `rules_text` | Regras em texto |
-
----
-
-## Endpoints principais
-
-| Endpoint | Descrição |
-|----------|-----------|
-| `GET /api/health` | Health check (version: 3.0.0) |
-| `GET /api/kpis` | KPIs globais do sistema |
-| `GET /api/timeline` | Feed de eventos paginado |
-| `GET /api/metrics/history` | Histórico CPU/RAM |
-| `GET /api/alerts` | Log de alertas |
-| `POST /api/alerts/test` | Disparo manual de alerta |
-| `GET /api/deploy/history` | Histórico de deploys |
-| `GET /api/scheduler/jobs` | Status APScheduler jobs |
-| `GET /api/scanner/run` | Executar Resource Scanner |
-| `GET /api/scanner/last` | Último resultado do scanner |
-| `POST /api/scanner/fix` | Executar ação segura |
-| `GET /api/vault/params` | SSM params agrupados |
-| `GET /api/openclaw/agents` | Status agentes OpenClaw |
-| `GET /api/server/docker/stats` | Stats Docker via socket |
-| `GET /api/vps-fisiomt/stats` | Métricas VPS FisioMT |
-| `GET /api/vps-fisiomt/hestia/accounts` | Contas HestiaCP |
-
----
-
-## APScheduler — Cron jobs nativos
-
-| Job | Intervalo | Função |
-|-----|-----------|--------|
-| `metrics_snapshot` | 2 minutos | Snapshot CPU/RAM de todos containers |
-| `health_check` | 5 minutos | Verifica saúde de containers + alertas |
-| `deploy_sync` | 10 minutos | Sincroniza estado DEV/GIT/PROD |
-| `daily_digest` | 8h BRT | Digest WhatsApp com status do sistema |
-
----
-
-## Parâmetros SSM (`/controler/*`)
-
-| Parâmetro SSM | Uso |
-|---------------|-----|
-| `/controler/agent_api_token` | Auth para agentes OpenClaw |
-| `/controler/coolify_token` | API do Coolify |
-| `/controler/auth_user` | Basic Auth usuário |
-| `/controler/auth_pass` | Basic Auth senha |
-| `/controler/zapi_token` | API Zapi (WhatsApp) |
-| `/controler/zapi_instance_id` | Instância Zapi |
-| `/controler/srv1_ssh_password` | SSH srv1 (substituir por chave) |
-
----
-
-## Regra de Deploy — Triangulação Obrigatória
-
-**NUNCA editar diretamente no servidor (srv1/Coolify/prod).**
+## Regras de Deploy
 
 ```
-Mac (dev local) → GitHub (main) → Coolify (prod)
+~/DEV/controler (local) → GitHub (main) → Coolify (prod)
 ```
+
+1. `npx tsc --noEmit` em apps/api e apps/web → 0 erros
+2. `git add` + commit semântico + `git push origin main`
+3. `coolify_deploy uuid=a8u2gdchrpjnn6era2i8kh8d force=true`
+4. Validar `curl https://painel.controler.net.br/be-health`
+
+**NUNCA editar arquivos direto em srv1.** Sempre DEV → GIT → PROD.
+
+## Secrets
+
+Tudo no AWS SSM (profile `cowork-admin`):
+
+- `/controler/coolify_token` — Coolify API
+- `/controler/srv1_ssh_password` — SSH SRV1 (fallback se key falhar)
+- `/cloudflare/token` — Cloudflare API (zone aa5b42d654cc842a66d931bbf3a64817)
+- `/myclinicsoft/zapi_token`, `/myclinicsoft/zapi_client_token` — Z-API WhatsApp
+- `/shared/zapi/instance_id` — Z-API instance
+- `/myclinicsoft/infobip_api_key` — SMS críticos
+- `/myclinicsoft/hostinger_api_token` — Hostinger VPS API
+- `/myclinicsoft/installers_aws_access_key_id` + `*_secret_access_key` — AWS creds para o container
+
+## Infraestrutura
+
+| Item | Detalhe |
+|------|---------|
+| **srv1** | VPS Hostinger 62.72.63.18 (KVM 4, 16GB RAM, 200GB disco) — Coolify gerencia |
+| **coolify** | UI em `:8000` — API em `http://10.0.6.1:8000` (visto da rede da app) |
+| **fail2ban** | whitelist persistida em `/etc/fail2ban/jail.d/docker-whitelist.conf` para 10.0.0.0/8 + 172.16.0.0/12 |
+| **SSH key container** | `/data/coolify/applications/a8u2gdchrpjnn6era2i8kh8d/ssh/id_ed25519` |
+| **dev local** | `pnpm install` + `pnpm dev` (precisa docker-compose para postgres+redis) |
+
+## Subir local
 
 ```bash
-# 1. Validar sintaxe
-cd ~/Documents/DEV/controler
-python3 -m py_compile controler.py
-
-# 2. Commit e push
-git add -A
-git commit -m "tipo(escopo): descrição"
-git push origin main
-
-# 3. Deploy via Coolify MCP ou API
-# coolify_deploy uuid=hksw4kg8owgs0wwg0o8k4kk0 force=true
-
-# 4. Verificar
-curl -s https://controler.net.br/api/health
+cd ~/DEV/controler
+cp .env.example .env
+docker compose up -d postgres redis
+pnpm install
+pnpm --filter @controler/api prisma:migrate
+pnpm --filter @controler/api prisma:seed
+pnpm dev
+# Frontend: http://localhost:3000
+# API: http://localhost:4000
 ```
 
-**Coolify UUID:** `hksw4kg8owgs0wwg0o8k4kk0`  
-**Env vars obrigatórias no Coolify:**
-- `PROJECTS_PATH=/projects`
-- `AGENT_API_TOKEN` (ou SSM)
+## Documentação
 
----
-
-## Variáveis de ambiente (dev local)
-
-```bash
-export PROJECTS_PATH=~/Documents/DEV
-export AGENT_API_TOKEN=<valor do SSM>
-```
-
-Credenciais SSM em dev: `aws ssm get-parameter --profile cowork-admin --name /controler/xxx`
-
----
-
-## Pendências conhecidas (v3.1)
-
-- SEC-06: Rate limiting Basic Auth (brute force protection)
-- SEC-07: `/api/credentials/{id}/reveal` separado
-- Remover sshpass → chave SSH pura
-- PWA manifest para instalação mobile
+- `README.md` — visão geral + setup
+- `ARCHITECTURE.md` — stack + diagrama Mermaid + auth flow
+- `RUNBOOK.md` — operação (healthcheck, deploys, rollback, recuperar acesso)
+- `COMPARISON.md` — KPIs antes (v3 antigo) vs depois (66+ KPIs)
+- `SRV1_INVENTORY.md` — 41 containers documentados no SRV1
+- `SETUP_GUIDE.md` — passos de setup + secrets + DNS
