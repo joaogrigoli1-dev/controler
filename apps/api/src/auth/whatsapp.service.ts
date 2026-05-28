@@ -62,10 +62,16 @@ export class WhatsappService {
   }
 
   /**
-   * Envia código OTP. Aplica dedup + throttle por destinatário.
-   * Retorna { sent: bool, provider, error? }.
+   * Envia código OTP com canal preferido opcional.
+   * - channel='whatsapp' (default): tenta Z-API → Meta → SMS Infobip
+   * - channel='sms':                 vai DIRETO em SMS Infobip (skip WhatsApp)
+   * - channel='auto':                idem ao default
    */
-  async sendOtp(phone: string, code: string): Promise<{ sent: boolean; provider: string; error?: string }> {
+  async sendOtp(
+    phone: string,
+    code: string,
+    channel: "whatsapp" | "sms" | "auto" = "auto"
+  ): Promise<{ sent: boolean; provider: string; error?: string }> {
     const phoneClean = phone.replace(/\D/g, "");
     const phoneWith55 = phoneClean.startsWith("55") ? phoneClean : `55${phoneClean}`;
 
@@ -86,13 +92,19 @@ export class WhatsappService {
 
     // Convenção João: WhatsApp = Z-API (principal) + Meta (oficial fallback).
     // SMS = sempre Infobip (canal independente).
-    // Ordem de tentativa: Z-API → Meta → Infobip SMS.
-    const channels: Array<() => Promise<{ sent: boolean; provider: string; error?: string }>> = [
-      () => this.trySendZapi(phoneWith55, msg),     // WhatsApp principal (Z-API)
-      () => this.trySendMeta(phoneWith55, msg, code), // WhatsApp oficial Meta (fallback)
-      () => this.trySendInfobipSms(phoneWith55, code) // SMS Infobip (final)
-    ];
-    for (const ch of channels) {
+    let channelsToTry: Array<() => Promise<{ sent: boolean; provider: string; error?: string }>>;
+    if (channel === "sms") {
+      // Forçado SMS — vai direto para Infobip, ignora WhatsApp
+      channelsToTry = [() => this.trySendInfobipSms(phoneWith55, code)];
+    } else {
+      // Default 'auto': Z-API → Meta → SMS Infobip (cascade)
+      channelsToTry = [
+        () => this.trySendZapi(phoneWith55, msg),         // WhatsApp principal
+        () => this.trySendMeta(phoneWith55, msg, code),   // WhatsApp oficial fallback
+        () => this.trySendInfobipSms(phoneWith55, code)   // SMS Infobip
+      ];
+    }
+    for (const ch of channelsToTry) {
       const result = await ch().catch((e) => ({ sent: false, provider: "?", error: String(e?.message || e) }));
       if (result.sent) return result;
       this.log.warn(`[OTP] canal ${result.provider} falhou (${result.error}), tentando próximo`);

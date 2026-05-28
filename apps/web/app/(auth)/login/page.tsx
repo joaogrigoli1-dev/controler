@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { setSession } from "@/lib/auth";
-import { Activity, ArrowRight, Loader2, ShieldCheck } from "lucide-react";
+import { Activity, ArrowRight, Loader2, MessageSquare, ShieldCheck } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,19 +11,25 @@ export default function LoginPage() {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [firstName, setFirstName] = useState("");
+  const [sentVia, setSentVia] = useState<"whatsapp" | "sms" | "auto">("auto");
   const [loading, setLoading] = useState(false);
+  const [smsLoading, setSmsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const requestCode = async () => {
-    setError(null); setLoading(true);
+  const requestCode = async (channel: "whatsapp" | "sms" | "auto" = "auto") => {
+    setError(null);
+    if (channel === "sms") setSmsLoading(true);
+    else setLoading(true);
     try {
-      const r: any = await api.requestCode(phone.replace(/\D/g, ""));
+      const r: any = await api.requestCode(phone.replace(/\D/g, ""), channel);
       setFirstName(r.firstName || "");
+      setSentVia(channel);
       setStep("code");
     } catch (e: any) {
       setError(e?.message || "Falha ao enviar código");
     } finally {
       setLoading(false);
+      setSmsLoading(false);
     }
   };
 
@@ -76,13 +82,30 @@ export default function LoginPage() {
               />
               {error && <p className="mt-2 text-xs text-red">{error}</p>}
               <button
-                onClick={requestCode}
-                disabled={loading || phone.length < 10}
+                onClick={() => requestCode("auto")}
+                disabled={loading || smsLoading || phone.length < 10}
                 className="btn btn-primary w-full mt-5 py-2.5"
               >
                 {loading ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
-                Enviar código
+                Enviar código via WhatsApp
               </button>
+              <div className="flex items-center gap-2 my-3">
+                <div className="flex-1 h-px bg-white/10" />
+                <span className="text-[10px] text-white/30 uppercase tracking-widest">ou</span>
+                <div className="flex-1 h-px bg-white/10" />
+              </div>
+              <button
+                onClick={() => requestCode("sms")}
+                disabled={loading || smsLoading || phone.length < 10}
+                className="btn w-full py-2.5"
+                title="Use se WhatsApp não chegar (canal SMS via Infobip)"
+              >
+                {smsLoading ? <Loader2 size={14} className="animate-spin" /> : <MessageSquare size={14} />}
+                Enviar código por SMS
+              </button>
+              <p className="text-[10px] text-white/30 mt-3 text-center">
+                WhatsApp tenta Z-API → Meta. SMS vai direto via Infobip.
+              </p>
             </>
           )}
 
@@ -94,7 +117,8 @@ export default function LoginPage() {
               </div>
               <h1 className="text-2xl font-bold text-display mb-1">Olá, {firstName}</h1>
               <p className="text-sm text-white/50 mb-6">
-                Digite o código de 6 dígitos enviado ao seu WhatsApp.
+                Digite o código de 6 dígitos enviado por{" "}
+                <strong>{sentVia === "sms" ? "SMS" : "WhatsApp"}</strong>.
               </p>
               <label className="text-xs text-white/40 uppercase tracking-wider">Código</label>
               <input

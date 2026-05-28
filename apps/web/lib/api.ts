@@ -40,7 +40,16 @@ function safeParse(t: string) { try { return JSON.parse(t); } catch { return t; 
 
 export const api = {
   // Auth
-  requestCode: (phone: string) => apiFetch("/auth/request-code", { method: "POST", body: JSON.stringify({ phone }) }),
+  requestCode: (phone: string, channel: "auto" | "whatsapp" | "sms" = "auto") =>
+    apiFetch<{ success: boolean; firstName?: string; channel?: string }>(
+      "/auth/request-code",
+      { method: "POST", body: JSON.stringify({ phone, channel }) }
+    ),
+  requestCodeSms: (phone: string) =>
+    apiFetch<{ success: boolean; firstName?: string; channel?: string }>(
+      "/auth/request-code-sms",
+      { method: "POST", body: JSON.stringify({ phone }) }
+    ),
   verifyCode: (phone: string, code: string) => apiFetch<{ accessToken: string; refreshToken: string; user: any; expiresAt: string }>("/auth/verify-code", { method: "POST", body: JSON.stringify({ phone, code }) }),
   reauthRequest: () => apiFetch("/auth/reauth/request", { method: "POST" }),
   logout: () => apiFetch("/auth/logout", { method: "POST" }),

@@ -73,7 +73,11 @@ export class AuthService {
   }
 
   // ─── 1. REQUEST CODE ────────────────────────────────────
-  async requestCode(phone: string, ip: string): Promise<OtpRequestResult> {
+  async requestCode(
+    phone: string,
+    ip: string,
+    channel: "whatsapp" | "sms" | "auto" = "auto"
+  ): Promise<OtpRequestResult & { channel?: string }> {
     const rate = this.checkRateLimit(ip);
     if (!rate.allowed) {
       throw new ForbiddenException({
@@ -102,15 +106,26 @@ export class AuthService {
       data: { used: true }
     });
     await this.prisma.otpToken.create({
-      data: { userId: user.id, codeHash, channel: "whatsapp", purpose: "login", expiresAt, ipAddress: ip }
+      data: {
+        userId: user.id,
+        codeHash,
+        channel: channel === "sms" ? "sms" : "whatsapp",
+        purpose: "login",
+        expiresAt,
+        ipAddress: ip
+      }
     });
 
-    const { sent, error } = await this.wa.sendOtp(user.phone, code);
-    if (!sent) {
-      this.log.error(`OTP envio falhou para ${user.phone}: ${error}`);
+    const result = await this.wa.sendOtp(user.phone, code, channel);
+    if (!result.sent) {
+      this.log.error(`OTP envio falhou para ${user.phone}: ${result.error}`);
       // Não revelamos a falha pro cliente (anti-enumeração)
     }
-    return { success: true, firstName: user.name.split(" ")[0] };
+    return {
+      success: true,
+      firstName: user.name.split(" ")[0],
+      channel: result.provider || channel
+    };
   }
 
   // ─── 2. VERIFY CODE ─────────────────────────────────────

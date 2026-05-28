@@ -23,7 +23,20 @@ export class AuthController {
   @Post("request-code")
   async requestCode(@Body() body: any, @Req() req: any) {
     const parsed = RequestCodeSchema.parse(body);
-    return this.auth.requestCode(parsed.phone, getIp(req));
+    // Aceita channel opcional ('whatsapp'|'sms'|'auto'). Default = 'auto' (cascade Z-API→Meta→SMS).
+    const channel = (body?.channel === "sms" || body?.channel === "whatsapp") ? body.channel : "auto";
+    return this.auth.requestCode(parsed.phone, getIp(req), channel);
+  }
+
+  /**
+   * Shortcut: força envio via SMS Infobip (bypassa WhatsApp completamente).
+   * Útil quando WhatsApp está banido/bloqueado.
+   */
+  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
+  @Post("request-code-sms")
+  async requestCodeSms(@Body() body: any, @Req() req: any) {
+    const parsed = RequestCodeSchema.parse(body);
+    return this.auth.requestCode(parsed.phone, getIp(req), "sms");
   }
 
   @Throttle({ auth: { limit: 10, ttl: 60_000 } })
