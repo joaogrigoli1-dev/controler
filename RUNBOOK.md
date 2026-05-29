@@ -74,7 +74,7 @@ CID=$(docker ps -q --filter "name=postgres-a8u2gdchrpjnn6era" | head -1)
 HASH=$(python3 -c "import hashlib; print(hashlib.sha256('123456'.encode()).hexdigest())")
 docker exec $CID psql -U controler -d controler -c "
   INSERT INTO otp_tokens (id, \"userId\", \"codeHash\", channel, purpose, \"expiresAt\", used, \"createdAt\")
-  SELECT 'cl_emergency_001', id, '$HASH', 'whatsapp', 'login', NOW() + INTERVAL '10 minutes', false, NOW()
+  SELECT 'cl_emergency_001', id, '$HASH', 'whatsapp', 'login', NOW() + INTERVAL '5 minutes', false, NOW()
   FROM users WHERE phone = '556598466555';
 "
 ```

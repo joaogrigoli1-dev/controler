@@ -84,9 +84,9 @@ export class WhatsappService {
     }
 
     const variants = [
-      `🔐 *Controler NOC*\n\nSeu código: *${code}*\n\nVálido por 10 minutos. Não compartilhe.`,
-      `Olá! Código de acesso ao Controler: *${code}*\n\nExpira em 10 min.`,
-      `Controler NOC ✅\n\nCódigo: *${code}*\n\nVálido por 10min.`
+      `🔐 *Controler NOC*\n\nSeu código: *${code}*\n\nNão compartilhe.`,
+      `Olá! Código de acesso ao Controler: *${code}*`,
+      `Controler NOC ✅\n\nCódigo: *${code}*`
     ];
     const msg = variants[Math.floor(Math.random() * variants.length)];
 
@@ -153,7 +153,7 @@ export class WhatsappService {
   private async trySendInfobipSms(phone: string, code: string): Promise<{ sent: boolean; provider: string; error?: string }> {
     try {
       const { apiKey, baseUrl } = await this.credsInfobip();
-      const text = `Controler NOC: ${code}\n(valido por 10 min)`;
+      const text = `Controler NOC: ${code}`;
       const { data, status } = await axios.post(
         `https://${baseUrl}/sms/2/text/advanced`,
         { messages: [{ from: "Controler", destinations: [{ to: phone }], text }] },

@@ -122,6 +122,6 @@ export class AuthController {
         ipAddress: getIp(req)
       }
     });
-    return { code, user: { id: user.id, name: user.name }, expiresInMinutes: 10 };
+    return { code, user: { id: user.id, name: user.name }, expiresInMinutes: 5 };
   }
 }

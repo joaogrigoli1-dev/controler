@@ -1,9 +1,11 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { setSession } from "@/lib/auth";
-import { Activity, ArrowRight, Loader2, MessageSquare, ShieldCheck } from "lucide-react";
+import { Activity, ArrowRight, Loader2, MessageSquare, RotateCw, ShieldCheck } from "lucide-react";
+
+const RESEND_COOLDOWN_SEC = 30;
 
 export default function LoginPage() {
   const router = useRouter();
@@ -14,10 +16,20 @@ export default function LoginPage() {
   const [sentVia, setSentVia] = useState<"whatsapp" | "sms" | "auto">("auto");
   const [loading, setLoading] = useState(false);
   const [smsLoading, setSmsLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendNotice, setResendNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const requestCode = async (channel: "whatsapp" | "sms" | "auto" = "auto") => {
+  // Countdown do reenvio (decresce 1s/s)
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
+
+  const requestCode = async (channel: "whatsapp" | "sms" | "auto" = "auto", isResend = false) => {
     setError(null);
+    setResendNotice(null);
     if (channel === "sms") setSmsLoading(true);
     else setLoading(true);
     try {
@@ -25,12 +37,23 @@ export default function LoginPage() {
       setFirstName(r.firstName || "");
       setSentVia(channel);
       setStep("code");
+      if (isResend) {
+        setResendNotice(`Código reenviado por ${channel === "sms" ? "SMS" : "WhatsApp"}`);
+        setResendCooldown(RESEND_COOLDOWN_SEC);
+      }
     } catch (e: any) {
       setError(e?.message || "Falha ao enviar código");
     } finally {
       setLoading(false);
       setSmsLoading(false);
     }
+  };
+
+  const resend = async (channel: "whatsapp" | "sms") => {
+    if (resendCooldown > 0) return;
+    setCode("");
+    setError(null);
+    await requestCode(channel, true);
   };
 
   const verify = async () => {
@@ -129,6 +152,7 @@ export default function LoginPage() {
                 className="w-full mt-1 bg-white/5 border border-white/10 rounded-md px-3 py-3 text-center text-3xl text-mono tracking-[0.6em] outline-none focus:border-accent transition"
               />
               {error && <p className="mt-2 text-xs text-red">{error}</p>}
+              {resendNotice && <p className="mt-2 text-xs text-green">{resendNotice}</p>}
               <button
                 onClick={verify}
                 disabled={loading || code.length < 6}
@@ -137,6 +161,34 @@ export default function LoginPage() {
                 {loading ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
                 Entrar
               </button>
+
+              {/* Reenviar: dois botões pequenos lado a lado */}
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={() => resend("whatsapp")}
+                  disabled={resendCooldown > 0 || loading || smsLoading}
+                  className="btn flex-1 text-xs py-2"
+                  title="Reenviar via WhatsApp (Z-API → Meta)"
+                >
+                  {loading && sentVia !== "sms" ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
+                  WhatsApp
+                </button>
+                <button
+                  onClick={() => resend("sms")}
+                  disabled={resendCooldown > 0 || loading || smsLoading}
+                  className="btn flex-1 text-xs py-2"
+                  title="Reenviar via SMS (Infobip)"
+                >
+                  {smsLoading ? <Loader2 size={11} className="animate-spin" /> : <MessageSquare size={11} />}
+                  SMS
+                </button>
+              </div>
+              <p className="text-[10px] text-white/30 text-center mt-2">
+                {resendCooldown > 0
+                  ? `Aguarde ${resendCooldown}s para reenviar`
+                  : "Não recebeu? Reenviar por outro canal."}
+              </p>
+
               <button onClick={() => setStep("phone")} className="text-xs text-white/40 hover:text-white mt-3 w-full text-center">
                 ← Trocar número
               </button>

@@ -12,7 +12,7 @@ import * as crypto from "crypto";
 import { PrismaService } from "../common/prisma.service";
 import { WhatsappService } from "./whatsapp.service";
 
-const OTP_TTL_MIN = 10;
+const OTP_TTL_MIN = 5;
 const SESSION_TTL_HOURS = 24;
 const REFRESH_TTL_DAYS = 7;
 
