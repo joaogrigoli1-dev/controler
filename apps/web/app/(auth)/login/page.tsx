@@ -105,12 +105,12 @@ export default function LoginPage() {
               />
               {error && <p className="mt-2 text-xs text-red">{error}</p>}
               <button
-                onClick={() => requestCode("auto")}
+                onClick={() => requestCode("sms")}
                 disabled={loading || smsLoading || phone.length < 10}
                 className="btn btn-primary w-full mt-5 py-2.5"
               >
-                {loading ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
-                Enviar código via WhatsApp
+                {smsLoading ? <Loader2 size={14} className="animate-spin" /> : <MessageSquare size={14} />}
+                Enviar código por SMS
               </button>
               <div className="flex items-center gap-2 my-3">
                 <div className="flex-1 h-px bg-white/10" />
@@ -118,16 +118,16 @@ export default function LoginPage() {
                 <div className="flex-1 h-px bg-white/10" />
               </div>
               <button
-                onClick={() => requestCode("sms")}
+                onClick={() => requestCode("whatsapp")}
                 disabled={loading || smsLoading || phone.length < 10}
                 className="btn w-full py-2.5"
-                title="Use se WhatsApp não chegar (canal SMS via Infobip)"
+                title="Use se preferir WhatsApp (Z-API → Meta)"
               >
-                {smsLoading ? <Loader2 size={14} className="animate-spin" /> : <MessageSquare size={14} />}
-                Enviar código por SMS
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
+                Enviar via WhatsApp
               </button>
               <p className="text-[10px] text-white/30 mt-3 text-center">
-                WhatsApp tenta Z-API → Meta. SMS vai direto via Infobip.
+                SMS via Infobip (mais estável). WhatsApp via Z-API → Meta.
               </p>
             </>
           )}

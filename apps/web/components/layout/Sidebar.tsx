@@ -22,8 +22,9 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
   const path = usePathname() || "";
   return (
     <aside
-      className="fixed top-0 left-0 h-full bg-surface-0/80 backdrop-blur-xl border-r border-white/5 flex flex-col z-50"
+      className="fixed top-0 left-0 h-full bg-surface-0/80 backdrop-blur-xl border-r border-white/5 flex flex-col z-40"
       style={{ width: "var(--sidebar-w)" }}
+      aria-label="Navegação principal"
     >
       <div className="p-5 border-b border-white/5 flex items-center justify-between">
         <Link href="/overview" className="flex items-center gap-2.5 group">
@@ -46,29 +47,38 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
         <kbd className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-white/50">⌘K</kbd>
       </button>
 
-      <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto">
-        {NAV.map(({ href, label, icon: Icon, hint }) => (
-          <Link
-            key={href}
-            href={href}
-            className={cn("nav-link", path.startsWith(href) && "active")}
-          >
-            <Icon size={15} />
-            <span className="flex-1">{label}</span>
-            <span className="text-[9px] text-white/30 font-mono">{hint}</span>
-          </Link>
-        ))}
+      <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto" aria-label="Telas do dashboard">
+        {NAV.map(({ href, label, icon: Icon, hint }) => {
+          const isActive = path.startsWith(href);
+          return (
+            <Link
+              key={href}
+              href={href}
+              className={cn("nav-link", isActive && "active")}
+              aria-current={isActive ? "page" : undefined}
+              title={`${label} (atalho: ${hint})`}
+            >
+              <Icon size={15} aria-hidden="true" />
+              <span className="flex-1">{label}</span>
+              <span className="text-[9px] text-white/50 font-mono" aria-hidden="true">{hint}</span>
+            </Link>
+          );
+        })}
       </nav>
 
       <div className="p-3 border-t border-white/5">
         <button
           onClick={() => {
-            localStorage.clear();
-            location.href = "/login";
+            if (confirm("Deseja sair do Controler?")) {
+              localStorage.clear();
+              location.href = "/login";
+            }
           }}
-          className="nav-link w-full text-white/40 hover:text-red"
+          className="nav-link w-full text-white/60 hover:text-red"
+          aria-label="Sair do sistema"
+          title="Sair (vai pedir confirmação)"
         >
-          <LogOut size={14} />
+          <LogOut size={14} aria-hidden="true" />
           <span>Sair</span>
         </button>
       </div>

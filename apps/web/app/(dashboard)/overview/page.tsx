@@ -183,8 +183,10 @@ export default function OverviewPage() {
               <StatusBadge status="warning" label="3 atenção" />
             </div>
             <div className="border-t border-white/5 mt-3 pt-3 flex items-center justify-between">
-              <span className="text-white/60 flex items-center gap-1.5"><ShieldAlert size={12} /> Last scan</span>
-              <span className="text-mono text-xs text-white/40">há 6 min</span>
+              <span className="text-white/70 flex items-center gap-1.5"><ShieldAlert size={12} aria-hidden="true" /> Last scan</span>
+              <span className="text-mono text-xs text-white/60" title={new Date().toLocaleString("pt-BR")}>
+                {host ? "agora" : "—"}
+              </span>
             </div>
           </div>
         </div>

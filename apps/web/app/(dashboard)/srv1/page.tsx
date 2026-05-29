@@ -73,22 +73,40 @@ export default function Srv1Page() {
         </div>
         <div className="glass-card p-6">
           <div className="section-title">Top processos (CPU)</div>
-          <table className="w-full text-xs">
-            <thead className="text-white/40 text-[10px] uppercase tracking-widest">
-              <tr><th className="text-left py-2">PID</th><th className="text-left">User</th><th className="text-right">CPU%</th><th className="text-right">MEM%</th><th className="text-left pl-3">Cmd</th></tr>
-            </thead>
-            <tbody>
-              {(procs || []).slice(0, 8).map((p: any) => (
-                <tr key={p.pid} className="border-t border-white/5">
-                  <td className="py-1.5 text-mono">{p.pid}</td>
-                  <td className="text-white/60">{p.user}</td>
-                  <td className="text-right text-mono">{p.cpu?.toFixed(1)}</td>
-                  <td className="text-right text-mono">{p.mem?.toFixed(1)}</td>
-                  <td className="pl-3 text-white/60 truncate max-w-[280px]" title={p.command}>{p.command}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-white/60 text-[10px] uppercase tracking-widest">
+                <tr>
+                  <th className="text-left py-2">PID</th>
+                  <th className="text-left hidden sm:table-cell">User</th>
+                  <th className="text-right">CPU%</th>
+                  <th className="text-right">MEM%</th>
+                  <th className="text-left pl-3 hidden md:table-cell">Cmd</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {!procs && [1, 2, 3, 4, 5].map(i => (
+                  <tr key={`sk-${i}`} className="border-t border-white/5">
+                    <td colSpan={5} className="py-2">
+                      <div className="h-3 bg-white/[0.04] rounded animate-pulse" />
+                    </td>
+                  </tr>
+                ))}
+                {procs?.length === 0 && (
+                  <tr><td colSpan={5} className="py-6 text-center text-white/40">Nenhum processo encontrado</td></tr>
+                )}
+                {(procs || []).slice(0, 8).map((p: any) => (
+                  <tr key={p.pid} className="border-t border-white/5">
+                    <td className="py-1.5 text-mono">{p.pid}</td>
+                    <td className="text-white/70 hidden sm:table-cell">{p.user}</td>
+                    <td className="text-right text-mono">{p.cpu?.toFixed(1)}</td>
+                    <td className="text-right text-mono">{p.mem?.toFixed(1)}</td>
+                    <td className="pl-3 text-white/70 truncate max-w-[280px] hidden md:table-cell" title={p.command}>{p.command}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 

@@ -126,9 +126,9 @@
   .btn-primary:hover { filter: brightness(1.1); box-shadow: 0 0 24px hsl(var(--accent) / 0.4); }
   .btn-ghost { @apply bg-transparent border-transparent hover:bg-white/5; }
 
-  /* Section title */
+  /* Section title — contraste WCAG AA (era white/50, ilegível) */
   .section-title {
-    @apply text-xs font-bold uppercase tracking-[0.2em] text-white/50 mb-3 flex items-center gap-2;
+    @apply text-xs font-bold uppercase tracking-[0.2em] text-white/70 mb-3 flex items-center gap-2;
   }
 
   /* Topbar / nav links */

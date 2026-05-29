@@ -18,16 +18,30 @@ export default function HestiaPage() {
   return (
     <div className="space-y-6 animate-fade-up">
       <div className="glass-card p-6">
-        <div className="section-title flex items-center gap-2"><Mail size={12} /> Mail Stack</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {(mail || []).map((m: any) => (
-            <div key={m.name} className="p-3 rounded-md bg-white/[0.03] border border-white/5">
-              <div className="text-sm text-mono">{m.name}</div>
-              <div className="text-[10px] text-white/40 mt-1">{m.image}</div>
-              <div className="mt-2"><StatusBadge status={m.status?.startsWith("Up") ? "healthy" : "muted"} pulse /></div>
-            </div>
-          ))}
-        </div>
+        <div className="section-title flex items-center gap-2"><Mail size={12} aria-hidden="true" /> Mail Stack</div>
+        {!mail && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="h-20 rounded-md bg-white/[0.03] animate-pulse" />
+            ))}
+          </div>
+        )}
+        {mail?.length === 0 && (
+          <div className="text-center py-8 text-white/40 text-sm">
+            Nenhum container de mail rodando
+          </div>
+        )}
+        {mail && mail.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {mail.map((m: any) => (
+              <div key={m.name} className="p-3 rounded-md bg-white/[0.03] border border-white/5">
+                <div className="text-sm text-mono truncate" title={m.name}>{m.name}</div>
+                <div className="text-[10px] text-white/60 mt-1 truncate" title={m.image}>{m.image}</div>
+                <div className="mt-2"><StatusBadge status={m.status?.startsWith("Up") ? "healthy" : "muted"} pulse /></div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {Object.entries(grouped).map(([scope, items]) => (

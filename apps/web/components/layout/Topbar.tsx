@@ -45,15 +45,27 @@ export function Topbar() {
         </span>
       </div>
       <div className="flex items-center gap-3 text-xs">
-        <div className={`badge ${connected ? "badge-green" : "badge-red"}`}>
+        <div
+          className={`badge ${connected ? "badge-green" : "badge-red"}`}
+          title={connected ? "WebSocket conectado — métricas em tempo real" : "Tentando reconectar ao servidor de métricas"}
+        >
           {connected ? "● WS conectado" : "○ Reconectando..."}
         </div>
-        <span className="text-mono text-white/40">{now}</span>
-        <button className="btn btn-ghost" onClick={() => location.reload()}>
-          <RefreshCw size={12} />
+        <span className="text-mono text-white/70 hidden sm:inline" aria-label={`Hora atual: ${now}`}>{now}</span>
+        <button
+          className="btn btn-ghost"
+          onClick={() => location.reload()}
+          aria-label="Recarregar página"
+          title="Recarregar página"
+        >
+          <RefreshCw size={12} aria-hidden="true" />
         </button>
-        <button className="btn btn-ghost relative">
-          <Bell size={12} />
+        <button
+          className="btn btn-ghost relative"
+          aria-label="Notificações"
+          title="Notificações (em breve)"
+        >
+          <Bell size={12} aria-hidden="true" />
         </button>
       </div>
     </header>

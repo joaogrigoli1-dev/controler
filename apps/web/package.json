@@ -11,7 +11,9 @@
     "test:e2e": "playwright test",
     "test:e2e:local": "E2E_BASE_URL=http://localhost:3000 playwright test",
     "test:e2e:install": "playwright install chromium",
-    "test:e2e:report": "playwright show-report"
+    "test:e2e:report": "playwright show-report",
+    "visual": "playwright test --config=playwright.visual.config.ts",
+    "visual:local": "E2E_BASE_URL=http://localhost:3000 playwright test --config=playwright.visual.config.ts"
   },
   "dependencies": {
     "next": "14.2.13",

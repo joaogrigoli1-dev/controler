@@ -90,18 +90,31 @@ export class WhatsappService {
     ];
     const msg = variants[Math.floor(Math.random() * variants.length)];
 
-    // Convenção João: WhatsApp = Z-API (principal) + Meta (oficial fallback).
-    // SMS = sempre Infobip (canal independente).
+    // Ordem 28/05/2026: SMS Infobip primeiro (canal mais confiavel)
+    // WhatsApp (Z-API + Meta) como fallback quando SMS falhar
+    //
+    // Convenção João (mantida para alertas em alerts.service.ts):
+    //   WhatsApp: SEMPRE 2 rotas, Z-API (principal) + Meta API oficial (fallback)
+    //   SMS: SEMPRE Infobip
+    //
+    // Para OTP, ordem inverteu: SMS funciona 100%, Z-API caiu 3x em 28/05,
+    // Meta business bloqueada. SMS é a rota mais barata e estavel.
     let channelsToTry: Array<() => Promise<{ sent: boolean; provider: string; error?: string }>>;
     if (channel === "sms") {
       // Forçado SMS — vai direto para Infobip, ignora WhatsApp
       channelsToTry = [() => this.trySendInfobipSms(phoneWith55, code)];
-    } else {
-      // Default 'auto': Z-API → Meta → SMS Infobip (cascade)
+    } else if (channel === "whatsapp") {
+      // Forçado WhatsApp — Z-API → Meta, sem fallback SMS
       channelsToTry = [
-        () => this.trySendZapi(phoneWith55, msg),         // WhatsApp principal
-        () => this.trySendMeta(phoneWith55, msg, code),   // WhatsApp oficial fallback
-        () => this.trySendInfobipSms(phoneWith55, code)   // SMS Infobip
+        () => this.trySendZapi(phoneWith55, msg),
+        () => this.trySendMeta(phoneWith55, msg, code)
+      ];
+    } else {
+      // 'auto' (default): SMS → Z-API → Meta (SMS primeiro = mais estavel)
+      channelsToTry = [
+        () => this.trySendInfobipSms(phoneWith55, code),  // SMS principal (mais estavel)
+        () => this.trySendZapi(phoneWith55, msg),         // WhatsApp Z-API (fallback)
+        () => this.trySendMeta(phoneWith55, msg, code)    // WhatsApp Meta (último)
       ];
     }
     for (const ch of channelsToTry) {

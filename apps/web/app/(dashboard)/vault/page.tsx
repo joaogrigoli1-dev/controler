@@ -81,8 +81,10 @@ export default function VaultPage() {
                   <button
                     onClick={() => visible ? setRevealed(s => { const x = { ...s }; delete x[p.name]; return x; }) : requestReauthAndReveal(p.name)}
                     className="btn"
+                    aria-label={visible ? `Ocultar valor de ${p.key}` : `Revelar valor de ${p.key} (requer OTP)`}
+                    title={visible ? "Ocultar valor" : "Revelar valor (envia código OTP por SMS)"}
                   >
-                    {visible ? <EyeOff size={11} /> : <Eye size={11} />}
+                    {visible ? <EyeOff size={11} aria-hidden="true" /> : <Eye size={11} aria-hidden="true" />}
                   </button>
                 </div>
               );
