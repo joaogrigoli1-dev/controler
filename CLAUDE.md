@@ -5,7 +5,7 @@
 **controler** — Command Center NOC (Network Operations Center) para gestão centralizada da infraestrutura SRV1.
 
 **Localização:** `~/DEV/controler/`
-**Produção:** `https://painel.controler.net.br`
+**Produção:** `https://noc.controler.net.br`
 **Coolify UUID:** `a8u2gdchrpjnn6era2i8kh8d`
 **Versão:** 4.0.0
 
@@ -61,7 +61,7 @@ controler/
 1. `npx tsc --noEmit` em apps/api e apps/web → 0 erros
 2. `git add` + commit semântico + `git push origin main`
 3. `coolify_deploy uuid=a8u2gdchrpjnn6era2i8kh8d force=true`
-4. Validar `curl https://painel.controler.net.br/be-health`
+4. Validar `curl https://noc.controler.net.br/be-health`
 
 **NUNCA editar arquivos direto em srv1.** Sempre DEV → GIT → PROD.
 

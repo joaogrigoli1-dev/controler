@@ -229,7 +229,7 @@ export class MetricsScheduler {
         `⚙ Apps Coolify: ${Array.isArray(apps) ? apps.length : 0}`,
         `🌐 Sites: ${sitesOn}/${sites.length} online`,
         ``,
-        `https://painel.controler.net.br`
+        `https://noc.controler.net.br`
       ].join("\n");
       await this.alerts.dispatch({
         ruleKey: `daily-digest-${new Date().toISOString().slice(0, 10)}`,

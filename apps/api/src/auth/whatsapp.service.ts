@@ -90,39 +90,18 @@ export class WhatsappService {
     ];
     const msg = variants[Math.floor(Math.random() * variants.length)];
 
-    // Ordem 28/05/2026: SMS Infobip primeiro (canal mais confiavel)
-    // WhatsApp (Z-API + Meta) como fallback quando SMS falhar
-    //
-    // Convenção João (mantida para alertas em alerts.service.ts):
-    //   WhatsApp: SEMPRE 2 rotas, Z-API (principal) + Meta API oficial (fallback)
-    //   SMS: SEMPRE Infobip
-    //
-    // Para OTP, ordem inverteu: SMS funciona 100%, Z-API caiu 3x em 28/05,
-    // Meta business bloqueada. SMS é a rota mais barata e estavel.
-    let channelsToTry: Array<() => Promise<{ sent: boolean; provider: string; error?: string }>>;
-    if (channel === "sms") {
-      // Forçado SMS — vai direto para Infobip, ignora WhatsApp
-      channelsToTry = [() => this.trySendInfobipSms(phoneWith55, code)];
-    } else if (channel === "whatsapp") {
-      // Forçado WhatsApp — Z-API → Meta, sem fallback SMS
-      channelsToTry = [
-        () => this.trySendZapi(phoneWith55, msg),
-        () => this.trySendMeta(phoneWith55, msg, code)
-      ];
-    } else {
-      // 'auto' (default): SMS → Z-API → Meta (SMS primeiro = mais estavel)
-      channelsToTry = [
-        () => this.trySendInfobipSms(phoneWith55, code),  // SMS principal (mais estavel)
-        () => this.trySendZapi(phoneWith55, msg),         // WhatsApp Z-API (fallback)
-        () => this.trySendMeta(phoneWith55, msg, code)    // WhatsApp Meta (último)
-      ];
-    }
-    for (const ch of channelsToTry) {
-      const result = await ch().catch((e) => ({ sent: false, provider: "?", error: String(e?.message || e) }));
-      if (result.sent) return result;
-      this.log.warn(`[OTP] canal ${result.provider} falhou (${result.error}), tentando próximo`);
-    }
-    return { sent: false, provider: "all-failed", error: "todos os canais falharam" };
+    // Política 29/05/2026: OTP enviado EXCLUSIVAMENTE via Z-API (WhatsApp).
+    // As rotas Infobip (SMS) e Meta API (WhatsApp oficial) foram DESATIVADAS
+    // para OTP. O parâmetro `channel` é ignorado para OTP — sempre Z-API.
+    // (Infobip permanece ativo apenas para alertas em alerts.service.ts.)
+    const result = await this.trySendZapi(phoneWith55, msg).catch((e) => ({
+      sent: false,
+      provider: "whatsapp-zapi",
+      error: String(e?.message || e),
+    }));
+    if (result.sent) return result;
+    this.log.warn(`[OTP] canal Z-API (único ativo) falhou (${result.error})`);
+    return { sent: false, provider: "whatsapp-zapi", error: result.error || "Z-API falhou" };
   }
 
   // ─── Canal 1: WhatsApp principal — Z-API ────────────────

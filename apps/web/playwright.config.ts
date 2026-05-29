@@ -11,7 +11,7 @@
 
 import { defineConfig, devices } from "@playwright/test";
 
-const BASE_URL = process.env.E2E_BASE_URL || "https://painel.controler.net.br";
+const BASE_URL = process.env.E2E_BASE_URL || "https://noc.controler.net.br";
 
 export default defineConfig({
   testDir: "./tests/e2e",

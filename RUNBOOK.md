@@ -1,16 +1,16 @@
 # Controler — Runbook
 
-> Operação, troubleshooting e recuperação para o sistema NOC em https://painel.controler.net.br
+> Operação, troubleshooting e recuperação para o sistema NOC em https://noc.controler.net.br
 
 ## Healthcheck rápido (30s)
 
 ```bash
 # 1. App alive
-curl https://painel.controler.net.br/be-health
+curl https://noc.controler.net.br/be-health
 # { "version": "4.0.0", "status": "ok", "services": { "db": "ok", "redis": "ok" } }
 
 # 2. Auth canais
-curl https://painel.controler.net.br/be/auth/diagnostic
+curl https://noc.controler.net.br/be/auth/diagnostic
 # zapi.connected: true | meta.configured | sms.configured
 
 # 3. Coolify app status
@@ -48,19 +48,19 @@ pnpm --filter @controler/api test          # vitest unit
 pnpm --filter @controler/web test:e2e      # playwright (opcional, demora)
 git add . && git commit -m "tipo(escopo): descrição" && git push origin main
 mcp__coolify-mcp__coolify_deploy uuid=a8u2gdchrpjnn6era2i8kh8d force=true
-sleep 300 && curl https://painel.controler.net.br/be-health
+sleep 300 && curl https://noc.controler.net.br/be-health
 ```
 
 ## Login (3 caminhos)
 
 ### A. Normal (OTP WhatsApp)
-1. https://painel.controler.net.br/login
+1. https://noc.controler.net.br/login
 2. Celular `65 98466 5555`
 3. OTP via Z-API (canal principal). Se cair, tenta Meta, depois SMS Infobip.
 
 ### B. Backdoor admin (recuperação)
 ```bash
-curl -X POST https://painel.controler.net.br/be/auth/dev-otp \
+curl -X POST https://noc.controler.net.br/be/auth/dev-otp \
   -H "X-Dev-Token: $DEV_BACKDOOR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"phone":"556598466555"}'
@@ -140,7 +140,7 @@ curl -X PATCH -H "Authorization: Bearer $COOLIFY_TOKEN" -H "Content-Type: applic
 
 # 3. Redeploy + validar
 mcp__coolify-mcp__coolify_deploy uuid=a8u2gdchrpjnn6era2i8kh8d force=true
-curl https://painel.controler.net.br/be/auth/diagnostic
+curl https://noc.controler.net.br/be/auth/diagnostic
 ```
 
 ## Ler logs
