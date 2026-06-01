@@ -27,6 +27,7 @@
     "@nestjs/schedule": "^4.1.0",
     "@nestjs/jwt": "^10.2.0",
     "@nestjs/passport": "^10.0.3",
+    "@nestjs/throttler": "^5.2.0",
     "@prisma/client": "^5.20.0",
     "@aws-sdk/client-ssm": "^3.658.0",
     "fastify": "^4.28.1",

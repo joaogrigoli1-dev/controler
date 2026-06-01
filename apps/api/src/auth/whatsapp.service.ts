@@ -84,9 +84,9 @@ export class WhatsappService {
     }
 
     const variants = [
-      `🔐 *Controler NOC*\n\nSeu código: *${code}*\n\nNão compartilhe.`,
-      `Olá! Código de acesso ao Controler: *${code}*`,
-      `Controler NOC ✅\n\nCódigo: *${code}*`
+      `🔐 *Controler NOC*\n\nCodigo de verificacao: *${code}*\n\nNao compartilhe.`,
+      `Controler NOC\n\nCodigo de verificacao: ${code}`,
+      `Controler NOC ✅\n\nCodigo de verificacao: *${code}*`
     ];
     const msg = variants[Math.floor(Math.random() * variants.length)];
 
