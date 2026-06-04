@@ -30,13 +30,21 @@ export class TimelineService {
     });
 
     // 24 buckets contínuos, mais antigo (-24h) ao mais novo (-0h).
-    // Cada bucket é um Date object com a hora-cheia BRT (UTC-3).
-    // Chave: "HHh-DD" (ex: "14h-27") para garantir unicidade quando atravessa dias.
-    const TZ_OFFSET_MS = -3 * 3600_000; // BRT (UTC-3); ajustar se mudar de fuso
+    // Hora exibida em America/Sao_Paulo via Intl (robusto contra DST e mudanças de fuso).
+    const TZ = "America/Sao_Paulo";
+    const hourInTZ = (d: Date): number =>
+      parseInt(
+        new Intl.DateTimeFormat("en-US", {
+          timeZone: TZ,
+          hour: "2-digit",
+          hour12: false
+        }).format(d),
+        10
+      ) % 24;
     const buckets: Array<{ key: string; hour: number; info: number; warning: number; critical: number }> = [];
     for (let h = 23; h >= 0; h--) {
-      const ts = new Date(now - h * 3600_000 + TZ_OFFSET_MS);
-      const hh = ts.getUTCHours(); // como já ajustamos offset, getUTCHours = hora BRT
+      const ts = new Date(now - h * 3600_000);
+      const hh = hourInTZ(ts);
       buckets.push({ key: `${hh.toString().padStart(2, "0")}h`, hour: hh, info: 0, warning: 0, critical: 0 });
     }
 

@@ -17,8 +17,31 @@ export class AnalyticsController {
     return this.svc.hostMetricsHistory(hours ? parseInt(hours, 10) : 24);
   }
 
+  @Get("host/uptime")
+  uptime(@Query("hours") hours?: string) {
+    return this.svc.hostUptimePercent(hours ? parseInt(hours, 10) : 24);
+  }
+
   @Get("containers/:name/history")
   container(@Param("name") name: string, @Query("hours") hours?: string) {
     return this.svc.containerMetricsHistory(name, hours ? parseInt(hours, 10) : 24);
+  }
+
+  @Get("containers/top")
+  topContainers(
+    @Query("by") by?: "cpu" | "mem",
+    @Query("hours") hours?: string,
+    @Query("limit") limit?: string
+  ) {
+    return this.svc.topContainersByResource(
+      by === "mem" ? "mem" : "cpu",
+      hours ? parseInt(hours, 10) : 24,
+      limit ? parseInt(limit, 10) : 10
+    );
+  }
+
+  @Get("alerts/breakdown")
+  alertsBreakdown(@Query("hours") hours?: string) {
+    return this.svc.alertsBreakdown(hours ? parseInt(hours, 10) : 24);
   }
 }

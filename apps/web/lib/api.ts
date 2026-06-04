@@ -107,6 +107,12 @@ export const api = {
   // Analytics
   analyticsOverview: (days = 7) => apiFetch(`/analytics/overview?days=${days}`),
   hostHistory: (hours = 24) => apiFetch(`/analytics/host/history?hours=${hours}`),
+  hostUptime: (hours = 24) => apiFetch<{ uptimePercent: number; samples: number }>(`/analytics/host/uptime?hours=${hours}`),
+  topContainers: (by: "cpu" | "mem" = "cpu", hours = 24, limit = 10) =>
+    apiFetch<Array<{ name: string; avgCpu: number; avgMem: number; samples: number }>>(
+      `/analytics/containers/top?by=${by}&hours=${hours}&limit=${limit}`
+    ),
+  alertsBreakdown: (hours = 24) => apiFetch(`/analytics/alerts/breakdown?hours=${hours}`),
 
   // Users
   users: () => apiFetch("/users")

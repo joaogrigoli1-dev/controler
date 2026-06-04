@@ -8,8 +8,17 @@ import { Gauge } from "@/components/ui/Gauge";
 import { fmtUptime, fmtBytes, severityColor } from "@/lib/utils";
 import {
   Server, Boxes, Globe, AlertTriangle, Activity, Cpu, MemoryStick, HardDrive,
-  Zap, Clock, DollarSign, ShieldAlert
+  Zap, Clock, ShieldAlert
 } from "lucide-react";
+
+// Containers críticos de infra que devem aparecer no painel "Status Geral".
+// Cada entry tem regex/substring matcher + label público + classificação.
+const INFRA_TARGETS: Array<{ key: string; label: string; match: (name: string) => boolean }> = [
+  { key: "postgres", label: "Postgres main", match: n => /^postgres-main|^postgresql-|postgres$/.test(n) },
+  { key: "redis", label: "Redis", match: n => /redis/.test(n) },
+  { key: "traefik", label: "Traefik proxy", match: n => /traefik|coolify-proxy/.test(n) },
+  { key: "mail", label: "Mail (Stalwart)", match: n => /^mailserver|stalwart/.test(n) }
+];
 
 export default function OverviewPage() {
   const { data: host } = useSWR("host", () => api.hostMetrics(), { refreshInterval: 30000 });
@@ -18,6 +27,7 @@ export default function OverviewPage() {
   const { data: alertsSummary } = useSWR("alerts-summary", () => api.alertsSummary(), { refreshInterval: 30000 });
   const { data: timeline } = useSWR("timeline-recent", () => api.timeline(undefined, 8), { refreshInterval: 15000 });
   const { data: sites } = useSWR("sites", () => api.sites(), { refreshInterval: 60000 });
+  const { data: services } = useSWR("services-overview", () => api.services(), { refreshInterval: 60000 });
   const liveHost = useSocketEvent<any>("host:metrics");
   const liveContainers = useSocketEvent<any>("container:metrics");
 
@@ -28,6 +38,19 @@ export default function OverviewPage() {
   const sitesUp = sites?.filter((s: any) => s.online).length ?? 0;
   const totalSites = sites?.length ?? 0;
   const appsCount = apps?.length ?? 0;
+
+  // Derive status de infra a partir de containers reais
+  const infraStatus = INFRA_TARGETS.map(t => {
+    const match = cs.find((c: any) => t.match((c.name || "").toLowerCase()));
+    if (!match) return { ...t, status: "muted" as const, hint: "não encontrado" };
+    if (match.healthcheck === "healthy") return { ...t, status: "healthy" as const, hint: match.uptime || "running" };
+    if (match.healthcheck === "unhealthy") return { ...t, status: "red" as const, hint: "unhealthy" };
+    if (match.state === "running") return { ...t, status: "running" as const, hint: match.uptime || "up" };
+    return { ...t, status: "red" as const, hint: match.status || "down" };
+  });
+
+  // Failed services systemd reais
+  const failedServices = (services || []).filter((s: any) => s.activeState === "failed");
 
   return (
     <div className="space-y-6 animate-fade-up">
@@ -160,32 +183,37 @@ export default function OverviewPage() {
         </div>
 
         <div className="glass-card p-6">
-          <div className="section-title">Status Geral</div>
-          <div className="space-y-3 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-white/60">Mail Stack</span>
-              <StatusBadge status="healthy" pulse label="OK" />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-white/60">Postgres main</span>
-              <StatusBadge status="healthy" label="UP" />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-white/60">Traefik proxy</span>
-              <StatusBadge status="healthy" label="80/443" />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-white/60">Backup diário</span>
-              <StatusBadge status="cyan" label="3h BRT" />
-            </div>
+          <div className="section-title">Status de infra</div>
+          <div className="space-y-2.5 text-sm">
+            {infraStatus.map(s => (
+              <div key={s.key} className="flex items-center justify-between">
+                <span className="text-white/60">{s.label}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-white/40 text-mono">{s.hint}</span>
+                  <StatusBadge status={s.status} pulse={s.status === "healthy" || s.status === "running"} label={s.status === "muted" ? "?" : undefined} />
+                </div>
+              </div>
+            ))}
             <div className="flex items-center justify-between">
               <span className="text-white/60">Failed services</span>
-              <StatusBadge status="warning" label="3 atenção" />
+              <StatusBadge
+                status={failedServices.length === 0 ? "healthy" : failedServices.length < 3 ? "warning" : "red"}
+                label={failedServices.length === 0 ? "0" : `${failedServices.length} atenção`}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-white/60">Containers healthy</span>
+              <StatusBadge
+                status={healthy === cs.length && cs.length > 0 ? "healthy" : healthy > 0 ? "warning" : "muted"}
+                label={`${healthy}/${cs.length}`}
+              />
             </div>
             <div className="border-t border-white/5 mt-3 pt-3 flex items-center justify-between">
-              <span className="text-white/70 flex items-center gap-1.5"><ShieldAlert size={12} aria-hidden="true" /> Last scan</span>
+              <span className="text-white/70 flex items-center gap-1.5">
+                <ShieldAlert size={12} aria-hidden="true" /> Last refresh
+              </span>
               <span className="text-mono text-xs text-white/60" title={new Date().toLocaleString("pt-BR")}>
-                {host ? "agora" : "—"}
+                {host ? new Date().toLocaleTimeString("pt-BR") : "—"}
               </span>
             </div>
           </div>

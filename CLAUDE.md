@@ -4,7 +4,7 @@
 
 **controler** — Command Center NOC (Network Operations Center) para gestão centralizada da infraestrutura SRV1.
 
-**Localização:** `~/DEV/controler/`
+**Localização:** `~/Dev/controler/`
 **Produção:** `https://noc.controler.net.br`
 **Coolify UUID:** `a8u2gdchrpjnn6era2i8kh8d`
 **Versão:** 4.0.0

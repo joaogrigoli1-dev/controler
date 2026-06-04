@@ -3,61 +3,60 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { setSession } from "@/lib/auth";
-import { Activity, ArrowRight, Loader2, MessageSquare, RotateCw, ShieldCheck } from "lucide-react";
+import { Activity, ArrowRight, Loader2, RotateCw, ShieldCheck, Sparkles } from "lucide-react";
 
 const RESEND_COOLDOWN_SEC = 30;
 
+/**
+ * Política OTP (29/05/2026): canal ÚNICO Z-API (WhatsApp).
+ * SMS e Meta API foram desabilitados para login. Backdoor admin via /be/auth/dev-otp.
+ */
 export default function LoginPage() {
   const router = useRouter();
   const [step, setStep] = useState<"phone" | "code">("phone");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [firstName, setFirstName] = useState("");
-  const [sentVia, setSentVia] = useState<"whatsapp" | "sms" | "auto">("auto");
   const [loading, setLoading] = useState(false);
-  const [smsLoading, setSmsLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resendNotice, setResendNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Countdown do reenvio (decresce 1s/s)
   useEffect(() => {
     if (resendCooldown <= 0) return;
-    const t = setTimeout(() => setResendCooldown(c => c - 1), 1000);
+    const t = setTimeout(() => setResendCooldown((c: number) => c - 1), 1000);
     return () => clearTimeout(t);
   }, [resendCooldown]);
 
-  const requestCode = async (channel: "whatsapp" | "sms" | "auto" = "auto", isResend = false) => {
+  const requestCode = async (isResend = false) => {
     setError(null);
     setResendNotice(null);
-    if (channel === "sms") setSmsLoading(true);
-    else setLoading(true);
+    setLoading(true);
     try {
-      const r: any = await api.requestCode(phone.replace(/\D/g, ""), channel);
+      const r: any = await api.requestCode(phone.replace(/\D/g, ""), "whatsapp");
       setFirstName(r.firstName || "");
-      setSentVia(channel);
       setStep("code");
       if (isResend) {
-        setResendNotice(`Código reenviado por ${channel === "sms" ? "SMS" : "WhatsApp"}`);
+        setResendNotice("Código reenviado por WhatsApp.");
         setResendCooldown(RESEND_COOLDOWN_SEC);
       }
     } catch (e: any) {
       setError(e?.message || "Falha ao enviar código");
     } finally {
       setLoading(false);
-      setSmsLoading(false);
     }
   };
 
-  const resend = async (channel: "whatsapp" | "sms") => {
+  const resend = async () => {
     if (resendCooldown > 0) return;
     setCode("");
     setError(null);
-    await requestCode(channel, true);
+    await requestCode(true);
   };
 
   const verify = async () => {
-    setError(null); setLoading(true);
+    setError(null);
+    setLoading(true);
     try {
       const r = await api.verifyCode(phone.replace(/\D/g, ""), code);
       setSession(r.accessToken, r.refreshToken, r.user);
@@ -72,10 +71,22 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center p-6 relative">
       {/* Background grid */}
-      <div className="fixed inset-0 opacity-30 pointer-events-none" style={{
-        backgroundImage: "linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)",
-        backgroundSize: "40px 40px"
-      }} />
+      <div
+        className="fixed inset-0 opacity-30 pointer-events-none"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)",
+          backgroundSize: "40px 40px"
+        }}
+      />
+      {/* Glow halo */}
+      <div
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none opacity-50"
+        style={{
+          background:
+            "radial-gradient(circle, hsl(248 92% 70% / 0.18) 0%, transparent 60%)"
+        }}
+      />
 
       <div className="w-full max-w-sm bezel-card relative z-10">
         <div className="inner">
@@ -93,41 +104,40 @@ export default function LoginPage() {
             <>
               <h1 className="text-2xl font-bold text-display mb-1">Entrar</h1>
               <p className="text-sm text-white/50 mb-6">
-                Você receberá um código por WhatsApp.
+                Você receberá um código de 6 dígitos no <strong className="text-white/80">WhatsApp</strong>.
               </p>
-              <label className="text-xs text-white/40 uppercase tracking-wider">Celular</label>
+              <label className="text-xs text-white/40 uppercase tracking-wider" htmlFor="phone-input">
+                Celular
+              </label>
               <input
+                id="phone-input"
                 value={phone}
                 onChange={e => setPhone(e.target.value)}
                 placeholder="65 9 8466 5555"
                 inputMode="tel"
+                autoComplete="tel"
+                onKeyDown={e => {
+                  if (e.key === "Enter" && phone.replace(/\D/g, "").length >= 10) requestCode();
+                }}
                 className="w-full mt-1 bg-white/5 border border-white/10 rounded-md px-3 py-2.5 text-mono outline-none focus:border-accent transition"
               />
-              {error && <p className="mt-2 text-xs text-red">{error}</p>}
+              {error && (
+                <p className="mt-2 text-xs text-red" role="alert">
+                  {error}
+                </p>
+              )}
               <button
-                onClick={() => requestCode("sms")}
-                disabled={loading || smsLoading || phone.length < 10}
+                onClick={() => requestCode()}
+                disabled={loading || phone.replace(/\D/g, "").length < 10}
                 className="btn btn-primary w-full mt-5 py-2.5"
+                aria-label="Enviar código via WhatsApp"
               >
-                {smsLoading ? <Loader2 size={14} className="animate-spin" /> : <MessageSquare size={14} />}
-                Enviar código por SMS
+                {loading ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <ArrowRight size={14} aria-hidden="true" />}
+                Enviar código por WhatsApp
               </button>
-              <div className="flex items-center gap-2 my-3">
-                <div className="flex-1 h-px bg-white/10" />
-                <span className="text-[10px] text-white/30 uppercase tracking-widest">ou</span>
-                <div className="flex-1 h-px bg-white/10" />
-              </div>
-              <button
-                onClick={() => requestCode("whatsapp")}
-                disabled={loading || smsLoading || phone.length < 10}
-                className="btn w-full py-2.5"
-                title="Use se preferir WhatsApp (Z-API → Meta)"
-              >
-                {loading ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
-                Enviar via WhatsApp
-              </button>
-              <p className="text-[10px] text-white/30 mt-3 text-center">
-                SMS via Infobip (mais estável). WhatsApp via Z-API → Meta.
+              <p className="text-[10px] text-white/30 mt-3 text-center flex items-center justify-center gap-1">
+                <Sparkles size={9} aria-hidden="true" />
+                Entrega via Z-API · sem SMS, sem custo
               </p>
             </>
           )}
@@ -135,61 +145,64 @@ export default function LoginPage() {
           {step === "code" && (
             <>
               <div className="flex items-center gap-2 mb-2">
-                <ShieldCheck size={16} className="text-green" />
+                <ShieldCheck size={16} className="text-green" aria-hidden="true" />
                 <span className="text-xs text-green uppercase tracking-wider">Código enviado</span>
               </div>
-              <h1 className="text-2xl font-bold text-display mb-1">Olá, {firstName}</h1>
+              <h1 className="text-2xl font-bold text-display mb-1">
+                Olá{firstName ? `, ${firstName}` : ""}
+              </h1>
               <p className="text-sm text-white/50 mb-6">
-                Digite o código de 6 dígitos enviado por{" "}
-                <strong>{sentVia === "sms" ? "SMS" : "WhatsApp"}</strong>.
+                Digite o código de <strong>6 dígitos</strong> recebido no WhatsApp.
               </p>
-              <label className="text-xs text-white/40 uppercase tracking-wider">Código</label>
+              <label className="text-xs text-white/40 uppercase tracking-wider" htmlFor="code-input">
+                Código
+              </label>
               <input
+                id="code-input"
                 value={code}
                 onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && code.length === 6) verify();
+                }}
                 placeholder="000000"
                 inputMode="numeric"
+                autoComplete="one-time-code"
+                autoFocus
                 className="w-full mt-1 bg-white/5 border border-white/10 rounded-md px-3 py-3 text-center text-3xl text-mono tracking-[0.6em] outline-none focus:border-accent transition"
               />
-              {error && <p className="mt-2 text-xs text-red">{error}</p>}
+              {error && (
+                <p className="mt-2 text-xs text-red" role="alert">
+                  {error}
+                </p>
+              )}
               {resendNotice && <p className="mt-2 text-xs text-green">{resendNotice}</p>}
               <button
                 onClick={verify}
                 disabled={loading || code.length < 6}
                 className="btn btn-primary w-full mt-5 py-2.5"
               >
-                {loading ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
+                {loading ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <ArrowRight size={14} aria-hidden="true" />}
                 Entrar
               </button>
 
-              {/* Reenviar: dois botões pequenos lado a lado */}
-              <div className="mt-3 flex items-center gap-2">
-                <button
-                  onClick={() => resend("whatsapp")}
-                  disabled={resendCooldown > 0 || loading || smsLoading}
-                  className="btn flex-1 text-xs py-2"
-                  title="Reenviar via WhatsApp (Z-API → Meta)"
-                >
-                  {loading && sentVia !== "sms" ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
-                  WhatsApp
-                </button>
-                <button
-                  onClick={() => resend("sms")}
-                  disabled={resendCooldown > 0 || loading || smsLoading}
-                  className="btn flex-1 text-xs py-2"
-                  title="Reenviar via SMS (Infobip)"
-                >
-                  {smsLoading ? <Loader2 size={11} className="animate-spin" /> : <MessageSquare size={11} />}
-                  SMS
-                </button>
-              </div>
-              <p className="text-[10px] text-white/30 text-center mt-2">
-                {resendCooldown > 0
-                  ? `Aguarde ${resendCooldown}s para reenviar`
-                  : "Não recebeu? Reenviar por outro canal."}
-              </p>
+              <button
+                onClick={resend}
+                disabled={resendCooldown > 0 || loading}
+                className="btn w-full mt-3 py-2 text-xs"
+                title="Reenviar via WhatsApp"
+              >
+                {loading ? <Loader2 size={11} className="animate-spin" aria-hidden="true" /> : <RotateCw size={11} aria-hidden="true" />}
+                {resendCooldown > 0 ? `Reenviar em ${resendCooldown}s` : "Reenviar código"}
+              </button>
 
-              <button onClick={() => setStep("phone")} className="text-xs text-white/40 hover:text-white mt-3 w-full text-center">
+              <button
+                onClick={() => {
+                  setStep("phone");
+                  setCode("");
+                  setError(null);
+                }}
+                className="text-xs text-white/40 hover:text-white mt-3 w-full text-center transition"
+              >
                 ← Trocar número
               </button>
             </>
