@@ -138,8 +138,8 @@ export class AlertsService {
   }
 
   private async sendSmsInfobip(phone: string, text: string): Promise<{ ok: boolean; error?: string }> {
-    const apiKey = process.env.INFOBIP_API_KEY || (await this.ssm.get("/myclinicsoft/infobip_api_key")) || (await this.ssm.get("/shared/infobip/api_key"));
-    const base = (await this.ssm.get("/shared/infobip/base_url")) || (await this.ssm.get("/myclinicsoft/infobip_base_url")) || "6zjrk8.api.infobip.com";
+    const apiKey = process.env.INFOBIP_API_KEY || (await this.ssm.get("/shared/infobip/api_key"));
+    const base = (await this.ssm.get("/shared/infobip/base_url")) || "6zjrk8.api.infobip.com";
     if (!apiKey) return { ok: false, error: "infobip-not-configured" };
     const { data, status } = await axios.post(
       `https://${base}/sms/2/text/advanced`,

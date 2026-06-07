@@ -28,12 +28,10 @@ export class WhatsappService {
   private async credsZapi() {
     const instance =
       process.env.ZAPI_INSTANCE_ID ||
-      (await this.ssm.get("/shared/zapi/instance_id")) ||
-      (await this.ssm.get("/myclinicsoft/zapi_instance_id"));
+      (await this.ssm.get("/shared/zapi/instance_id"));
     const token =
       process.env.ZAPI_TOKEN ||
-      (await this.ssm.get("/shared/zapi/token")) ||
-      (await this.ssm.get("/myclinicsoft/zapi_token"));
+      (await this.ssm.get("/shared/zapi/token"));
     const clientToken =
       process.env.ZAPI_CLIENT_TOKEN ||
       (await this.ssm.get("/myclinicsoft/zapi_client_token"));

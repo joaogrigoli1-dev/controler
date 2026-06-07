@@ -112,7 +112,7 @@ async function main() {
     myclinicsoft: [
       { name: "Z-API (WhatsApp)", baseUrl: "https://api.z-api.io", ssmKeyPath: "/shared/zapi/token", healthUrl: "https://api.z-api.io", docsUrl: "https://developer.z-api.io" },
       { name: "WhatsApp Cloud (Meta)", baseUrl: "https://graph.facebook.com", ssmKeyPath: "/myclinicsoft/whatsapp/access_token", docsUrl: "https://developers.facebook.com/docs/whatsapp/cloud-api" },
-      { name: "Infobip (SMS)", baseUrl: "https://6zjrk8.api.infobip.com", ssmKeyPath: "/myclinicsoft/infobip_api_key", docsUrl: "https://www.infobip.com/docs" },
+      { name: "Infobip (SMS)", baseUrl: "https://6zjrk8.api.infobip.com", ssmKeyPath: "/shared/infobip/api_key", docsUrl: "https://www.infobip.com/docs" },
       { name: "Google AI", baseUrl: "https://generativelanguage.googleapis.com", ssmKeyPath: "/myclinicsoft/google_ai_api_key", docsUrl: "https://ai.google.dev" },
       { name: "Voyage AI", baseUrl: "https://api.voyageai.com", ssmKeyPath: "/myclinicsoft/voyage_api_key" },
       { name: "Focus NFE", baseUrl: "https://api.focusnfe.com.br", ssmKeyPath: "/myclinicsoft/focusnfe/token_homologacao", environment: "homologacao", docsUrl: "https://focusnfe.com.br/doc" }
