@@ -23,7 +23,7 @@ Servidor: **srv1379597.hstgr.cloud** (IP `62.72.63.18`, IPv6 `2a02:4780:14:44ba:
 | 22 | TCP | 0.0.0.0/0 | SSH padrão |
 | 80 | TCP | 0.0.0.0/0 | HTTP (Traefik) |
 | 443 | TCP | 0.0.0.0/0 | HTTPS (Traefik) |
-| 2222 | TCP | any | SSH alternativo |
+| 47391 | TCP | any | SSH externo (key-only desde 2026-06-06; porta 22 só interna p/ Coolify, 2222 desativada) |
 | 8000 | TCP | 0.0.0.0/0 | Coolify UI |
 | 18789 | TCP | 0.0.0.0/0 | Coolify (extra) |
 | 25/465/587 | TCP | 0.0.0.0/0 | SMTP (mailserver) |

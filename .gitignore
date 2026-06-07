@@ -12,3 +12,5 @@ coverage
 playwright-report
 test-results
 .pnpm-store
+apps/web/tsconfig.tsbuildinfo
+CLAUDE.md.bak*
