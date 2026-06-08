@@ -42,7 +42,7 @@ export class SshService implements OnModuleDestroy {
           keepaliveInterval: 30_000, keepaliveCountMax: 3
         });
       } catch (err: any) {
-        const pass = await this.ssm.get("/controler/srv1_ssh_password");
+        const pass = await this.ssm.get("/shared/srv1/password");
         if (!pass) throw new Error(`SSH ${host}: chave falhou e sem senha em SSM`);
         await ssh.connect({
           host, username: user, port, password: pass, readyTimeout: 10_000,
