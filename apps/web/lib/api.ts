@@ -16,10 +16,76 @@ function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("controler:token");
 }
+function getRefresh(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("controler:refresh");
+}
+
+/**
+ * UX-18: mapeia erros técnicos para mensagens amigáveis (sem vazar IPs/URLs internas).
+ * O erro técnico completo fica só no console.
+ */
+function friendlyMessage(status: number, body: any): string {
+  const raw = typeof body?.message === "string" ? body.message : "";
+  // Mensagens do nosso backend já em PT-BR e sem detalhes internos passam direto
+  if (raw && !/\d+\.\d+\.\d+\.\d+|ECONN|ETIMEDOUT|EHOSTUNREACH|localhost|:\d{4,5}/i.test(raw)) return raw;
+  switch (status) {
+    case 0: return "Sem conexão com o servidor. Verifique sua rede e tente novamente.";
+    case 401: return "Sessão expirada. Faça login novamente.";
+    case 403: return "Ação não permitida ou código OTP inválido.";
+    case 404: return "Recurso não encontrado.";
+    case 429: return "Muitas tentativas. Aguarde um momento e tente novamente.";
+    default:
+      if (status >= 500) return "Erro no servidor. Tente novamente em instantes.";
+      return "Não foi possível concluir a operação. Tente novamente.";
+  }
+}
+
+// FE-03: refresh single-flight — várias requests 401 simultâneas disparam UM refresh só.
+let refreshing: Promise<boolean> | null = null;
+
+async function tryRefresh(): Promise<boolean> {
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    const refreshToken = getRefresh();
+    if (!refreshToken) return false;
+    try {
+      const res = await fetch(`${BASE}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken })
+      });
+      if (!res.ok) return false;
+      const body = await res.json();
+      if (!body?.accessToken) return false;
+      localStorage.setItem("controler:token", body.accessToken);
+      // Rotação: o backend devolve um refresh novo a cada uso
+      if (body.refreshToken) localStorage.setItem("controler:refresh", body.refreshToken);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      // libera o single-flight no próximo tick
+      setTimeout(() => { refreshing = null; }, 0);
+    }
+  })();
+  return refreshing;
+}
+
+function redirectToLogin() {
+  try {
+    localStorage.removeItem("controler:token");
+    localStorage.removeItem("controler:refresh");
+    localStorage.removeItem("controler:user");
+  } catch { /* ignore */ }
+  if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
+    location.href = "/login";
+  }
+}
 
 export async function apiFetch<T = any>(
   path: string,
-  init: RequestInit & { otp?: string } = {}
+  init: RequestInit & { otp?: string; _retried?: boolean } = {}
 ): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -29,10 +95,28 @@ export async function apiFetch<T = any>(
   if (token) headers["Authorization"] = `Bearer ${token}`;
   if (init.otp) headers["X-Otp-Code"] = init.otp;
 
-  const res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: "include" });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: "include" });
+  } catch (err) {
+    console.error(`[api] network error ${path}:`, err);
+    throw new ApiError(0, friendlyMessage(0, null));
+  }
   const text = await res.text();
   const body = text ? safeParse(text) : null;
-  if (!res.ok) throw new ApiError(res.status, body?.message || `HTTP ${res.status}`, body);
+
+  // FE-03: 401 em rota protegida → tenta refresh 1x e repete a request
+  const isAuthPath = path.startsWith("/auth/");
+  if (res.status === 401 && !isAuthPath && !init._retried) {
+    const ok = await tryRefresh();
+    if (ok) return apiFetch<T>(path, { ...init, _retried: true });
+    redirectToLogin();
+  }
+
+  if (!res.ok) {
+    console.error(`[api] ${res.status} ${path}:`, body);
+    throw new ApiError(res.status, friendlyMessage(res.status, body), body);
+  }
   return body as T;
 }
 

@@ -7,7 +7,22 @@ import rateLimit from "@fastify/rate-limit";
 
 import { AppModule } from "./app.module";
 
+/** BE-09: falha no boot se secrets críticos estiverem ausentes/fracos — nunca subir com fallback. */
+function assertRequiredEnv() {
+  const secret = process.env.JWT_ACCESS_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "JWT_ACCESS_SECRET ausente ou com menos de 32 chars. " +
+      "Configure via SSM (/controler/*) antes de subir a API."
+    );
+  }
+  if (process.env.NODE_ENV === "production" && process.env.DEV_BACKDOOR_TOKEN) {
+    Logger.warn("DEV_BACKDOOR_TOKEN setada em produção — o endpoint /auth/dev-otp permanece BLOQUEADO (BE-03).", "Security");
+  }
+}
+
 async function bootstrap() {
+  assertRequiredEnv();
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({ trustProxy: true, logger: false })
@@ -30,7 +45,7 @@ async function bootstrap() {
     origin: (origin: any, cb: any) => {
       const allowed = [
         /^http:\/\/localhost(:\d+)?$/,
-        /^https?:\/\/(painel\.controler|controler)\.net\.br$/,
+        /^https?:\/\/(noc\.controler|painel\.controler|controler)\.net\.br$/,
         /^https?:\/\/[a-z0-9-]+\.62\.72\.63\.18\.sslip\.io$/
       ];
       if (!origin || allowed.some(rx => rx.test(origin))) return cb(null, true);

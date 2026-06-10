@@ -6,10 +6,11 @@ import { GitBranch, ExternalLink, RefreshCcw, Terminal } from "lucide-react";
 import { useState } from "react";
 
 export default function CoolifyPage() {
-  const { data: apps, mutate } = useSWR("coolify-list", () => api.coolifyApps(), { refreshInterval: 30000 });
+  // FE-04: error states tratados
+  const { data: apps, error: appsError, mutate } = useSWR("coolify-list", () => api.coolifyApps(), { refreshInterval: 30000 });
   const [selected, setSelected] = useState<string | null>(null);
-  const { data: envs } = useSWR(selected ? `envs-${selected}` : null, () => selected ? api.coolifyEnvs(selected) : null);
-  const { data: logs } = useSWR(selected ? `logs-${selected}` : null, () => selected ? api.coolifyLogs(selected, 100) : null, { refreshInterval: 10000 });
+  const { data: envs, error: envsError } = useSWR(selected ? `envs-${selected}` : null, () => selected ? api.coolifyEnvs(selected) : null);
+  const { data: logs, error: logsError } = useSWR(selected ? `logs-${selected}` : null, () => selected ? api.coolifyLogs(selected, 100) : null, { refreshInterval: 10000 });
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-up">
@@ -18,6 +19,12 @@ export default function CoolifyPage() {
           <div className="text-sm text-white/60">{apps?.length ?? 0} aplicações</div>
           <button onClick={() => mutate()} className="btn"><RefreshCcw size={12} /> Refresh</button>
         </div>
+        {appsError && (
+          <div className="glass-card p-4 border-l-2 border-red flex items-center gap-3">
+            <p className="text-xs text-white/70 flex-1">Erro ao listar aplicações: {appsError.message}</p>
+            <button onClick={() => mutate()} className="btn text-xs">Tentar novamente</button>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {(apps || []).map((a: any) => {
             const isHealthy = a.status?.includes("healthy");
@@ -58,6 +65,9 @@ export default function CoolifyPage() {
         <div className="glass-card p-5">
           <div className="section-title">Detalhes</div>
           {!selected && <p className="text-xs text-white/40">Clique numa app à esquerda para ver envs e logs.</p>}
+          {selected && envsError && (
+            <p className="text-xs text-red">Erro ao carregar envs: {envsError.message}</p>
+          )}
           {selected && envs && (
             <div className="space-y-2 text-xs max-h-[260px] overflow-y-auto">
               {(envs || []).map((e: any) => (
@@ -74,8 +84,13 @@ export default function CoolifyPage() {
             <Terminal size={14} className="text-cyan" />
             <span className="section-title mb-0">Logs (100 linhas)</span>
           </div>
+          {/* UX-08/FE-04: erro de logs explícito em vez de "Carregando…" eterno */}
           <pre className="text-[10px] text-mono text-white/60 bg-black/40 p-3 rounded h-[300px] overflow-auto whitespace-pre-wrap">
-            {selected ? (logs?.logs || "Carregando…") : "Selecione uma app"}
+            {!selected
+              ? "Selecione uma app"
+              : logsError
+                ? `Erro ao carregar logs: ${logsError.message}\nAtualização automática em 10s…`
+                : (logs?.logs || "Carregando…")}
           </pre>
         </div>
       </div>

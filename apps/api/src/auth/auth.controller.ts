@@ -91,37 +91,31 @@ export class AuthController {
   /**
    * BACKDOOR para admin recuperar acesso quando canais WhatsApp/SMS falham.
    *
-   * Uso:
-   *   POST /be/auth/dev-otp  { phone }  + header X-Dev-Token: <DEV_BACKDOOR_TOKEN>
+   * BE-03: DESABILITADO em produção (NODE_ENV=production retorna 403 sempre).
+   * Em dev/staging: requer header X-Dev-Token validado com timingSafeEqual.
    *
-   * Retorna o código no response — NÃO envia para WhatsApp/SMS.
-   * Requer env `DEV_BACKDOOR_TOKEN` configurada (se não, endpoint retorna 403).
+   * Uso (apenas fora de produção):
+   *   POST /be/auth/dev-otp  { phone }  + header X-Dev-Token: <DEV_BACKDOOR_TOKEN>
    */
   @Throttle({ sensitive: { limit: 3, ttl: 60_000 } })
   @Post("dev-otp")
   async devOtp(@Body() body: { phone: string }, @Req() req: any) {
+    if (process.env.NODE_ENV === "production") throw new ForbiddenException("backdoor disabled");
     const backdoor = process.env.DEV_BACKDOOR_TOKEN;
     if (!backdoor) throw new ForbiddenException("backdoor disabled");
     const token = (req.headers["x-dev-token"] || "").toString();
-    if (token !== backdoor) throw new ForbiddenException("invalid dev token");
+    // BE-03: comparação timing-safe (string equality vaza tamanho/prefixo por timing)
+    const a = crypto.createHash("sha256").update(token).digest();
+    const b = crypto.createHash("sha256").update(backdoor).digest();
+    if (!crypto.timingSafeEqual(a, b)) throw new ForbiddenException("invalid dev token");
 
-    const phoneClean = body.phone.replace(/\D/g, "");
+    const phoneClean = (body?.phone || "").replace(/\D/g, "");
+    if (!phoneClean) throw new ForbiddenException("invalid phone");
     const user = await this.prisma.user.findFirst({ where: { phone: phoneClean, active: true, blocked: false } });
     if (!user) throw new ForbiddenException("user not found");
 
-    const code = (100_000 + crypto.randomInt(900_000)).toString();
-    const codeHash = crypto.createHash("sha256").update(code).digest("hex");
-    await this.prisma.otpToken.updateMany({ where: { userId: user.id, used: false }, data: { used: true } });
-    await this.prisma.otpToken.create({
-      data: {
-        userId: user.id,
-        codeHash,
-        channel: "backdoor",
-        purpose: "login",
-        expiresAt: new Date(Date.now() + 10 * 60_000),
-        ipAddress: getIp(req)
-      }
-    });
-    return { code, user: { id: user.id, name: user.name }, expiresInMinutes: 5 };
+    // Usa o mesmo hashing (HMAC+pepper) do AuthService, senão o verify falha
+    const { code, expiresInMinutes } = await this.auth.issueBackdoorCode(user.id, getIp(req));
+    return { code, user: { id: user.id, name: user.name }, expiresInMinutes };
   }
 }

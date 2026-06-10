@@ -11,10 +11,12 @@ import { JwtService } from "@nestjs/jwt";
 import * as crypto from "crypto";
 import { PrismaService } from "../common/prisma.service";
 import { WhatsappService } from "./whatsapp.service";
+import { hmacHash, requireAccessSecret } from "../common/crypto.util";
 
 const OTP_TTL_MIN = 5;
-const SESSION_TTL_HOURS = 24;
+// BD-07: sessão/refresh valem 7 dias (access JWT continua 15min) — antes era 24h, divergindo da doc
 const REFRESH_TTL_DAYS = 7;
+const SESSION_TTL_MS = REFRESH_TTL_DAYS * 24 * 3600_000;
 
 export interface OtpRequestResult {
   success: boolean;
@@ -47,8 +49,13 @@ export class AuthService {
   private generateCode(): string {
     return (100_000 + crypto.randomInt(900_000)).toString();
   }
+  /** BE-09: sem fallback hardcoded — env é validada no boot (main.ts). */
+  private accessSecret(): string {
+    return requireAccessSecret();
+  }
+  /** BD-08: HMAC com pepper server-side (impede ataque offline a OTP de 6 dígitos / rainbow table de refresh). */
   private hashValue(v: string): string {
-    return crypto.createHash("sha256").update(v).digest("hex");
+    return hmacHash(v);
   }
   private formatPhone(p: string): string {
     return p.replace(/\D/g, "");
@@ -136,11 +143,12 @@ export class AuthService {
     const user = await this.prisma.user.findFirst({ where: { phone: phoneClean, active: true } });
     if (!user) throw new UnauthorizedException("Código inválido ou expirado");
 
-    const token = await this.prisma.otpToken.findFirst({
+    // BE-02: consumo atômico (anti-replay/TOCTOU) — marca usado na mesma operação que valida.
+    const consumed = await this.prisma.otpToken.updateMany({
       where: { userId: user.id, codeHash, used: false, purpose: "login", expiresAt: { gt: new Date() } },
-      orderBy: { createdAt: "desc" }
+      data: { used: true }
     });
-    if (!token) throw new UnauthorizedException("Código inválido ou expirado");
+    if (consumed.count === 0) throw new UnauthorizedException("Código inválido ou expirado");
 
     // Concurrent login detection (espelho MCS)
     const existingActive = await this.prisma.session.findFirst({
@@ -159,31 +167,30 @@ export class AuthService {
 
     const accessToken = await this.jwt.signAsync(
       { sub: user.id, name: user.name, role: user.role },
-      { secret: process.env.JWT_ACCESS_SECRET || "dev-secret-change-me-min-32-chars-please", expiresIn: "15m" }
+      { secret: this.accessSecret(), expiresIn: "15m" }
     );
     const refreshToken = crypto.randomBytes(32).toString("hex");
     const refreshHash = this.hashValue(refreshToken);
-    const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 3600_000);
+    const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
-    await this.prisma.session.create({
-      data: {
-        userId: user.id,
-        tokenHash: this.hashValue(accessToken),
-        refreshHash,
-        ipAddress: ip,
-        userAgent: userAgent || "unknown",
-        status: "active",
-        expiresAt
-      }
-    });
-
-    // Marca OTP usado (anti-replay)
-    await this.prisma.otpToken.update({ where: { id: token.id }, data: { used: true } });
-
-    await this.prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
-    await this.prisma.auditLog.create({
-      data: { userId: user.id, action: "LOGIN", entityType: "USER", entityId: user.id, ipAddress: ip }
-    });
+    // BE-05: session + lastLogin + audit numa transação (evita estado parcial em falha)
+    await this.prisma.$transaction([
+      this.prisma.session.create({
+        data: {
+          userId: user.id,
+          tokenHash: this.hashValue(accessToken),
+          refreshHash,
+          ipAddress: ip,
+          userAgent: userAgent || "unknown",
+          status: "active",
+          expiresAt
+        }
+      }),
+      this.prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } }),
+      this.prisma.auditLog.create({
+        data: { userId: user.id, action: "LOGIN", entityType: "USER", entityId: user.id, ipAddress: ip }
+      })
+    ]);
     return {
       accessToken,
       refreshToken,
@@ -212,7 +219,8 @@ export class AuthService {
   }
 
   async verifyReauthCode(userId: string, code: string): Promise<boolean> {
-    const token = await this.prisma.otpToken.findFirst({
+    // BE-02: consumo atômico — duas requisições paralelas com o mesmo código não passam ambas.
+    const consumed = await this.prisma.otpToken.updateMany({
       where: {
         userId,
         codeHash: this.hashValue(code),
@@ -220,15 +228,34 @@ export class AuthService {
         purpose: "reveal",
         expiresAt: { gt: new Date() }
       },
-      orderBy: { createdAt: "desc" }
+      data: { used: true }
     });
-    if (!token) return false;
-    await this.prisma.otpToken.update({ where: { id: token.id }, data: { used: true } });
-    return true;
+    return consumed.count > 0;
+  }
+
+  /** BE-03: emissão de código backdoor (somente dev/staging — bloqueado em prod no controller). */
+  async issueBackdoorCode(userId: string, ip: string): Promise<{ code: string; expiresInMinutes: number }> {
+    const ttlMin = 10;
+    const code = this.generateCode();
+    await this.prisma.$transaction([
+      this.prisma.otpToken.updateMany({ where: { userId, used: false }, data: { used: true } }),
+      this.prisma.otpToken.create({
+        data: {
+          userId,
+          codeHash: this.hashValue(code),
+          channel: "backdoor",
+          purpose: "login",
+          expiresAt: new Date(Date.now() + ttlMin * 60_000),
+          ipAddress: ip
+        }
+      })
+    ]);
+    return { code, expiresInMinutes: ttlMin };
   }
 
   // ─── 4. REFRESH ─────────────────────────────────────────
-  async refresh(refreshToken: string, ip: string): Promise<{ accessToken: string }> {
+  /** FE-02/FE-03: rotação de refresh token a cada uso — token vazado vira inválido no próximo refresh legítimo. */
+  async refresh(refreshToken: string, ip: string): Promise<{ accessToken: string; refreshToken: string }> {
     const refreshHash = this.hashValue(refreshToken);
     const session = await this.prisma.session.findFirst({
       where: { refreshHash, status: "active", expiresAt: { gt: new Date() } },
@@ -237,13 +264,21 @@ export class AuthService {
     if (!session) throw new UnauthorizedException("Refresh inválido");
     const accessToken = await this.jwt.signAsync(
       { sub: session.user.id, name: session.user.name, role: session.user.role },
-      { secret: process.env.JWT_ACCESS_SECRET || "dev-secret-change-me-min-32-chars-please", expiresIn: "15m" }
+      { secret: this.accessSecret(), expiresIn: "15m" }
     );
-    await this.prisma.session.update({
-      where: { id: session.id },
-      data: { tokenHash: this.hashValue(accessToken), lastActivity: new Date(), ipAddress: ip }
+    const newRefreshToken = crypto.randomBytes(32).toString("hex");
+    // Rotação atômica: só atualiza se o hash antigo ainda for o corrente (anti-replay concorrente)
+    const rotated = await this.prisma.session.updateMany({
+      where: { id: session.id, refreshHash, status: "active" },
+      data: {
+        tokenHash: this.hashValue(accessToken),
+        refreshHash: this.hashValue(newRefreshToken),
+        lastActivity: new Date(),
+        ipAddress: ip
+      }
     });
-    return { accessToken };
+    if (rotated.count === 0) throw new UnauthorizedException("Refresh inválido");
+    return { accessToken, refreshToken: newRefreshToken };
   }
 
   // ─── 5. LOGOUT ──────────────────────────────────────────

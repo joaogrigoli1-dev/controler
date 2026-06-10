@@ -5,14 +5,16 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import * as crypto from "crypto";
+import { hmacHash } from "../common/crypto.util";
+
+// BD-08: hashing real agora é HMAC-SHA256 com pepper (crypto.util.ts)
+process.env.TOKEN_PEPPER = process.env.TOKEN_PEPPER || "test-pepper-for-unit-tests-only-32chars";
 
 // Helpers replicados (mesma lógica do AuthService)
 function generateCode(): string {
   return (100_000 + crypto.randomInt(900_000)).toString();
 }
-function hashValue(v: string): string {
-  return crypto.createHash("sha256").update(v).digest("hex");
-}
+const hashValue = hmacHash;
 function formatPhone(p: string): string {
   return p.replace(/\D/g, "");
 }
@@ -36,18 +38,28 @@ describe("AuthService helpers", () => {
     });
   });
 
-  describe("hashValue", () => {
-    it("sha256 hex de 64 caracteres", () => {
+  describe("hashValue (hmac-sha256 + pepper)", () => {
+    it("hex de 64 caracteres", () => {
       const h = hashValue("123456");
-      expect(h).toBe("8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92");
       expect(h.length).toBe(64);
       expect(h).toMatch(/^[a-f0-9]{64}$/);
+    });
+    it("NÃO é sha256 puro (BD-08: pepper impede rainbow table)", () => {
+      const plainSha = crypto.createHash("sha256").update("123456").digest("hex");
+      expect(hashValue("123456")).not.toBe(plainSha);
     });
     it("determinístico", () => {
       expect(hashValue("abc")).toBe(hashValue("abc"));
     });
     it("colisão diferente", () => {
       expect(hashValue("abc")).not.toBe(hashValue("abd"));
+    });
+    it("muda com pepper diferente", () => {
+      const before = hashValue("abc");
+      const oldPepper = process.env.TOKEN_PEPPER;
+      process.env.TOKEN_PEPPER = "another-pepper-value-with-32-chars!!";
+      expect(hashValue("abc")).not.toBe(before);
+      process.env.TOKEN_PEPPER = oldPepper;
     });
   });
 

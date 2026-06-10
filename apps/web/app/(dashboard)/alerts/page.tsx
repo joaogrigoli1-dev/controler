@@ -67,11 +67,22 @@ export default function AlertsPage() {
             <button onClick={send} disabled={sending} className="btn btn-primary w-full">
               {sending ? "Enviando…" : "Disparar"}
             </button>
-            {result && (
-              <pre className="text-[10px] text-mono text-white/60 bg-black/40 p-2 rounded">
-                {JSON.stringify(result, null, 2)}
-              </pre>
-            )}
+            {/* UX-13: erro em componente dedicado com retry, em vez de JSON cru */}
+            {result?.error ? (
+              <div className="border border-red/40 rounded p-2.5 space-y-2">
+                <p className="text-xs text-red flex items-center gap-1.5">
+                  <AlertCircle size={12} aria-hidden="true" /> {result.error}
+                </p>
+                <button onClick={send} disabled={sending} className="btn w-full text-xs">Tentar novamente</button>
+              </div>
+            ) : result ? (
+              <div className="border border-green/30 rounded p-2.5">
+                <p className="text-xs text-green">✓ Alerta de teste disparado</p>
+                <pre className="text-[10px] text-mono text-white/50 bg-black/40 p-2 rounded mt-2 overflow-auto max-h-32">
+                  {JSON.stringify(result, null, 2)}
+                </pre>
+              </div>
+            ) : null}
           </div>
         </div>
 

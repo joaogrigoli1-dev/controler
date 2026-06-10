@@ -1,7 +1,11 @@
 "use client";
 import Link from "next/link";
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
+import { clearSession } from "@/lib/auth";
+import { disposeSocket } from "@/lib/socket";
 import {
   LayoutGrid, Server, Boxes, Globe, KeyRound, Plug, Bell, BarChart3,
   Search, LogOut, Activity
@@ -20,6 +24,20 @@ const NAV = [
 
 export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
   const path = usePathname() || "";
+  const [logoutModal, setLogoutModal] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  // UX-09/FE-16: logout com modal custom; revoga a sessão no backend, remove apenas
+  // as chaves controler:* (não localStorage.clear()) e força reload completo
+  // (limpa o cache em memória do SWR).
+  const doLogout = async () => {
+    setLoggingOut(true);
+    try { await api.logout(); } catch { /* sessão já pode estar expirada — segue o logout local */ }
+    disposeSocket();
+    clearSession();
+    location.href = "/login";
+  };
+
   return (
     <aside
       className="fixed top-0 left-0 h-full bg-surface-0/80 backdrop-blur-xl border-r border-white/5 flex flex-col z-40"
@@ -68,12 +86,7 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
 
       <div className="p-3 border-t border-white/5">
         <button
-          onClick={() => {
-            if (confirm("Deseja sair do Controler?")) {
-              localStorage.clear();
-              location.href = "/login";
-            }
-          }}
+          onClick={() => setLogoutModal(true)}
           className="nav-link w-full text-white/60 hover:text-red"
           aria-label="Sair do sistema"
           title="Sair (vai pedir confirmação)"
@@ -82,6 +95,32 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
           <span>Sair</span>
         </button>
       </div>
+
+      {logoutModal && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur z-50 flex items-center justify-center"
+          onClick={() => !loggingOut && setLogoutModal(false)}
+          onKeyDown={e => { if (e.key === "Escape" && !loggingOut) setLogoutModal(false); }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirmar saída"
+        >
+          <div className="bezel-card max-w-xs" onClick={e => e.stopPropagation()}>
+            <div className="inner">
+              <h3 className="text-display font-bold text-lg mb-2">Sair do Controler?</h3>
+              <p className="text-xs text-white/50 mb-4">Sua sessão será encerrada neste dispositivo.</p>
+              <div className="flex gap-2">
+                <button onClick={() => setLogoutModal(false)} disabled={loggingOut} className="btn flex-1" autoFocus>
+                  Cancelar
+                </button>
+                <button onClick={doLogout} disabled={loggingOut} className="btn flex-1 text-red border-red/40 hover:bg-red/10">
+                  {loggingOut ? "Saindo…" : "Sair"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

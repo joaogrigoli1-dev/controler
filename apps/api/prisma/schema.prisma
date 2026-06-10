@@ -14,12 +14,33 @@ datasource db {
 // AUTH
 // ─────────────────────────────────────────────────────────
 
+// BD-06: enums nativos no Postgres — valores inválidos são rejeitados pelo banco,
+// mesmo em inserts diretos/raw SQL (antes era String com valores só em comentário).
+enum UserRole {
+  admin
+  viewer
+}
+
+enum OtpPurpose {
+  login
+  reveal
+  sensitive_action
+}
+
+enum SessionStatus {
+  active
+  revoked_by_new_login
+  expired
+  logged_out
+  blocked
+}
+
 model User {
   id        String   @id @default(cuid())
   name      String
   email     String   @unique
   phone     String   @unique
-  role      String   @default("admin") // admin | viewer
+  role      UserRole @default(admin) // BD-06
   active    Boolean  @default(true)
   blocked   Boolean  @default(false)
   lastLogin DateTime?
@@ -35,33 +56,36 @@ model User {
 }
 
 model OtpToken {
-  id        String   @id @default(cuid())
+  id        String     @id @default(cuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  codeHash  String   // sha256(code)
-  channel   String   @default("whatsapp")
-  purpose   String   @default("login") // login | reveal | sensitive_action
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String     // BD-08: hmac-sha256(code, TOKEN_PEPPER)
+  channel   String     @default("whatsapp") // whatsapp | sms | backdoor
+  purpose   OtpPurpose @default(login) // BD-06
   expiresAt DateTime
-  used      Boolean  @default(false)
+  used      Boolean    @default(false)
   ipAddress String?
-  createdAt DateTime @default(now())
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @default(now()) @updatedAt // BD-13
 
-  @@index([userId, used, expiresAt])
+  // BD-09: cobre a query de verificação (userId + purpose + used + expiresAt; codeHash filtra o resto)
+  @@index([userId, purpose, used, expiresAt])
   @@map("otp_tokens")
 }
 
 model Session {
-  id           String   @id @default(cuid())
+  id           String        @id @default(cuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash    String   @unique
-  refreshHash  String?  @unique
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String        @unique
+  refreshHash  String?       @unique
   ipAddress    String
   userAgent    String
-  status       String   @default("active") // active | revoked_by_new_login | expired | logged_out | blocked
+  status       SessionStatus @default(active) // BD-06
   expiresAt    DateTime
-  lastActivity DateTime @default(now())
-  createdAt    DateTime @default(now())
+  lastActivity DateTime      @default(now())
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @default(now()) @updatedAt // BD-13 (usado pelo cleanup BD-01)
 
   @@index([userId, status])
   @@map("sessions")
@@ -73,8 +97,9 @@ model Session {
 
 model VaultAuditLog {
   id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  // BD-03: SetNull preserva a trilha de auditoria se o usuário for deletado
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   action    String   // REVEAL | LIST | EXPORT
   resource  String   // /myclinicsoft/zapi_token
   ipAddress String
@@ -89,7 +114,8 @@ model VaultAuditLog {
 model AuditLog {
   id         String   @id @default(cuid())
   userId     String?
-  user       User?    @relation(fields: [userId], references: [id])
+  // BD-03: explicita SetNull (preserva trilha; antes era restrict implícito)
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   action     String
   entityType String?
   entityId   String?
@@ -199,6 +225,7 @@ model AlertLog {
 
   @@index([createdAt(sort: Desc)])
   @@index([severity, createdAt(sort: Desc)])
+  @@index([ruleId, createdAt(sort: Desc)]) // BD-05
   @@map("alert_logs")
 }
 

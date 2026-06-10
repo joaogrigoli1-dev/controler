@@ -2,7 +2,13 @@
 import { usePathname } from "next/navigation";
 import { Bell, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
+import { mutate } from "swr";
 import { getSocket } from "@/lib/socket";
+
+// UX-15: timezone explícita ao lado do relógio
+const TZ_LABEL = new Intl.DateTimeFormat("pt-BR", { timeZoneName: "short" })
+  .formatToParts(new Date())
+  .find(p => p.type === "timeZoneName")?.value || "";
 
 function pageTitle(path: string) {
   if (path.startsWith("/overview")) return "Mission Control";
@@ -23,8 +29,16 @@ export function Topbar() {
 
   useEffect(() => {
     const s = getSocket();
-    const onConn = () => setConnected(true);
-    const onDisc = () => setConnected(false);
+    let wasDisconnected = false;
+    const onConn = () => {
+      setConnected(true);
+      // UX-14: ao reconectar, revalida todas as queries SWR (dados podem estar stale)
+      if (wasDisconnected) {
+        wasDisconnected = false;
+        mutate(() => true);
+      }
+    };
+    const onDisc = () => { wasDisconnected = true; setConnected(false); };
     s.on("connect", onConn);
     s.on("disconnect", onDisc);
     if (s.connected) onConn();
@@ -45,13 +59,25 @@ export function Topbar() {
         </span>
       </div>
       <div className="flex items-center gap-3 text-xs">
+        {/* UX-14: deixa explícito que os dados podem estar desatualizados */}
+        {!connected && (
+          <span className="badge badge-yellow" title="Sem conexão em tempo real — os valores exibidos podem estar desatualizados">
+            ⚠ Dados podem estar desatualizados
+          </span>
+        )}
         <div
           className={`badge ${connected ? "badge-green" : "badge-red"}`}
           title={connected ? "WebSocket conectado — métricas em tempo real" : "Tentando reconectar ao servidor de métricas"}
         >
           {connected ? "● WS conectado" : "○ Reconectando..."}
         </div>
-        <span className="text-mono text-white/70 hidden sm:inline" aria-label={`Hora atual: ${now}`}>{now}</span>
+        <span
+          className="text-mono text-white/70 hidden sm:inline"
+          aria-label={`Hora atual: ${now} (${TZ_LABEL})`}
+          title={`Horário local do seu navegador (${TZ_LABEL}). Logs e alertas do servidor usam America/Sao_Paulo.`}
+        >
+          {now} <span className="text-white/40">{TZ_LABEL}</span>
+        </span>
         <button
           className="btn btn-ghost"
           onClick={() => location.reload()}

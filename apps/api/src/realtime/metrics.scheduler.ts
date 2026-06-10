@@ -245,16 +245,37 @@ export class MetricsScheduler {
   }
 
   // limpeza diária: snapshots > 30 dias + timeline events > 90 dias
+  // BD-01: + tabelas de auth (OTP expirado, sessions encerradas, audit logs antigos)
   @Cron("0 3 * * *", { timeZone: "America/Sao_Paulo" })
   async cleanup() {
+    const now = new Date();
     const cutoffMetrics = new Date(Date.now() - 30 * 24 * 3600_000);
     const cutoffEvents = new Date(Date.now() - 90 * 24 * 3600_000);
-    const [m, h, t] = await Promise.all([
+    const cutoffSessions = new Date(Date.now() - 7 * 24 * 3600_000);
+    const cutoffAudit = new Date(Date.now() - 180 * 24 * 3600_000);
+    const [m, h, t, otp, sess, audit] = await Promise.all([
       this.prisma.metricSnapshot.deleteMany({ where: { createdAt: { lt: cutoffMetrics } } }),
       this.prisma.hostMetricSnapshot.deleteMany({ where: { createdAt: { lt: cutoffMetrics } } }),
-      this.prisma.timelineEvent.deleteMany({ where: { createdAt: { lt: cutoffEvents } } })
+      this.prisma.timelineEvent.deleteMany({ where: { createdAt: { lt: cutoffEvents } } }),
+      // OTPs expirados ou já consumidos há mais de 24h
+      this.prisma.otpToken.deleteMany({
+        where: { OR: [{ expiresAt: { lt: now } }, { used: true, createdAt: { lt: new Date(Date.now() - 24 * 3600_000) } }] }
+      }),
+      // Sessions expiradas, ou encerradas (logout/revogadas/bloqueadas) há mais de 7 dias
+      this.prisma.session.deleteMany({
+        where: {
+          OR: [
+            { expiresAt: { lt: now } },
+            { status: { in: ["logged_out", "revoked_by_new_login", "expired", "blocked"] }, updatedAt: { lt: cutoffSessions } }
+          ]
+        }
+      }),
+      // Audit log geral > 180 dias (VaultAuditLog é preservado integralmente)
+      this.prisma.auditLog.deleteMany({ where: { createdAt: { lt: cutoffAudit } } })
     ]);
-    this.log.log(`Cleanup: ${m.count + h.count} snapshots + ${t.count} events removidos`);
+    this.log.log(
+      `Cleanup: ${m.count + h.count} snapshots + ${t.count} events + ${otp.count} otps + ${sess.count} sessions + ${audit.count} audit logs removidos`
+    );
   }
 
   /** Roda 1x na inicialização — popula timeline com snapshot inicial. */

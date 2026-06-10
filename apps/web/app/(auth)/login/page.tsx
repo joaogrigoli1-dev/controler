@@ -7,6 +7,15 @@ import { Activity, ArrowRight, Loader2, RotateCw, ShieldCheck, Sparkles } from "
 
 const RESEND_COOLDOWN_SEC = 30;
 
+/** UX-20: máscara visual — usuário vê o número formatado em vez da transformação silenciosa. */
+function formatPhoneDisplay(raw: string): string {
+  const d = raw.replace(/\D/g, "").slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 3) return `${d.slice(0, 2)} ${d.slice(2)}`;
+  if (d.length <= 7) return `${d.slice(0, 2)} ${d.slice(2, 3)} ${d.slice(3)}`;
+  return `${d.slice(0, 2)} ${d.slice(2, 3)} ${d.slice(3, 7)} ${d.slice(7)}`;
+}
+
 /**
  * Política OTP (29/05/2026): canal ÚNICO Z-API (WhatsApp).
  * SMS e Meta API foram desabilitados para login. Backdoor admin via /be/auth/dev-otp.
@@ -36,10 +45,9 @@ export default function LoginPage() {
       const r: any = await api.requestCode(phone.replace(/\D/g, ""), "whatsapp");
       setFirstName(r.firstName || "");
       setStep("code");
-      if (isResend) {
-        setResendNotice("Código reenviado por WhatsApp.");
-        setResendCooldown(RESEND_COOLDOWN_SEC);
-      }
+      // UX-12: confirmação visual também no primeiro envio
+      setResendNotice(isResend ? "Código reenviado por WhatsApp." : "Código enviado ao WhatsApp ✓");
+      if (isResend) setResendCooldown(RESEND_COOLDOWN_SEC);
     } catch (e: any) {
       setError(e?.message || "Falha ao enviar código");
     } finally {
@@ -112,7 +120,7 @@ export default function LoginPage() {
               <input
                 id="phone-input"
                 value={phone}
-                onChange={e => setPhone(e.target.value)}
+                onChange={e => setPhone(formatPhoneDisplay(e.target.value))}
                 placeholder="65 9 8466 5555"
                 inputMode="tel"
                 autoComplete="tel"
@@ -170,6 +178,8 @@ export default function LoginPage() {
                 autoFocus
                 className="w-full mt-1 bg-white/5 border border-white/10 rounded-md px-3 py-3 text-center text-3xl text-mono tracking-[0.6em] outline-none focus:border-accent transition"
               />
+              {/* UX-11: feedback do que falta digitar */}
+              <p className="mt-1 text-[10px] text-white/30 text-right" aria-hidden="true">{code.length}/6 dígitos</p>
               {error && (
                 <p className="mt-2 text-xs text-red" role="alert">
                   {error}
