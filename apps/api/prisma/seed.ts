@@ -11,11 +11,11 @@ async function main() {
   // ─── User admin (João Henrique) ─────────────────────────
   const joao = await prisma.user.upsert({
     where: { email: "joaogrigoli1@gmail.com" },
-    update: { phone: "556598466555", active: true, blocked: false },
+    update: { phone: "5565984665555", active: true, blocked: false },
     create: {
       name: "João Henrique Grigoli",
       email: "joaogrigoli1@gmail.com",
-      phone: "556598466555",
+      phone: "5565984665555",
       role: "admin",
       active: true
     }
