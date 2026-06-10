@@ -7,13 +7,17 @@ import { Activity, ArrowRight, Loader2, RotateCw, ShieldCheck, Sparkles } from "
 
 const RESEND_COOLDOWN_SEC = 30;
 
-/** UX-20: máscara visual — usuário vê o número formatado em vez da transformação silenciosa. */
+/**
+ * UX-20: máscara visual — formata SEM truncar dígitos.
+ * Número BR completo = 13 dígitos (55 + DDD + 9XXXXXXXX). Cap em 13 para não cortar o país.
+ * Ex.: 5565984665555 -> "55 65 98466 5555"
+ */
 function formatPhoneDisplay(raw: string): string {
-  const d = raw.replace(/\D/g, "").slice(0, 11);
-  if (d.length <= 2) return d;
-  if (d.length <= 3) return `${d.slice(0, 2)} ${d.slice(2)}`;
-  if (d.length <= 7) return `${d.slice(0, 2)} ${d.slice(2, 3)} ${d.slice(3)}`;
-  return `${d.slice(0, 2)} ${d.slice(2, 3)} ${d.slice(3, 7)} ${d.slice(7)}`;
+  const d = raw.replace(/\D/g, "").slice(0, 13);
+  if (d.length <= 2) return d;                                            // 55
+  if (d.length <= 4) return `${d.slice(0, 2)} ${d.slice(2)}`;            // 55 65
+  if (d.length <= 9) return `${d.slice(0, 2)} ${d.slice(2, 4)} ${d.slice(4)}`;          // 55 65 98466
+  return `${d.slice(0, 2)} ${d.slice(2, 4)} ${d.slice(4, 9)} ${d.slice(9)}`;            // 55 65 98466 5555
 }
 
 /**
@@ -121,7 +125,7 @@ export default function LoginPage() {
                 id="phone-input"
                 value={phone}
                 onChange={e => setPhone(formatPhoneDisplay(e.target.value))}
-                placeholder="65 9 8466 5555"
+                placeholder="55 65 98466 5555"
                 inputMode="tel"
                 autoComplete="tel"
                 onKeyDown={e => {
