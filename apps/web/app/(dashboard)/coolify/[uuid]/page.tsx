@@ -105,14 +105,14 @@ export default function CoolifyAppDrillPage() {
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <Link href="/coolify" className="text-xs text-white/40 hover:text-white/70 flex items-center gap-1 mb-1.5">
+          <Link href="/coolify" className="text-xs text-white/60 hover:text-white/70 flex items-center gap-1 mb-1.5">
             <ArrowLeft size={12} /> Coolify
           </Link>
           <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-display font-bold text-xl truncate">{app?.name ?? uuid}</h1>
             {app && <StatusBadge status={badge} pulse />}
           </div>
-          <div className="text-xs text-white/40 mt-1 flex items-center gap-3 flex-wrap">
+          <div className="text-xs text-white/60 mt-1 flex items-center gap-3 flex-wrap">
             {fqdn && (
               <a
                 href={`https://${fqdn}`}
@@ -240,7 +240,7 @@ export default function CoolifyAppDrillPage() {
                 {envs.map((e: any) => (
                   <div key={e.id ?? e.key} className="flex items-center justify-between gap-2 p-1.5 rounded bg-white/[0.03]">
                     <span className="text-mono text-white/80 truncate">{e.key}</span>
-                    <span className="text-mono text-white/40 shrink-0">
+                    <span className="text-mono text-white/60 shrink-0">
                       {e.is_secret ? "••••" : String(e.value ?? "").slice(0, 20)}
                     </span>
                   </div>

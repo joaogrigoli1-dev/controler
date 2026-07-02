@@ -108,7 +108,7 @@ export default function CoolifyPage() {
                     <Link href={`/coolify/${a.uuid}`} className="text-display font-semibold hover:underline">
                       {a.name}
                     </Link>
-                    <div className="text-xs text-white/40 text-mono truncate mt-0.5">{a.status || "—"}</div>
+                    <div className="text-xs text-white/60 text-mono truncate mt-0.5">{a.status || "—"}</div>
                   </div>
                   <StatusBadge status={appBadgeStatus(a)} pulse />
                 </div>
@@ -243,7 +243,7 @@ export default function CoolifyPage() {
                     <div key={project}>
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-white/80 truncate">{project}</span>
-                        <span className="text-mono text-white/50">
+                        <span className="text-mono text-white/60">
                           {ok} ok · {fail} fail {pct != null ? `· ${pct.toFixed(0)}%` : ""}
                         </span>
                       </div>

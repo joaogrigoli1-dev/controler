@@ -19,7 +19,7 @@ function tileClass(c: ContainerRow): string {
 
 export function ContainerHeatmap({ containers, className }: { containers: ContainerRow[]; className?: string }) {
   if (!containers.length) {
-    return <div className="text-xs text-white/40 py-6 text-center">Nenhum container reportado.</div>;
+    return <div className="text-xs text-white/60 py-6 text-center">Nenhum container reportado.</div>;
   }
   return (
     <div className={cn("grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 xl:grid-cols-8 gap-2", className)}>

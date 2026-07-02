@@ -103,7 +103,7 @@ export default function VaultPage() {
           placeholder="Filtrar por nome do parâmetro..."
           className="flex-1 bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-mono outline-none focus:border-accent"
         />
-        <span className="text-xs text-white/40">{params?.length ?? 0} parâmetros</span>
+        <span className="text-xs text-white/60">{params?.length ?? 0} parâmetros</span>
       </div>
 
       {paramsError && (
@@ -124,7 +124,7 @@ export default function VaultPage() {
                 <div key={p.name} className="flex items-center gap-3 p-2 rounded hover:bg-white/[0.02]">
                   <span className="text-mono text-cyan flex-1 truncate">{p.key}</span>
                   <StatusBadge status={p.type === "SecureString" ? "purple" : "muted"} label={p.type} />
-                  <span className="text-mono text-white/50 w-[200px] text-right truncate">
+                  <span className="text-mono text-white/70 w-[200px] text-right truncate">
                     {visible ? revealed[p.name] : "••••••••"}
                   </span>
                   <button
@@ -149,7 +149,7 @@ export default function VaultPage() {
         ) : (
           <>
             <table className="w-full text-xs">
-              <thead className="text-white/40 text-[10px] uppercase tracking-widest">
+              <thead className="text-white/60 text-[10px] uppercase tracking-widest">
                 <tr><th className="text-left py-2">Quando</th><th className="text-left">Usuário</th><th className="text-left">Ação</th><th className="text-left">Recurso</th><th className="text-left">IP</th></tr>
               </thead>
               <tbody>
@@ -185,7 +185,7 @@ export default function VaultPage() {
           <div className="bezel-card max-w-sm" onClick={e => e.stopPropagation()}>
             <div className="inner">
               <h3 className="text-display font-bold text-lg mb-1">Revelar credencial</h3>
-              <p className="text-xs text-white/50 mb-4 text-mono">{otpModal.name}</p>
+              <p className="text-xs text-white/70 mb-4 text-mono">{otpModal.name}</p>
               {otpSendError ? (
                 <div className="mb-4">
                   <p className="text-sm text-red mb-2">{otpSendError}</p>

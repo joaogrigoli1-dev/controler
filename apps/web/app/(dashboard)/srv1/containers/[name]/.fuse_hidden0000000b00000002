@@ -25,7 +25,7 @@ import { KpiTile } from "@/components/ui/KpiTile";
 import { DataBadge } from "@/components/noc/DataBadge";
 import { CardError } from "@/components/noc/CardError";
 import { Skeleton, CardSkeleton } from "@/components/noc/Skeleton";
-import { TimeSeriesChart, SERIES } from "@/components/noc/TimeSeriesChart";
+import { TimeSeriesChart } from "@/components/noc/TimeSeriesChart";
 import { EventTimeline, type TimelineItem } from "@/components/noc/EventTimeline";
 import { OtpActionButton } from "@/components/noc/OtpActionButton";
 import { RagBadge } from "@/components/noc/RagBadge";
@@ -275,7 +275,7 @@ export default function ContainerDrillPage() {
               warn={THRESHOLDS.containerCpu.warn}
               crit={THRESHOLDS.containerCpu.crit}
               unit="%"
-              series={[{ key: "cpu", label: "CPU %", color: SERIES.teal }]}
+              series={[{ key: "cpu", label: "CPU %", color: "hsl(191 87% 53%)" }]}
             />
           </div>
 
@@ -299,8 +299,8 @@ export default function ContainerDrillPage() {
               unit=" MB"
               legend
               series={[
-                { key: "mem", label: "Memória MB", color: SERIES.indigo },
-                { key: "trend", label: "tendência 6h", color: SERIES.amber, dashed: true }
+                { key: "mem", label: "Memória MB", color: "hsl(248 92% 70%)" },
+                { key: "trend", label: "tendência 6h", color: "hsl(45 95% 53%)", dashed: true }
               ]}
             />
           </div>
@@ -318,8 +318,8 @@ export default function ContainerDrillPage() {
                 height={200}
                 legend
                 series={[
-                  { key: "rx", label: "RX Kbps", color: SERIES.teal },
-                  { key: "tx", label: "TX Kbps", color: SERIES.indigo }
+                  { key: "rx", label: "RX Kbps", color: "hsl(160 70% 45%)" },
+                  { key: "tx", label: "TX Kbps", color: "hsl(191 87% 53%)" }
                 ]}
               />
             </div>
@@ -338,8 +338,8 @@ export default function ContainerDrillPage() {
                 height={200}
                 legend
                 series={[
-                  { key: "br", label: "read Kbps", color: SERIES.indigo },
-                  { key: "bw", label: "write Kbps", color: SERIES.amber }
+                  { key: "br", label: "read Kbps", color: "hsl(280 70% 65%)" },
+                  { key: "bw", label: "write Kbps", color: "hsl(45 95% 53%)" }
                 ]}
               />
             </div>

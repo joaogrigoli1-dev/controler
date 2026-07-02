@@ -41,7 +41,7 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
 
   return (
     <aside
-      className="fixed top-0 left-0 h-full bg-surface-0/80 backdrop-blur-xl border-r border-white/5 flex flex-col z-40"
+      className="noc-sidebar fixed top-0 left-0 h-full flex flex-col z-40"
       style={{ width: "var(--sidebar-w)" }}
       aria-label="Navegação principal"
     >
@@ -110,7 +110,7 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
           <div className="bezel-card max-w-xs" onClick={e => e.stopPropagation()}>
             <div className="inner">
               <h3 className="text-display font-bold text-lg mb-2">Sair do Controler?</h3>
-              <p className="text-xs text-white/50 mb-4">Sua sessão será encerrada neste dispositivo.</p>
+              <p className="text-xs text-white/70 mb-4">Sua sessão será encerrada neste dispositivo.</p>
               <div className="flex gap-2">
                 <button onClick={() => setLogoutModal(false)} disabled={loggingOut} className="btn flex-1" autoFocus>
                   Cancelar

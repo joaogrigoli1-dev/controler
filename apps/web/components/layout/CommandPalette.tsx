@@ -50,7 +50,7 @@ export function CommandPalette({ open, onOpenChange }: Props) {
             <kbd className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-white/40">ESC</kbd>
           </div>
           <Command.List className="max-h-[400px] overflow-y-auto p-2">
-            <Command.Empty className="py-6 text-center text-white/40 text-sm">Nada encontrado.</Command.Empty>
+            <Command.Empty className="py-6 text-center text-white/60 text-sm">Nada encontrado.</Command.Empty>
             <Command.Group heading="Navegação">
               {ITEMS.map(it => (
                 <Command.Item

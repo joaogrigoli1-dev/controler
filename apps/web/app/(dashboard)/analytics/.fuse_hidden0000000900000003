@@ -365,8 +365,8 @@ export default function AnalyticsPage() {
               <TimeSeriesChart
                 data={histData}
                 series={[
-                  { key: "cpu", label: "CPU %", color: SERIES.teal },
-                  { key: "mem", label: "RAM %", color: SERIES.indigo }
+                  { key: "cpu", label: "CPU %", color: "hsl(191 87% 53%)" },
+                  { key: "mem", label: "RAM %", color: "hsl(248 92% 70%)" }
                 ]}
                 xKey="t"
                 height={260}
@@ -462,7 +462,7 @@ export default function AnalyticsPage() {
                     paddingAngle={2}
                   >
                     {sevPie.map((d: any) => (
-                      <Cell key={d.name} fill={SEV_COLORS[d.name as keyof typeof SEV_COLORS] || "hsl(var(--muted))"} />
+                      <Cell key={d.name} fill={SEV_COLORS[d.name as keyof typeof SEV_COLORS] || "#888"} />
                     ))}
                   </Pie>
                   <Tooltip contentStyle={TOOLTIP_STYLE} />

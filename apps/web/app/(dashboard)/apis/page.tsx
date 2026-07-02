@@ -2,10 +2,12 @@
 import useSWR from "swr";
 import { api } from "@/lib/api";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { CardError } from "@/components/noc/CardError";
 import { Zap, ExternalLink, KeyRound } from "lucide-react";
 
 export default function ApisPage() {
-  const { data: apis, mutate } = useSWR("apis", () => api.apis(), { refreshInterval: 60000 });
+  // R11 (FASE 5): error state visível + retry (tela pré-FASE 4)
+  const { data: apis, error: apisError, mutate } = useSWR("apis", () => api.apis(), { refreshInterval: 60000 });
 
   const grouped: Record<string, any[]> = {};
   (apis || []).forEach((a: any) => {
@@ -26,12 +28,16 @@ export default function ApisPage() {
         <button onClick={ping} className="btn btn-primary"><Zap size={12} /> Pingar todas</button>
       </div>
 
+      {apisError && !apis && (
+        <CardError message={`Erro ao carregar integrações: ${apisError.message}`} onRetry={() => void mutate()} />
+      )}
+
       {Object.entries(grouped).map(([prj, items]) => (
         <div key={prj} className="glass-card p-6">
           <div className="section-title flex items-center gap-2">
             <span>{items[0]?.project?.icon || "📦"}</span>
             {items[0]?.project?.name || prj}
-            <span className="text-white/30 text-mono">({items.length})</span>
+            <span className="text-white/60 text-mono">({items.length})</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {items.map((a: any) => (

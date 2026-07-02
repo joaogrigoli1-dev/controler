@@ -85,10 +85,10 @@ export function TimeSeriesChart({
           <Tooltip contentStyle={TOOLTIP_STYLE} />
           {legend && <Legend wrapperStyle={{ fontSize: 11 }} />}
           {typeof warn === "number" && (
-            <ReferenceLine y={warn} stroke={SERIES.amber} strokeDasharray="4 4" strokeOpacity={0.6} />
+            <ReferenceLine y={warn} stroke="hsl(45 95% 53%)" strokeDasharray="4 4" strokeOpacity={0.6} />
           )}
           {typeof crit === "number" && (
-            <ReferenceLine y={crit} stroke={SERIES.rose} strokeDasharray="4 4" strokeOpacity={0.7} />
+            <ReferenceLine y={crit} stroke="hsl(0 90% 71%)" strokeDasharray="4 4" strokeOpacity={0.7} />
           )}
           {series.map(s => (
             <Line

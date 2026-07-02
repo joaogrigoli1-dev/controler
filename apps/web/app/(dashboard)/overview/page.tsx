@@ -178,7 +178,7 @@ export default function OverviewPage() {
                 <div className="flex items-center gap-3">
                   <HeartPulse size={28} className="text-accent" aria-hidden="true" />
                   <span className="text-5xl font-bold text-mono">{score != null ? Math.round(score) : "—"}</span>
-                  <span className="text-xs text-white/40 uppercase tracking-widest mb-1.5">/ 100</span>
+                  <span className="text-xs text-white/60 uppercase tracking-widest mb-1.5">/ 100</span>
                 </div>
                 <div className="mb-2">
                   <RagBadge rag={scoreRag} pulse />
@@ -191,14 +191,14 @@ export default function OverviewPage() {
                   return (
                     <div key={key} className="rounded-md border border-white/5 bg-white/[0.02] p-3">
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] uppercase tracking-widest text-white/40">
+                        <span className="text-[10px] uppercase tracking-widest text-white/60">
                           {sig?.label ?? fallbackLabel}
                         </span>
                         <RagBadge rag={rag} />
                       </div>
                       <div className="text-xl font-bold text-mono mt-1">
                         {sig?.value != null ? sig.value : "—"}
-                        <span className="text-[10px] text-white/40 font-normal ml-1">{sig?.unit ?? ""}</span>
+                        <span className="text-[10px] text-white/60 font-normal ml-1">{sig?.unit ?? ""}</span>
                       </div>
                       <div className="mt-1">
                         <Sparkline data={sig?.spark ?? []} width={120} height={24} />
@@ -236,7 +236,7 @@ export default function OverviewPage() {
                 <div className="min-w-0">
                   <div className="text-sm font-semibold">{mostImportant.title}</div>
                   {mostImportant.detail && (
-                    <p className="text-xs text-white/50 mt-1 leading-relaxed">{mostImportant.detail}</p>
+                    <p className="text-xs text-white/70 mt-1 leading-relaxed">{mostImportant.detail}</p>
                   )}
                 </div>
               </div>
@@ -247,7 +247,7 @@ export default function OverviewPage() {
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-2 text-xs text-white/50 py-4">
+            <div className="flex items-center gap-2 text-xs text-white/70 py-4">
               <CheckCircle2 size={14} className="text-green" /> Nada crítico agora. Tudo dentro dos limiares.
             </div>
           )}
@@ -263,7 +263,7 @@ export default function OverviewPage() {
             <Gauge value={h?.memPercent ?? 0} label="RAM" size={110} />
             <Gauge value={h?.diskPercent ?? 0} label="DISK" size={110} thresholds={[70, 90]} />
           </div>
-          <div className="grid grid-cols-3 gap-3 text-center mt-4 text-[10px] text-white/40 uppercase tracking-widest">
+          <div className="grid grid-cols-3 gap-3 text-center mt-4 text-[10px] text-white/60 uppercase tracking-widest">
             <div>
               <Clock size={11} className="inline" />{" "}
               <span className="text-white/80">{h?.uptimeSeconds ? fmtUptime(h.uptimeSeconds) : "—"}</span>
@@ -314,7 +314,7 @@ export default function OverviewPage() {
             <div className="section-title mb-0">Heatmap de containers</div>
             <DataBadge source={containersNoc.source} stale={containersNoc.stale} />
           </div>
-          <span className="text-xs text-white/40 text-mono">{cs.length} containers · clique para drill-down</span>
+          <span className="text-xs text-white/60 text-mono">{cs.length} containers · clique para drill-down</span>
         </div>
         {containersNoc.isLoading && !cs.length ? (
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 xl:grid-cols-8 gap-2">
@@ -393,7 +393,7 @@ export default function OverviewPage() {
             {!deploys ? (
               <div className="space-y-2">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
             ) : recentDeploys.length === 0 ? (
-              <div className="text-center py-4 text-xs text-white/40">Nenhum deploy registrado.</div>
+              <div className="text-center py-4 text-xs text-white/60">Nenhum deploy registrado.</div>
             ) : (
               <div className="space-y-1.5 text-sm">
                 {recentDeploys.map((d: any, i: number) => {

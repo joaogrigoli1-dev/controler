@@ -21,7 +21,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { KpiTile } from "@/components/ui/KpiTile";
 import { RagBadge, ragTextClass } from "@/components/noc/RagBadge";
 import { DataBadge } from "@/components/noc/DataBadge";
-import { TimeSeriesChart, SERIES } from "@/components/noc/TimeSeriesChart";
+import { TimeSeriesChart } from "@/components/noc/TimeSeriesChart";
 import { CardError, EmptyState } from "@/components/noc/CardError";
 import { Skeleton, SkeletonRows } from "@/components/noc/Skeleton";
 import { cn, fmtBytes, fmtUptime } from "@/lib/utils";
@@ -204,8 +204,8 @@ export default function Srv1Page() {
             <TimeSeriesChart
               data={histData}
               series={[
-                { key: "cpu", label: "CPU %", color: SERIES.teal },
-                { key: "mem", label: "RAM %", color: SERIES.indigo }
+                { key: "cpu", label: "CPU %", color: "hsl(191 87% 53%)" },
+                { key: "mem", label: "RAM %", color: "hsl(248 92% 70%)" }
               ]}
               xKey="t"
               height={200}

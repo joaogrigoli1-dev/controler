@@ -27,7 +27,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
         <div className="glass-card p-8 m-6 text-center space-y-3">
           <AlertTriangle size={28} className="mx-auto text-red" />
           <p className="text-sm text-white/80">Esta tela encontrou um erro inesperado.</p>
-          <p className="text-xs text-white/40 text-mono">{this.state.error.message}</p>
+          <p className="text-xs text-white/60 text-mono">{this.state.error.message}</p>
           <button onClick={() => this.setState({ error: null })} className="btn btn-primary mx-auto">
             <RefreshCcw size={12} /> Recarregar tela
           </button>

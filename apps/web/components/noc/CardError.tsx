@@ -17,5 +17,5 @@ export function CardError({ message, onRetry }: { message?: string; onRetry?: ()
 }
 
 export function EmptyState({ message }: { message: string }) {
-  return <div className="text-center py-8 text-xs text-white/40">{message}</div>;
+  return <div className="text-center py-8 text-xs text-white/60">{message}</div>;
 }

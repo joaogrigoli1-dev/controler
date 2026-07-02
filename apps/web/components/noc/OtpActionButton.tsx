@@ -104,7 +104,7 @@ export function OtpActionButton({ label, icon, confirmText, danger, className, d
                 <button onClick={() => void requestOtp()} className="btn text-xs">Reenviar código</button>
               </div>
             ) : (
-              <p className="text-[11px] text-white/40">
+              <p className="text-[11px] text-white/60">
                 {sent ? "Código enviado para o seu telefone (WhatsApp/SMS)." : "Enviando código…"}
               </p>
             )}

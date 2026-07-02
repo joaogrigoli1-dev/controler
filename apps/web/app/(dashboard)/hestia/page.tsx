@@ -2,11 +2,13 @@
 import useSWR from "swr";
 import { api } from "@/lib/api";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { CardError } from "@/components/noc/CardError";
 import { ShieldCheck, ExternalLink, Globe, Mail } from "lucide-react";
 
 export default function HestiaPage() {
-  const { data: sites } = useSWR("sites-all", () => api.sites(), { refreshInterval: 60000 });
-  const { data: mail } = useSWR("mail-stack", () => api.mail(), { refreshInterval: 60000 });
+  // R11 (FASE 5): error state visível + retry (tela pré-FASE 4)
+  const { data: sites, error: sitesError, mutate: mutateSites } = useSWR("sites-all", () => api.sites(), { refreshInterval: 60000 });
+  const { data: mail, error: mailError, mutate: mutateMail } = useSWR("mail-stack", () => api.mail(), { refreshInterval: 60000 });
 
   const grouped: Record<string, any[]> = {};
   (sites || []).forEach((s: any) => {
@@ -19,7 +21,10 @@ export default function HestiaPage() {
     <div className="space-y-6 animate-fade-up">
       <div className="glass-card p-6">
         <div className="section-title flex items-center gap-2"><Mail size={12} aria-hidden="true" /> Mail Stack</div>
-        {!mail && (
+        {mailError && !mail && (
+          <CardError message={`Erro ao carregar o mail stack: ${mailError.message}`} onRetry={() => void mutateMail()} />
+        )}
+        {!mail && !mailError && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[1, 2, 3, 4].map(i => (
               <div key={i} className="h-20 rounded-md bg-white/[0.03] animate-pulse" />
@@ -27,7 +32,7 @@ export default function HestiaPage() {
           </div>
         )}
         {mail?.length === 0 && (
-          <div className="text-center py-8 text-white/40 text-sm">
+          <div className="text-center py-8 text-white/60 text-sm">
             Nenhum container de mail rodando
           </div>
         )}
@@ -43,6 +48,12 @@ export default function HestiaPage() {
           </div>
         )}
       </div>
+
+      {sitesError && !sites && (
+        <div className="glass-card p-6">
+          <CardError message={`Erro ao carregar os sites: ${sitesError.message}`} onRetry={() => void mutateSites()} />
+        </div>
+      )}
 
       {Object.entries(grouped).map(([scope, items]) => (
         <div key={scope} className="glass-card p-6">

@@ -42,7 +42,7 @@ function UsageBar({ label, value, warn, crit }: { label: string; value: number |
   const rag = ragOf(value, warn, crit);
   return (
     <div>
-      <div className="flex items-center justify-between text-[10px] text-white/40">
+      <div className="flex items-center justify-between text-[10px] text-white/60">
         <span className="uppercase tracking-widest">{label}</span>
         <span className="text-mono text-white/70">{fmtPct(value ?? null)}</span>
       </div>
@@ -150,7 +150,7 @@ export default function ContainersPage() {
         </div>
         <div className="ml-auto flex items-center gap-2">
           <DataBadge source={list.source} stale={list.stale} />
-          <span className="text-xs text-white/40 text-mono">{visible.length}/{total}</span>
+          <span className="text-xs text-white/60 text-mono">{visible.length}/{total}</span>
         </div>
       </div>
 

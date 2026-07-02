@@ -96,7 +96,7 @@ export default function LoginPage() {
         className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none opacity-50"
         style={{
           background:
-            "radial-gradient(circle, hsl(var(--purple) / 0.18) 0%, transparent 60%)"
+            "radial-gradient(circle, hsl(248 92% 70% / 0.18) 0%, transparent 60%)"
         }}
       />
 

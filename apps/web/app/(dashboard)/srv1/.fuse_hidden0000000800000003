@@ -204,8 +204,8 @@ export default function Srv1Page() {
             <TimeSeriesChart
               data={histData}
               series={[
-                { key: "cpu", label: "CPU %", color: SERIES.teal },
-                { key: "mem", label: "RAM %", color: SERIES.indigo }
+                { key: "cpu", label: "CPU %", color: "hsl(191 87% 53%)" },
+                { key: "mem", label: "RAM %", color: "hsl(248 92% 70%)" }
               ]}
               xKey="t"
               height={200}
