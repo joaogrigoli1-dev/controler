@@ -14,6 +14,7 @@ import {
 const NAV = [
   { href: "/overview", label: "Overview", icon: LayoutGrid, hint: "G H" },
   { href: "/srv1", label: "SRV1", icon: Server, hint: "G S" },
+  { href: "/srv1/containers", label: "Containers", icon: Boxes, hint: "G B" },
   { href: "/coolify", label: "Coolify", icon: Boxes, hint: "G C" },
   { href: "/hestia", label: "Mail & Sites", icon: Globe, hint: "G M" },
   { href: "/vault", label: "Vault", icon: KeyRound, hint: "G V" },
@@ -67,7 +68,8 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
 
       <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto" aria-label="Telas do dashboard">
         {NAV.map(({ href, label, icon: Icon, hint }) => {
-          const isActive = path.startsWith(href);
+          // "/srv1" não pode acender junto com "/srv1/containers" (prefixo comum)
+          const isActive = href === "/srv1" ? path === "/srv1" : path.startsWith(href);
           return (
             <Link
               key={href}

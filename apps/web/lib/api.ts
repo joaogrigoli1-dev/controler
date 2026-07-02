@@ -153,6 +153,11 @@ export const api = {
   coolifyEnvs: (uuid: string) => apiFetch(`/coolify/apps/${uuid}/envs`),
   coolifyLogs: (uuid: string, lines = 200) => apiFetch(`/coolify/apps/${uuid}/logs?lines=${lines}`),
   coolifyDeploy: (uuid: string, otp: string) => apiFetch(`/coolify/apps/${uuid}/deploy?force=true`, { method: "POST", otp }),
+  coolifyDeployments: (uuid: string) => apiFetch(`/coolify/apps/${uuid}/deployments`),
+  coolifyServers: () => apiFetch("/coolify/servers"),
+  coolifyRestart: (uuid: string, otp: string) => apiFetch(`/coolify/apps/${uuid}/restart`, { method: "POST", otp }),
+  coolifyStop: (uuid: string, otp: string) => apiFetch(`/coolify/apps/${uuid}/stop`, { method: "POST", otp }),
+  coolifyStart: (uuid: string, otp: string) => apiFetch(`/coolify/apps/${uuid}/start`, { method: "POST", otp }),
 
   // Hestia / Mail & Sites
   sites: () => apiFetch("/hestia/sites"),
