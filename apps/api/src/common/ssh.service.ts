@@ -76,16 +76,37 @@ export class SshService implements OnModuleDestroy {
     }
   }
 
+  /** Promise.race com timeout REAL — node-ssh não cancela o canal sozinho. */
+  private withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+    let timer: NodeJS.Timeout;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`SSH timeout ${ms}ms: ${label}`)), ms);
+    });
+    return Promise.race([
+      p.finally(() => clearTimeout(timer)),
+      timeout
+    ]) as Promise<T>;
+  }
+
   async exec(host: string, command: string, opts?: { user?: string; port?: number; timeoutMs?: number }) {
     const user = opts?.user;
     const port = opts?.port;
+    const timeoutMs = opts?.timeoutMs ?? 15_000;
+    const key = `${user || "root"}@${host}:${port || 22}`;
     try {
       const ssh = await this.connect(host, user, port);
-      const result = await ssh.execCommand(command, { execOptions: { env: { LANG: "C" } as any } });
+      // FIX: o timeoutMs era ignorado — execCommand podia ficar preso p/ sempre
+      // quando o host saturava, segurando o canal SSH e empilhando comandos.
+      const result = await this.withTimeout(
+        ssh.execCommand(command, { execOptions: { env: { LANG: "C" } as any } }),
+        timeoutMs,
+        command.slice(0, 60)
+      );
       return { stdout: result.stdout, stderr: result.stderr, exitCode: result.code ?? -1 };
     } catch (err: any) {
-      // Se a conexão estiver morta, tira do cache para próxima tentativa reconectar
-      const key = `${user || "root"}@${host}:${port || 22}`;
+      // Conexão morta OU comando estourou timeout: descarta a conexão (fecha o
+      // canal preso) para a próxima tentativa reconectar limpa.
+      try { this.connections.get(key)?.dispose(); } catch { /* ignore */ }
       this.connections.delete(key);
       throw err;
     }

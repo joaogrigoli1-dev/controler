@@ -27,6 +27,11 @@ export class MetricsScheduler {
   private lastSeenRunning = new Set<string>();
   // Track ultimo deploy SHA por app (para detectar deploys novos)
   private lastDeploySha = new Map<string, string>();
+  // Guarda de sobreposição: impede um tick de empilhar sobre o anterior (host saturado)
+  private running = new Set<string>();
+  // Circuit breaker: último load1m observado; pula coleta pesada se host estiver em sobrecarga
+  private lastLoad1m = 0;
+  private static readonly LOAD_CIRCUIT_BREAK = 12; // 4 vCPU → 12 = 3x cores
 
   constructor(
     private readonly srv1: Srv1Service,
@@ -39,10 +44,13 @@ export class MetricsScheduler {
     private readonly coolify: CoolifyService
   ) {}
 
-  @Interval("host-metrics", 60_000)
+  @Interval("host-metrics", 300_000)
   async hostMetricsTick() {
+    if (this.running.has("host")) { this.log.warn("host tick ainda rodando; pulando"); return; }
+    this.running.add("host");
     try {
       const m = await this.srv1.getHostMetrics();
+      this.lastLoad1m = m.loadAvg?.[0] ?? this.lastLoad1m;
       await this.prisma.hostMetricSnapshot.create({
         data: {
           cpuPercent: m.cpuPercent,
@@ -67,11 +75,20 @@ export class MetricsScheduler {
       }
     } catch (err: any) {
       this.log.warn(`host metrics failed: ${err?.message}`);
+    } finally {
+      this.running.delete("host");
     }
   }
 
-  @Interval("container-metrics", 60_000)
+  @Interval("container-metrics", 300_000)
   async containerMetricsTick() {
+    if (this.running.has("containers")) { this.log.warn("container tick ainda rodando; pulando"); return; }
+    // Circuit breaker: host em sobrecarga → não dispara o docker stats pesado nos 41 containers
+    if (this.lastLoad1m > MetricsScheduler.LOAD_CIRCUIT_BREAK) {
+      this.log.warn(`load ${this.lastLoad1m.toFixed(1)} > ${MetricsScheduler.LOAD_CIRCUIT_BREAK}; pulando container-metrics`);
+      return;
+    }
+    this.running.add("containers");
     try {
       const containers = await this.srv1.getContainers();
       const rows = containers.map(c => ({
@@ -119,6 +136,8 @@ export class MetricsScheduler {
       this.lastSeenRunning = nowRunning;
     } catch (err: any) {
       this.log.warn(`container metrics failed: ${err?.message}`);
+    } finally {
+      this.running.delete("containers");
     }
   }
 
