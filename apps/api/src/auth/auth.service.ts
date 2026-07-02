@@ -6,11 +6,13 @@
  *   - Re-auth OTP exigido em ações sensíveis (reveal vault, redeploy prod)
  */
 
-import { Injectable, Logger, UnauthorizedException, ForbiddenException, BadRequestException } from "@nestjs/common";
+import { Injectable, Logger, UnauthorizedException, ForbiddenException, BadRequestException, Inject, forwardRef } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import * as crypto from "crypto";
 import { PrismaService } from "../common/prisma.service";
+import { RedisService } from "../common/redis.service";
 import { WhatsappService } from "./whatsapp.service";
+import { AlertsService } from "../alerts/alerts.service";
 import { hmacHash, requireAccessSecret } from "../common/crypto.util";
 
 const OTP_TTL_MIN = 5;
@@ -34,15 +36,18 @@ export interface OtpVerifyResult {
 @Injectable()
 export class AuthService {
   private readonly log = new Logger("Auth");
-  // Rate-limit: 5 tentativas por IP em 15min (espelho MCS)
-  private rateLimitMap = new Map<string, { count: number; firstAt: number }>();
+  // M-02: rate-limit unificado no Redis (antes Map em memória — não sobrevivia a restart
+  // nem funcionava com múltiplas réplicas). 5 tentativas por IP em 15min.
   private readonly RATE_MAX = 5;
-  private readonly RATE_WINDOW_MS = 15 * 60 * 1000;
+  private readonly RATE_WINDOW_SEC = 15 * 60;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly wa: WhatsappService,
-    private readonly jwt: JwtService
+    private readonly jwt: JwtService,
+    private readonly redis: RedisService,
+    // forwardRef: AlertsModule importa AuthModule → quebra o ciclo (M-05)
+    @Inject(forwardRef(() => AlertsService)) private readonly alerts: AlertsService
   ) {}
 
   // ─── helpers ────────────────────────────────────────────
@@ -60,23 +65,21 @@ export class AuthService {
   private formatPhone(p: string): string {
     return p.replace(/\D/g, "");
   }
-  private checkRateLimit(ip: string): { allowed: boolean; retryAfterSec?: number } {
-    const now = Date.now();
-    const r = this.rateLimitMap.get(ip);
-    if (!r) {
-      this.rateLimitMap.set(ip, { count: 1, firstAt: now });
+  private async checkRateLimit(ip: string): Promise<{ allowed: boolean; retryAfterSec?: number }> {
+    const key = `auth:ratelimit:${ip}`;
+    try {
+      const count = await this.redis.client.incr(key);
+      if (count === 1) await this.redis.client.expire(key, this.RATE_WINDOW_SEC);
+      if (count > this.RATE_MAX) {
+        const ttl = await this.redis.client.ttl(key);
+        return { allowed: false, retryAfterSec: ttl > 0 ? ttl : this.RATE_WINDOW_SEC };
+      }
+      return { allowed: true };
+    } catch {
+      // Redis fora: fail-open p/ não bloquear login legítimo, mas registra.
+      this.log.warn("rate-limit Redis indisponível; liberando (fail-open)");
       return { allowed: true };
     }
-    if (now - r.firstAt > this.RATE_WINDOW_MS) {
-      this.rateLimitMap.set(ip, { count: 1, firstAt: now });
-      return { allowed: true };
-    }
-    if (r.count >= this.RATE_MAX) {
-      const retryAfterSec = Math.ceil((r.firstAt + this.RATE_WINDOW_MS - now) / 1000);
-      return { allowed: false, retryAfterSec };
-    }
-    r.count++;
-    return { allowed: true };
   }
 
   // ─── 1. REQUEST CODE ────────────────────────────────────
@@ -85,7 +88,7 @@ export class AuthService {
     ip: string,
     channel: "whatsapp" | "sms" | "auto" = "auto"
   ): Promise<OtpRequestResult & { channel?: string }> {
-    const rate = this.checkRateLimit(ip);
+    const rate = await this.checkRateLimit(ip);
     if (!rate.allowed) {
       throw new ForbiddenException({
         error: "Muitas tentativas",
@@ -156,7 +159,13 @@ export class AuthService {
     });
     if (existingActive && existingActive.ipAddress !== ip && existingActive.ipAddress !== "unknown") {
       this.log.warn(`Login simultâneo: user=${user.name} oldIp=${existingActive.ipAddress} newIp=${ip}`);
-      // TODO: disparar alerta admin via AlertsService (injetar via forward ref)
+      // M-05: alerta admin de login concorrente (sessão anterior será revogada abaixo).
+      this.alerts.dispatch({
+        ruleKey: `concurrent_login_${user.id}`,
+        severity: "warning",
+        title: "Login concorrente detectado",
+        message: `${user.name}: nova sessão de ${ip} (anterior: ${existingActive.ipAddress}). Sessão antiga revogada.`
+      }).catch(() => { /* alerta best-effort, não bloqueia login */ });
     }
 
     // Revoga sessões anteriores (single-session policy)

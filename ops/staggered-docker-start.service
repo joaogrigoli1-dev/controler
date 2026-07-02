@@ -1,0 +1,13 @@
+[Unit]
+Description=Subida escalonada dos containers Docker (evita thundering herd no boot)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/scripts/staggered-docker-start.sh
+RemainAfterExit=yes
+TimeoutStartSec=1200
+
+[Install]
+WantedBy=multi-user.target

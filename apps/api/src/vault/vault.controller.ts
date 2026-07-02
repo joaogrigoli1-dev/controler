@@ -3,6 +3,8 @@ import { Throttle } from "@nestjs/throttler";
 import { VaultService } from "./vault.service";
 import { JwtAuthGuard, AuthUser } from "../auth/jwt-auth.guard";
 import { OtpReauthGuard } from "../auth/otp-reauth.guard";
+import { RolesGuard } from "../auth/roles.guard";
+import { Roles } from "../auth/roles.decorator";
 
 function getIp(req: any): string {
   return req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() || req.ip || "unknown";
@@ -19,7 +21,8 @@ export class VaultController {
   }
 
   @Throttle({ sensitive: { limit: 10, ttl: 60_000 } })
-  @UseGuards(OtpReauthGuard)
+  @Roles("admin")
+  @UseGuards(RolesGuard, OtpReauthGuard)
   @Post("reveal")
   reveal(@Body() body: { name: string }, @AuthUser() user: any, @Req() req: any) {
     return this.vault.reveal(body.name, user.id, getIp(req), req.headers["user-agent"]);

@@ -20,6 +20,9 @@ import { HestiaService } from "../hestia/hestia.service";
 import { ApisService } from "../apis/apis.service";
 import { CoolifyService } from "../coolify/coolify.service";
 
+/** Intervalo (ms) do host-metrics tick. Fonte única — consumido pelo cálculo de uptime. */
+export const HOST_METRICS_INTERVAL_MS = 300_000;
+
 @Injectable()
 export class MetricsScheduler {
   private readonly log = new Logger("Scheduler");
@@ -29,9 +32,10 @@ export class MetricsScheduler {
   private lastDeploySha = new Map<string, string>();
   // Guarda de sobreposição: impede um tick de empilhar sobre o anterior (host saturado)
   private running = new Set<string>();
-  // Circuit breaker: último load1m observado; pula coleta pesada se host estiver em sobrecarga
+  // Circuit breaker: último load1m observado; pula coleta pesada se host estiver em sobrecarga.
+  // Limiar dinâmico = 3× nproc real (resolvido do host), não mais o hardcode 12 (4 vCPU).
   private lastLoad1m = 0;
-  private static readonly LOAD_CIRCUIT_BREAK = 12; // 4 vCPU → 12 = 3x cores
+  private loadCircuitBreak = 24; // default KVM8 (8 vCPU × 3); recalculado no 1º tick via getNproc()
 
   constructor(
     private readonly srv1: Srv1Service,
@@ -44,13 +48,15 @@ export class MetricsScheduler {
     private readonly coolify: CoolifyService
   ) {}
 
-  @Interval("host-metrics", 300_000)
+  @Interval("host-metrics", HOST_METRICS_INTERVAL_MS)
   async hostMetricsTick() {
     if (this.running.has("host")) { this.log.warn("host tick ainda rodando; pulando"); return; }
     this.running.add("host");
     try {
       const m = await this.srv1.getHostMetrics();
       this.lastLoad1m = m.loadAvg?.[0] ?? this.lastLoad1m;
+      // Recalcula o limiar do breaker com o nº de vCPUs real (3× nproc)
+      try { this.loadCircuitBreak = 3 * (await this.srv1.getNproc()); } catch { /* mantém default */ }
       await this.prisma.hostMetricSnapshot.create({
         data: {
           cpuPercent: m.cpuPercent,
@@ -83,9 +89,9 @@ export class MetricsScheduler {
   @Interval("container-metrics", 300_000)
   async containerMetricsTick() {
     if (this.running.has("containers")) { this.log.warn("container tick ainda rodando; pulando"); return; }
-    // Circuit breaker: host em sobrecarga → não dispara o docker stats pesado nos 41 containers
-    if (this.lastLoad1m > MetricsScheduler.LOAD_CIRCUIT_BREAK) {
-      this.log.warn(`load ${this.lastLoad1m.toFixed(1)} > ${MetricsScheduler.LOAD_CIRCUIT_BREAK}; pulando container-metrics`);
+    // Circuit breaker: host em sobrecarga → não dispara o docker stats pesado em todos os containers
+    if (this.lastLoad1m > this.loadCircuitBreak) {
+      this.log.warn(`load ${this.lastLoad1m.toFixed(1)} > ${this.loadCircuitBreak} (3×nproc); pulando container-metrics`);
       return;
     }
     this.running.add("containers");

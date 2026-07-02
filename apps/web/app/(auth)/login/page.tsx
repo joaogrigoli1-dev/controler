@@ -71,7 +71,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const r = await api.verifyCode(phone.replace(/\D/g, ""), code);
-      setSession(r.accessToken, r.refreshToken, r.user);
+      setSession(r.accessToken, r.user);
       router.replace("/overview");
     } catch (e: any) {
       setError(e?.message || "Código inválido");

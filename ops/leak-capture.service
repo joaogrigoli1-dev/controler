@@ -1,0 +1,17 @@
+[Unit]
+Description=Leak capture - monitor leve de CPU/RAM com dump sob pressao (SRV1)
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+ExecStart=/opt/scripts/leak-capture.sh
+Restart=always
+RestartSec=10
+# o proprio monitor nunca pode competir por CPU/IO com a carga real:
+Nice=10
+IOSchedulingClass=idle
+CPUQuota=10%
+
+[Install]
+WantedBy=multi-user.target

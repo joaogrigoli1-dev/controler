@@ -25,6 +25,8 @@ const SYSTEMD_TARGETS = [
 @Injectable()
 export class Srv1Service {
   private readonly log = new Logger("SRV1");
+  /** nº de vCPUs real do host, detectado via SSH (`nproc`) e cacheado. Fase 2: fim do hardcode 4. */
+  private nproc: number | null = null;
 
   constructor(
     private readonly hostinger: HostingerService,
@@ -32,12 +34,29 @@ export class Srv1Service {
     private readonly redis: RedisService
   ) {}
 
+  /** Detecta e cacheia o nº de vCPUs (nproc). Fallback 8 (KVM8 atual) se SSH falhar. */
+  async getNproc(): Promise<number> {
+    if (this.nproc && this.nproc > 0) return this.nproc;
+    try {
+      const r = await this.ssh.srv1("nproc", 5_000);
+      const n = parseInt((r.stdout || "").trim(), 10);
+      if (n > 0) { this.nproc = n; return n; }
+    } catch { /* fallback abaixo */ }
+    return this.nproc ?? 8;
+  }
+
   // ─── Host metrics (combinando Hostinger API + SSH ad-hoc) ─────
   async getHostMetrics(): Promise<HostMetrics> {
     return this.redis.cached("srv1:host-metrics", 30, async () => {
-      const [metrics, sshSnap] = await Promise.all([
+      const [metrics, sshSnap, nproc] = await Promise.all([
         this.hostinger.getMetrics(HostingerService.SRV1, 1).catch(() => null),
-        this.ssh.srv1("cat /proc/loadavg && free -b && df -B1 / && cat /proc/uptime").catch(() => null)
+        // 2 amostras de /proc/stat (sleep 1) → CPU% real por delta de idle (não mais load/4)
+        this.ssh.srv1(
+          "cat /proc/loadavg && free -b && df -B1 / && cat /proc/uptime && " +
+          "echo '---CPU---' && grep '^cpu ' /proc/stat && sleep 1 && grep '^cpu ' /proc/stat",
+          8_000
+        ).catch(() => null),
+        this.getNproc().catch(() => 8)
       ]);
 
       // CPU/disk/memory de Hostinger (último ponto)
@@ -58,14 +77,17 @@ export class Srv1Service {
 
       // loadavg + free + df via SSH (defaults se falhar)
       let loadAvg: [number, number, number] = [0, 0, 0];
-      let memTotalBytes = 16 * 1024 ** 3;
+      // Defaults de fallback alinhados ao hardware REAL (KVM8: 32 GB / 400 GB) — antes 16/200 (KVM4)
+      let memTotalBytes = 32 * 1024 ** 3;
       let memFreeBytes = 0;
-      let diskTotalBytes = 200 * 1024 ** 3;
+      let diskTotalBytes = 400 * 1024 ** 3;
       let diskUsedSshBytes = 0;
       let swapUsedBytes = 0;
       let uptimeSshSeconds = 0;
       if (sshSnap?.stdout) {
-        const lines = sshSnap.stdout.split("\n");
+        const full = sshSnap.stdout;
+        const [sysBlock, cpuBlock] = full.split("---CPU---");
+        const lines = (sysBlock || "").split("\n");
         // /proc/loadavg → "0.96 1.50 1.80 1/666 12345"
         const loadParts = (lines[0] || "").split(/\s+/);
         loadAvg = [parseFloat(loadParts[0] || "0"), parseFloat(loadParts[1] || "0"), parseFloat(loadParts[2] || "0")];
@@ -73,28 +95,37 @@ export class Srv1Service {
         const memLine = lines.find(l => l.startsWith("Mem:")) || "";
         const memParts = memLine.split(/\s+/);
         memTotalBytes = parseInt(memParts[1] || "0", 10) || memTotalBytes;
-        const memUsedSsh = parseInt(memParts[2] || "0", 10) || 0;
+        // Fase 2: usar 'available' (col 7) — 'used' (col 3) infla com buff/cache e gera falso alerta
+        const memAvailableSsh = parseInt(memParts[6] || "0", 10) || 0;
         memFreeBytes = parseInt(memParts[3] || "0", 10) || 0;
+        const memUsedSsh = memAvailableSsh && memTotalBytes ? memTotalBytes - memAvailableSsh
+          : (parseInt(memParts[2] || "0", 10) || 0);
         const swapLine = lines.find(l => l.startsWith("Swap:")) || "";
         const swapParts = swapLine.split(/\s+/);
         swapUsedBytes = parseInt(swapParts[2] || "0", 10) || 0;
-        // df -B1 / → última linha tem /dev/sda1 com [filesystem size used available use% mountpoint]
-        const dfLine = lines.find(l => l.includes("/dev/sda1") || l.startsWith("/dev/sd")) || "";
+        // df -B1 / → device-agnóstico: pega a linha de dados cujo mountpoint é "/"
+        // (sda1/vda1/nvme0n1p1/overlay — antes só casava /dev/sd*, quebrando em virtio/nvme)
+        const dfLine = lines.find(l => /\s\/$/.test(l) && /^\S+\s+\d/.test(l)) || "";
         const dfParts = dfLine.split(/\s+/);
         diskTotalBytes = parseInt(dfParts[1] || "0", 10) || diskTotalBytes;
         diskUsedSshBytes = parseInt(dfParts[2] || "0", 10) || 0;
-        // /proc/uptime → "12345.67 4567.89"
-        const uptimeLine = lines.find(l => /^\d+\.\d+ \d+\.\d+/.test(l)) || "";
+        // /proc/uptime → "12345.67 4567.89" (EXATAMENTE 2 floats até o fim da linha).
+        // Ancorar em $ evita casar a linha do loadavg "0.96 1.50 1.80 1/666 12345".
+        const uptimeLine = lines.find(l => /^\d+\.\d+ \d+\.\d+\s*$/.test(l)) || "";
         uptimeSshSeconds = Math.floor(parseFloat(uptimeLine.split(/\s+/)[0] || "0")) || 0;
+
+        // CPU% REAL via delta de /proc/stat (2 amostras). iowait NÃO conta como busy;
+        // steal conta (contenção do hypervisor aparece como uso). Substitui o proxy load/4.
+        const cpuFromStat = parseCpuDelta(cpuBlock || "");
+        if (cpuFromStat !== null) cpuPercent = cpuFromStat;
 
         // FALLBACK: se Hostinger retornou 0, usa SSH
         if (!memUsedBytes && memUsedSsh) memUsedBytes = memUsedSsh;
         if (!diskUsedBytes && diskUsedSshBytes) diskUsedBytes = diskUsedSshBytes;
         if (!uptimeSeconds && uptimeSshSeconds) uptimeSeconds = uptimeSshSeconds;
-        // CPU não temos via SSH 1-shot direto; usa loadavg/nproc * 100 como proxy se Hostinger=0
+        // Último recurso: se nem /proc/stat nem Hostinger deram CPU, proxy load/nproc (nproc real)
         if (!cpuPercent && loadAvg[0]) {
-          // Aproximação: load 1m dividido por 4 cores (KVM 4) * 100
-          cpuPercent = Math.min(100, (loadAvg[0] / 4) * 100);
+          cpuPercent = Math.min(100, (loadAvg[0] / (nproc || 8)) * 100);
         }
       }
       const toMb = (b: number) => Math.round(b / 1024 / 1024);
@@ -227,6 +258,29 @@ export class Srv1Service {
       });
     });
   }
+}
+
+/**
+ * CPU% a partir de 2 amostras da linha `cpu ...` de /proc/stat (separadas por \n).
+ * Campos: user nice system idle iowait irq softirq steal guest guest_nice.
+ * busy = total − (idle + iowait). iowait não conta como CPU ocupada; steal conta.
+ * Retorna null se não conseguir 2 amostras válidas.
+ */
+function parseCpuDelta(block: string): number | null {
+  const samples = block
+    .split("\n")
+    .map(l => l.trim())
+    .filter(l => /^cpu\s+\d/.test(l))
+    .map(l => l.split(/\s+/).slice(1).map(n => parseInt(n, 10) || 0));
+  if (samples.length < 2) return null;
+  const a = samples[0], b = samples[samples.length - 1];
+  const total = (arr: number[]) => arr.reduce((s, v) => s + v, 0);
+  const idleOf = (arr: number[]) => (arr[3] || 0) + (arr[4] || 0); // idle + iowait
+  const dTotal = total(b) - total(a);
+  const dIdle = idleOf(b) - idleOf(a);
+  if (dTotal <= 0) return null;
+  const busy = ((dTotal - dIdle) / dTotal) * 100;
+  return Math.max(0, Math.min(100, +busy.toFixed(2)));
 }
 
 function parseMemToMb(s: string): number {

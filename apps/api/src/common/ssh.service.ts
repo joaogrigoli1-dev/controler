@@ -17,10 +17,13 @@ export class SshService implements OnModuleDestroy {
   private readonly log = new Logger("SSH");
   private connections = new Map<string, NodeSSH>();
   private connectPromises = new Map<string, Promise<NodeSSH>>();
+  /** Alvo do SRV1 resolvido de env→SSM (cacheado). Fonte da verdade: SSM /shared/srv1/*. */
+  private srv1Target: { host: string; port: number; user: string; keyPath?: string } | null = null;
+  private srv1TargetPromise: Promise<{ host: string; port: number; user: string; keyPath?: string }> | null = null;
 
   constructor(private readonly ssm: SsmService) {}
 
-  async connect(host: string, user = "root", port = 22): Promise<NodeSSH> {
+  async connect(host: string, user = "root", port = 22, keyPath?: string): Promise<NodeSSH> {
     const key = `${user}@${host}:${port}`;
 
     const existing = this.connections.get(key);
@@ -35,10 +38,10 @@ export class SshService implements OnModuleDestroy {
 
     const promise = (async () => {
       const ssh = new NodeSSH();
-      const keyPath = process.env.SRV1_SSH_KEY_PATH || `/root/.ssh/id_ed25519`;
+      const resolvedKeyPath = keyPath || process.env.SRV1_SSH_KEY_PATH || `/root/.ssh/id_ed25519`;
       try {
         await ssh.connect({
-          host, username: user, port, privateKeyPath: keyPath, readyTimeout: 10_000,
+          host, username: user, port, privateKeyPath: resolvedKeyPath, readyTimeout: 10_000,
           keepaliveInterval: 30_000, keepaliveCountMax: 3
         });
       } catch (err: any) {
@@ -88,13 +91,13 @@ export class SshService implements OnModuleDestroy {
     ]) as Promise<T>;
   }
 
-  async exec(host: string, command: string, opts?: { user?: string; port?: number; timeoutMs?: number }) {
+  async exec(host: string, command: string, opts?: { user?: string; port?: number; timeoutMs?: number; keyPath?: string }) {
     const user = opts?.user;
     const port = opts?.port;
     const timeoutMs = opts?.timeoutMs ?? 15_000;
     const key = `${user || "root"}@${host}:${port || 22}`;
     try {
-      const ssh = await this.connect(host, user, port);
+      const ssh = await this.connect(host, user, port, opts?.keyPath);
       // FIX: o timeoutMs era ignorado — execCommand podia ficar preso p/ sempre
       // quando o host saturava, segurando o canal SSH e empilhando comandos.
       const result = await this.withTimeout(
@@ -112,8 +115,39 @@ export class SshService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Resolve o alvo SSH do SRV1. Precedência: env → SSM (/shared/srv1/*) → default.
+   * Cacheado após a 1ª resolução. Fonte da verdade da PORTA é o SSM (real: 47391),
+   * não o hardcode 22 — corrige o Gap #1 da Fase 0 (coleta quebraria ao fechar a 22).
+   */
+  private async resolveSrv1Target(): Promise<{ host: string; port: number; user: string; keyPath?: string }> {
+    if (this.srv1Target) return this.srv1Target;
+    if (this.srv1TargetPromise) return this.srv1TargetPromise;
+    this.srv1TargetPromise = (async () => {
+      const host =
+        process.env.SRV1_SSH_HOST || (await this.ssm.get("/shared/srv1/host")) || "62.72.63.18";
+      const portStr =
+        process.env.SRV1_SSH_PORT || (await this.ssm.get("/shared/srv1/port")) || "22";
+      const port = parseInt(portStr, 10) || 22;
+      const user =
+        process.env.SRV1_SSH_USER || (await this.ssm.get("/shared/srv1/username")) || "root";
+      const keyPath =
+        process.env.SRV1_SSH_KEY_PATH || (await this.ssm.get("/shared/srv1/private_key_path")) || undefined;
+      const target = { host, port, user, keyPath };
+      this.srv1Target = target;
+      this.log.log(`SRV1 SSH target resolved ${user}@${host}:${port}`);
+      return target;
+    })();
+    try {
+      return await this.srv1TargetPromise;
+    } finally {
+      this.srv1TargetPromise = null;
+    }
+  }
+
   async srv1(command: string, timeoutMs = 15_000) {
-    return this.exec(process.env.SRV1_SSH_HOST || "62.72.63.18", command, { timeoutMs });
+    const t = await this.resolveSrv1Target();
+    return this.exec(t.host, command, { user: t.user, port: t.port, keyPath: t.keyPath, timeoutMs });
   }
 
   async onModuleDestroy() {

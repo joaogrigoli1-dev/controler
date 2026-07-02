@@ -2,6 +2,8 @@ import { Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { CoolifyService } from "./coolify.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { OtpReauthGuard } from "../auth/otp-reauth.guard";
+import { RolesGuard } from "../auth/roles.guard";
+import { Roles } from "../auth/roles.decorator";
 
 @UseGuards(JwtAuthGuard)
 @Controller("coolify")
@@ -38,25 +40,29 @@ export class CoolifyController {
     return this.coolify.listServers();
   }
 
-  @UseGuards(OtpReauthGuard)
+  @Roles("admin")
+  @UseGuards(RolesGuard, OtpReauthGuard)
   @Post("apps/:uuid/deploy")
   deploy(@Param("uuid") uuid: string, @Query("force") force?: string) {
     return this.coolify.deploy(uuid, force === "true");
   }
 
-  @UseGuards(OtpReauthGuard)
+  @Roles("admin")
+  @UseGuards(RolesGuard, OtpReauthGuard)
   @Post("apps/:uuid/restart")
   restart(@Param("uuid") uuid: string) {
     return this.coolify.restart(uuid);
   }
 
-  @UseGuards(OtpReauthGuard)
+  @Roles("admin")
+  @UseGuards(RolesGuard, OtpReauthGuard)
   @Post("apps/:uuid/stop")
   stop(@Param("uuid") uuid: string) {
     return this.coolify.stop(uuid);
   }
 
-  @UseGuards(OtpReauthGuard)
+  @Roles("admin")
+  @UseGuards(RolesGuard, OtpReauthGuard)
   @Post("apps/:uuid/start")
   start(@Param("uuid") uuid: string) {
     return this.coolify.start(uuid);

@@ -14,3 +14,14 @@ test-results
 .pnpm-store
 apps/web/tsconfig.tsbuildinfo
 CLAUDE.md.bak*
+
+# M-06: higiene — auditorias/backups/RH sensíveis nunca no versionamento
+Auditoria-*.docx
+*.bak
+*.bak.*
+*.dump
+*.sql.gz
+backup/
+backups/
+rh/
+RH/

@@ -34,6 +34,20 @@ export function severityColor(sev: string): string {
   return "muted";
 }
 
+/**
+ * B-01: classe de fundo por severidade com nomes ESTÁTICOS.
+ * `bg-${severityColor()}` era purgado pelo JIT do Tailwind (string dinâmica) → bolinha sem cor.
+ * Aqui as classes aparecem literais, então sobrevivem ao build.
+ */
+export function severityDotClass(sev: string): string {
+  switch (sev) {
+    case "critical": return "bg-red";
+    case "warning": return "bg-yellow";
+    case "info": return "bg-cyan";
+    default: return "bg-muted";
+  }
+}
+
 export function statusColor(state: string): string {
   if (state === "running" || state === "healthy") return "green";
   if (state === "exited" || state === "stopped") return "muted";

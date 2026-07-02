@@ -15,7 +15,8 @@ import { PrismaService } from "../common/prisma.service";
 import { SsmService } from "../common/ssm.service";
 import { RedisService } from "../common/redis.service";
 
-const ALERT_PHONE = process.env.ALERT_PHONE_DEFAULT || "556598466555";
+// 13 dígitos (55 + DDD 65 + 9 + 8) — o default 556598466555 tinha um 5 a menos (número inválido)
+const ALERT_PHONE = process.env.ALERT_PHONE_DEFAULT || "5565984665555";
 const COOLDOWN_PREFIX = "alert:cooldown:";
 const DEFAULT_COOLDOWN_MIN = 30;
 

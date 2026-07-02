@@ -9,6 +9,7 @@
 
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../common/prisma.service";
+import { HOST_METRICS_INTERVAL_MS } from "../realtime/metrics.scheduler";
 
 @Injectable()
 export class AnalyticsService {
@@ -167,18 +168,20 @@ export class AnalyticsService {
   }
 
   /**
-   * Uptime do host nas últimas N horas — % de tempo com CPU < 95 e disponível.
-   * Aproximação: cada snapshot conta como 60s de upping.
+   * Uptime do host nas últimas N horas = cobertura de snapshots.
+   * Cada tick grava 1 snapshot; se o coletor (ou o host) esteve fora, faltam snapshots.
+   * Fase 2 (Gap #4): o "esperado" deriva do intervalo REAL do scheduler
+   * (HOST_METRICS_INTERVAL_MS), não do hardcode 60/h — que reportava ~20% com host 100% são.
    */
-  async hostUptimePercent(hours = 24): Promise<{ uptimePercent: number; samples: number }> {
+  async hostUptimePercent(hours = 24): Promise<{ uptimePercent: number; samples: number; expected: number }> {
     const since = new Date(Date.now() - hours * 3600_000);
     const samples = await this.prisma.hostMetricSnapshot.count({
       where: { createdAt: { gte: since } }
     });
-    // Esperado: 60 snapshots por hora (1 por minuto). Tolerância: 80% como 100%.
-    const expected = hours * 60;
+    const perHour = 3600_000 / HOST_METRICS_INTERVAL_MS; // ex.: 300_000ms → 12/h
+    const expected = Math.max(1, Math.round(hours * perHour));
     const ratio = Math.min(100, (samples / expected) * 100);
-    return { uptimePercent: +ratio.toFixed(1), samples };
+    return { uptimePercent: +ratio.toFixed(1), samples, expected };
   }
 
   /**

@@ -5,7 +5,7 @@ import { useSocketEvent } from "@/lib/socket";
 import { KpiTile } from "@/components/ui/KpiTile";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Gauge } from "@/components/ui/Gauge";
-import { fmtUptime, fmtBytes, severityColor } from "@/lib/utils";
+import { fmtUptime, fmtBytes, severityDotClass } from "@/lib/utils";
 import {
   Server, Boxes, Globe, AlertTriangle, Activity, Cpu, MemoryStick, HardDrive,
   Zap, Clock, ShieldAlert
@@ -163,7 +163,7 @@ export default function OverviewPage() {
           <div className="space-y-2 max-h-[320px] overflow-y-auto">
             {(timeline || []).map((e: any) => (
               <div key={e.id} className="flex items-start gap-3 p-2.5 rounded-md hover:bg-white/[0.03]">
-                <span className={`w-1.5 h-1.5 rounded-full mt-1.5 bg-${severityColor(e.severity)}`} />
+                <span className={`w-1.5 h-1.5 rounded-full mt-1.5 ${severityDotClass(e.severity)}`} />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm">{e.title}</div>
                   <div className="text-[10px] text-white/40 text-mono">

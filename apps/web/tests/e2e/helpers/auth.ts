@@ -9,13 +9,13 @@
 
 import { Page, APIRequestContext, expect } from "@playwright/test";
 
-export const PHONE = "556598466555";
+export const PHONE = "5565984665555";
 export const BACKDOOR =
   process.env.DEV_BACKDOOR_TOKEN || "jhgm_backdoor_2026_controler_recovery_x9k2m7";
 
 export interface Session {
   accessToken: string;
-  refreshToken: string;
+  refreshToken?: string; // A-02: não vem mais no corpo (cookie httpOnly)
   user: { id: string; name: string; email: string; role: string; phone: string };
 }
 
@@ -38,13 +38,15 @@ export async function loginViaBackdoor(request: APIRequestContext, baseUrl?: str
   return verifyRes.json();
 }
 
-/** Injeta sessão no localStorage do browser e navega para /overview. */
+/**
+ * Injeta sessão no browser. A-02: o refresh vai por cookie httpOnly (setado no
+ * verify-code via a mesma BrowserContext do page.request). O app re-obtém o access
+ * token via /auth/refresh no 1º 401. Basta cachear o `user` p/ o roteamento.
+ */
 export async function loginInBrowser(page: Page): Promise<Session> {
   const session = await loginViaBackdoor(page.request);
   await page.goto("/");
   await page.evaluate((s) => {
-    localStorage.setItem("controler:token", s.accessToken);
-    localStorage.setItem("controler:refresh", s.refreshToken);
     localStorage.setItem("controler:user", JSON.stringify(s.user));
   }, session);
   return session;

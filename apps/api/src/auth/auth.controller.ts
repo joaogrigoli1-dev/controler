@@ -1,5 +1,6 @@
-import { Body, Controller, ForbiddenException, Get, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, Post, Req, Res, UnauthorizedException, UseGuards } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
+import type { FastifyReply } from "fastify";
 import { AuthService } from "./auth.service";
 import { WhatsappService } from "./whatsapp.service";
 import { JwtAuthGuard, AuthUser } from "./jwt-auth.guard";
@@ -9,6 +10,39 @@ import * as crypto from "crypto";
 
 function getIp(req: any): string {
   return req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() || req.ip || "unknown";
+}
+
+// A-02: refresh token vive em cookie httpOnly (fora do alcance de JS/XSS).
+const REFRESH_COOKIE = "controler_rt";
+const REFRESH_MAX_AGE_SEC = 7 * 24 * 3600;
+const COOKIE_PATH = "/be/auth";
+
+function setRefreshCookie(res: FastifyReply, token: string) {
+  const parts = [
+    `${REFRESH_COOKIE}=${encodeURIComponent(token)}`,
+    "HttpOnly",
+    "SameSite=Strict",
+    `Path=${COOKIE_PATH}`,
+    `Max-Age=${REFRESH_MAX_AGE_SEC}`
+  ];
+  if (process.env.NODE_ENV === "production") parts.push("Secure");
+  res.header("set-cookie", parts.join("; "));
+}
+function clearRefreshCookie(res: FastifyReply) {
+  const parts = [`${REFRESH_COOKIE}=`, "HttpOnly", "SameSite=Strict", `Path=${COOKIE_PATH}`, "Max-Age=0"];
+  if (process.env.NODE_ENV === "production") parts.push("Secure");
+  res.header("set-cookie", parts.join("; "));
+}
+function readRefreshCookie(req: any): string | null {
+  const raw = req.headers?.cookie;
+  if (!raw || typeof raw !== "string") return null;
+  for (const part of raw.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    const k = part.slice(0, idx).trim();
+    if (k === REFRESH_COOKIE) return decodeURIComponent(part.slice(idx + 1).trim());
+  }
+  return null;
 }
 
 @Controller("auth")
@@ -41,20 +75,30 @@ export class AuthController {
 
   @Throttle({ auth: { limit: 10, ttl: 60_000 } })
   @Post("verify-code")
-  async verifyCode(@Body() body: any, @Req() req: any) {
+  async verifyCode(@Body() body: any, @Req() req: any, @Res({ passthrough: true }) res: FastifyReply) {
     const parsed = VerifyCodeSchema.parse(body);
-    return this.auth.verifyCode(parsed.phone, parsed.code, getIp(req), req.headers["user-agent"] || "");
+    const result = await this.auth.verifyCode(parsed.phone, parsed.code, getIp(req), req.headers["user-agent"] || "");
+    // A-02: refresh vai no cookie httpOnly; NÃO retorna no corpo (fora do alcance de JS).
+    setRefreshCookie(res, result.refreshToken);
+    const { refreshToken: _rt, ...safe } = result;
+    return safe;
   }
 
   @Throttle({ auth: { limit: 20, ttl: 60_000 } })
   @Post("refresh")
-  async refresh(@Body() body: { refreshToken: string }, @Req() req: any) {
-    return this.auth.refresh(body.refreshToken, getIp(req));
+  async refresh(@Body() body: { refreshToken?: string }, @Req() req: any, @Res({ passthrough: true }) res: FastifyReply) {
+    // A-02: lê do cookie httpOnly; body é fallback de transição p/ clientes antigos.
+    const token = readRefreshCookie(req) || body?.refreshToken;
+    if (!token) throw new UnauthorizedException("Refresh ausente");
+    const result = await this.auth.refresh(token, getIp(req));
+    setRefreshCookie(res, result.refreshToken);
+    return { accessToken: result.accessToken };
   }
 
   @UseGuards(JwtAuthGuard)
   @Post("logout")
-  async logout(@AuthUser() user: any) {
+  async logout(@AuthUser() user: any, @Res({ passthrough: true }) res: FastifyReply) {
+    clearRefreshCookie(res);
     return this.auth.logout(user.id);
   }
 
@@ -71,17 +115,18 @@ export class AuthController {
   }
 
   /**
-   * Diagnostic público — testa cada canal de envio sem logar.
-   * Não revela credenciais nem envia mensagem real.
+   * Diagnostic — testa cada canal de envio sem logar.
+   * M-03: protegido por JWT (era público) e SEM payload raw da Z-API (vazava
+   * detalhes internos da instância). Retorna apenas booleanos de saúde.
    */
+  @UseGuards(JwtAuthGuard)
   @Get("diagnostic")
   async diagnostic() {
     const zapi = await this.wa.statusInstance();
     return {
       timestamp: new Date().toISOString(),
       channels: {
-        zapi: { connected: zapi.connected, error: zapi.error, raw: zapi.raw },
-        // meta / sms: para confirmar config sem expor secrets, basta dizer "configurado"
+        zapi: { connected: zapi.connected, error: zapi.error ? true : false },
         meta: { configured: true },
         sms: { configured: true }
       }

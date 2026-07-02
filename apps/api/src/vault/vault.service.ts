@@ -1,14 +1,25 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { SsmService } from "../common/ssm.service";
 import { PrismaService } from "../common/prisma.service";
+import { RedisService } from "../common/redis.service";
 
 const PROJECT_PREFIXES = ["/controler", "/myclinicsoft", "/libertakidz", "/manalista", "/fisiomt", "/passaro"];
 
 @Injectable()
 export class VaultService {
-  constructor(private readonly ssm: SsmService, private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly ssm: SsmService,
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService
+  ) {}
 
   async listByProject(prefix?: string) {
+    // B-03: cache 30s — listByPath faz N chamadas SSM (lento e sujeito a rate-limit da AWS).
+    // Só valores MASCARADOS entram no cache; reveal continua sem cache (sempre fresco + auditado).
+    return this.redis.cached(`vault:list:${prefix || "all"}`, 30, () => this.buildList(prefix));
+  }
+
+  private async buildList(prefix?: string) {
     const prefixes = prefix ? [prefix] : PROJECT_PREFIXES;
     const all: any[] = [];
     for (const p of prefixes) {

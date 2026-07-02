@@ -25,7 +25,8 @@ test.describe("Auth flow", () => {
   test("backdoor dev-otp + verify-code emite JWT válido", async ({ request }) => {
     const s = await loginViaBackdoor(request);
     expect(s.accessToken.length).toBeGreaterThan(100);
-    expect(s.refreshToken.length).toBeGreaterThanOrEqual(64);
+    // A-02: refresh não vem mais no corpo (vive no cookie httpOnly controler_rt).
+    expect(s.refreshToken).toBeUndefined();
     expect(s.user.phone).toBe(PHONE);
     expect(s.user.role).toBe("admin");
   });

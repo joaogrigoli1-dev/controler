@@ -33,12 +33,19 @@ async function bootstrap() {
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"], // Next injeta estilos inline
         imgSrc: ["'self'", "data:"],
         connectSrc: ["'self'", "ws:", "wss:"],
-        frameAncestors: ["'none'"]
+        frameAncestors: ["'none'"],
+        // A-02: hardening adicional
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameSrc: ["'none'"],
+        ...(process.env.NODE_ENV === "production" ? { upgradeInsecureRequests: [] } : {})
       }
-    }
+    },
+    crossOriginEmbedderPolicy: false
   });
 
   await app.register(cors as any, {

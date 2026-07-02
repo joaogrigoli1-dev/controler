@@ -2,6 +2,8 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/co
 import { Srv1Service } from "./srv1.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { OtpReauthGuard } from "../auth/otp-reauth.guard";
+import { RolesGuard } from "../auth/roles.guard";
+import { Roles } from "../auth/roles.decorator";
 import { SshService } from "../common/ssh.service";
 
 @UseGuards(JwtAuthGuard)
@@ -39,8 +41,9 @@ export class Srv1Controller {
     return this.srv1.tailJournal(unit, lines ? parseInt(lines, 10) : 100);
   }
 
-  // Restart serviço — exige re-auth OTP (ação destrutiva)
-  @UseGuards(OtpReauthGuard)
+  // Restart serviço — exige papel admin + re-auth OTP (ação destrutiva)
+  @Roles("admin")
+  @UseGuards(RolesGuard, OtpReauthGuard)
   @Post("services/:unit/restart")
   async restartService(@Param("unit") unit: string) {
     if (!/^[a-zA-Z0-9@._-]+\.service$/.test(unit)) {
@@ -50,7 +53,8 @@ export class Srv1Controller {
     return { ok: result.exitCode === 0, stdout: result.stdout, stderr: result.stderr };
   }
 
-  @UseGuards(OtpReauthGuard)
+  @Roles("admin")
+  @UseGuards(RolesGuard, OtpReauthGuard)
   @Post("containers/:name/:action")
   async containerAction(@Param("name") name: string, @Param("action") action: string) {
     if (!/^[a-zA-Z0-9_.-]+$/.test(name)) return { ok: false, error: "name inválido" };

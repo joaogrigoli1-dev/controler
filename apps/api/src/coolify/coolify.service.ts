@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, BadRequestException } from "@nestjs/common";
 import axios, { AxiosInstance } from "axios";
 import { SsmService } from "../common/ssm.service";
 import { RedisService } from "../common/redis.service";
@@ -9,6 +9,14 @@ export class CoolifyService {
   private client: AxiosInstance | null = null;
 
   constructor(private readonly ssm: SsmService, private readonly redis: RedisService) {}
+
+  /** B-06: valida o formato do uuid antes de interpolar em URL/params (evita SSRF/path-injection). */
+  private assertUuid(uuid: string): string {
+    if (!uuid || !/^[a-z0-9]{16,40}$/i.test(uuid)) {
+      throw new BadRequestException("uuid inválido");
+    }
+    return uuid;
+  }
 
   private async getClient(): Promise<AxiosInstance> {
     if (this.client) return this.client;
@@ -32,6 +40,7 @@ export class CoolifyService {
   }
 
   async getApplication(uuid: string) {
+    this.assertUuid(uuid);
     const c = await this.getClient();
     const { data } = await c.get(`/applications/${uuid}`);
     return data;
@@ -46,18 +55,21 @@ export class CoolifyService {
   }
 
   async listDeployments(uuid: string) {
+    this.assertUuid(uuid);
     const c = await this.getClient();
     const { data } = await c.get(`/deployments`, { params: { uuid } }).catch(() => ({ data: [] }));
     return data;
   }
 
   async getEnvs(uuid: string) {
+    this.assertUuid(uuid);
     const c = await this.getClient();
     const { data } = await c.get(`/applications/${uuid}/envs`);
     return data;
   }
 
   async deploy(uuid: string, force = false) {
+    this.assertUuid(uuid);
     const c = await this.getClient();
     const { data } = await c.get(`/deploy`, { params: { uuid, force } });
     await this.redis.invalidate("coolify:");
@@ -65,24 +77,28 @@ export class CoolifyService {
   }
 
   async restart(uuid: string) {
+    this.assertUuid(uuid);
     const c = await this.getClient();
     const { data } = await c.post(`/applications/${uuid}/restart`);
     return data;
   }
 
   async stop(uuid: string) {
+    this.assertUuid(uuid);
     const c = await this.getClient();
     const { data } = await c.post(`/applications/${uuid}/stop`);
     return data;
   }
 
   async start(uuid: string) {
+    this.assertUuid(uuid);
     const c = await this.getClient();
     const { data } = await c.post(`/applications/${uuid}/start`);
     return data;
   }
 
   async getLogs(uuid: string, lines = 200) {
+    this.assertUuid(uuid);
     const c = await this.getClient();
     try {
       const { data } = await c.get(`/applications/${uuid}/logs`, { params: { lines } });

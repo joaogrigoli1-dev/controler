@@ -12,13 +12,14 @@ export class ApiError extends Error {
   }
 }
 
+// A-02: access token vive SOMENTE em memória (não em localStorage — fora do alcance de XSS).
+// Em reload ele é perdido e re-obtido via /auth/refresh (refresh está no cookie httpOnly).
+let accessToken: string | null = null;
+export function setAccessToken(t: string | null) { accessToken = t; }
+export function getAccessToken(): string | null { return accessToken; }
+
 function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("controler:token");
-}
-function getRefresh(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("controler:refresh");
+  return accessToken;
 }
 
 /**
@@ -47,20 +48,18 @@ let refreshing: Promise<boolean> | null = null;
 async function tryRefresh(): Promise<boolean> {
   if (refreshing) return refreshing;
   refreshing = (async () => {
-    const refreshToken = getRefresh();
-    if (!refreshToken) return false;
     try {
+      // A-02: refresh vem do cookie httpOnly — sem body, apenas credentials.
       const res = await fetch(`${BASE}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken })
+        credentials: "include",
+        body: "{}"
       });
       if (!res.ok) return false;
       const body = await res.json();
       if (!body?.accessToken) return false;
-      localStorage.setItem("controler:token", body.accessToken);
-      // Rotação: o backend devolve um refresh novo a cada uso
-      if (body.refreshToken) localStorage.setItem("controler:refresh", body.refreshToken);
+      setAccessToken(body.accessToken);
       return true;
     } catch {
       return false;
@@ -74,8 +73,7 @@ async function tryRefresh(): Promise<boolean> {
 
 function redirectToLogin() {
   try {
-    localStorage.removeItem("controler:token");
-    localStorage.removeItem("controler:refresh");
+    setAccessToken(null);
     localStorage.removeItem("controler:user");
   } catch { /* ignore */ }
   if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
@@ -134,7 +132,7 @@ export const api = {
       "/auth/request-code-sms",
       { method: "POST", body: JSON.stringify({ phone }) }
     ),
-  verifyCode: (phone: string, code: string) => apiFetch<{ accessToken: string; refreshToken: string; user: any; expiresAt: string }>("/auth/verify-code", { method: "POST", body: JSON.stringify({ phone, code }) }),
+  verifyCode: (phone: string, code: string) => apiFetch<{ accessToken: string; user: any; expiresAt: string }>("/auth/verify-code", { method: "POST", body: JSON.stringify({ phone, code }) }),
   reauthRequest: () => apiFetch("/auth/reauth/request", { method: "POST" }),
   logout: () => apiFetch("/auth/logout", { method: "POST" }),
   me: () => apiFetch("/auth/me"),
