@@ -38,15 +38,42 @@ export class SshService implements OnModuleDestroy {
 
     const promise = (async () => {
       const ssh = new NodeSSH();
-      const resolvedKeyPath = keyPath || process.env.SRV1_SSH_KEY_PATH || `/root/.ssh/id_ed25519`;
-      try {
-        await ssh.connect({
-          host, username: user, port, privateKeyPath: resolvedKeyPath, readyTimeout: 10_000,
-          keepaliveInterval: 30_000, keepaliveCountMax: 3
-        });
-      } catch (err: any) {
+      // FASE 6: cadeia de chaves candidatas. O SSM (/shared/srv1/private_key_path)
+      // pode apontar para um path do HOST do operador (ex.: ~/.ssh/id_ed25519_cowork,
+      // que não existe no container) — então: expande "~", tenta cada candidata que
+      // EXISTE no filesystem, e sempre inclui a chave montada pelo Coolify
+      // (/root/.ssh/id_ed25519) como fallback. Senha é o último recurso (o sshd do
+      // SRV1 tem PasswordAuthentication no — não conte com ela).
+      const expand = (p?: string | null) =>
+        p && p.startsWith("~/") ? p.replace("~", process.env.HOME || "/root") : p || undefined;
+      const fs = await import("fs");
+      const candidates = [
+        ...new Set(
+          [expand(keyPath), expand(process.env.SRV1_SSH_KEY_PATH), "/root/.ssh/id_ed25519"].filter(
+            (p): p is string => !!p
+          )
+        )
+      ].filter(p => {
+        try { return fs.existsSync(p); } catch { return false; }
+      });
+      let connected = false;
+      let lastErr: any = null;
+      for (const pk of candidates) {
+        try {
+          await ssh.connect({
+            host, username: user, port, privateKeyPath: pk, readyTimeout: 10_000,
+            keepaliveInterval: 30_000, keepaliveCountMax: 3
+          });
+          connected = true;
+          break;
+        } catch (err: any) {
+          lastErr = err;
+          this.log.warn(`SSH ${key}: chave ${pk} falhou (${err?.message}); tentando próxima`);
+        }
+      }
+      if (!connected) {
         const pass = await this.ssm.get("/shared/srv1/password");
-        if (!pass) throw new Error(`SSH ${host}: chave falhou e sem senha em SSM`);
+        if (!pass) throw lastErr ?? new Error(`SSH ${host}: nenhuma chave válida e sem senha em SSM`);
         await ssh.connect({
           host, username: user, port, password: pass, readyTimeout: 10_000,
           keepaliveInterval: 30_000, keepaliveCountMax: 3
