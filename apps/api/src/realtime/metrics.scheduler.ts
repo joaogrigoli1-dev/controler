@@ -184,10 +184,10 @@ export class MetricsScheduler {
           await this.alerts.dispatch({ ruleKey: "host_psi_cpu", severity: "warning", title: "Pressão de CPU sustentada (PSI)", message: `psi cpu some avg60=${sat.psi.cpu.some.avg60.toFixed(1)} > 25 há ${this.psiStreak.cpu} ciclos` });
         }
         if (this.psiStreak.io >= 2) {
-          await this.alerts.dispatch({ ruleKey: "host_psi_io", severity: "critical", title: "Pressão de IO crítica (PSI full)", message: `psi io full avg10=${(sat.psi.io.full?.avg10 ?? 0).toFixed(1)} > 25 por 2 ciclos — disco travando processos` });
+          await this.alerts.dispatch({ ruleKey: "host_psi_io", severity: "critical", title: "Pressão de IO crítica (PSI full)", message: `psi io full avg10=${(sat.psi.io.full?.avg10 ?? 0).toFixed(1)} > 25 por 2 ciclos — disco travando processos`, enforceCooldownMin: 30 });
         }
         if (this.psiStreak.mem >= 2) {
-          await this.alerts.dispatch({ ruleKey: "host_psi_mem", severity: "critical", title: "Pressão de memória crítica (PSI full)", message: `psi mem full avg10=${(sat.psi.memory.full?.avg10 ?? 0).toFixed(1)} > 5 por 2 ciclos — risco de OOM iminente` });
+          await this.alerts.dispatch({ ruleKey: "host_psi_mem", severity: "critical", title: "Pressão de memória crítica (PSI full)", message: `psi mem full avg10=${(sat.psi.memory.full?.avg10 ?? 0).toFixed(1)} > 5 por 2 ciclos — risco de OOM iminente`, enforceCooldownMin: 30 });
         }
         if (this.psiStreak.swap >= 5) {
           await this.alerts.dispatch({ ruleKey: "host_swap_thrash", severity: "warning", title: "Swap thrashing", message: `swap-out ${(sat.swap?.outPagesSec ?? 0).toFixed(1)} págs/s sustentado há ${this.psiStreak.swap} ciclos` });

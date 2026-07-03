@@ -28,6 +28,13 @@ export interface DispatchInput {
   message: string;
   metadata?: Record<string, unknown>;
   forceChannels?: string[];
+  /**
+   * Aplica cooldown (em minutos) MESMO para severity critical. Usado por alertas
+   * de saturação sustentada (PSI/swap) que reavaliam a cada tick e, sem isto,
+   * re-disparariam a cada ciclo enquanto a pressão persiste. Quando ausente,
+   * mantém o comportamento padrão: critical fura o cooldown.
+   */
+  enforceCooldownMin?: number;
 }
 
 /** Métricas de host já coletadas no tick — insumo do motor de AlertRules (E1). */
@@ -80,10 +87,14 @@ export class AlertsService {
       }
     }
 
-    // Cooldown check (per ruleKey)
+    // Cooldown check (per ruleKey).
+    // Regra: critical normalmente fura o cooldown; mas se enforceCooldownMin
+    // estiver definido (alertas de saturação sustentada), o cooldown vale
+    // inclusive para critical — evita flood a cada tick.
     const cooldownKey = `${COOLDOWN_PREFIX}${input.ruleKey}`;
     const cooled = await this.redis.client.get(cooldownKey).catch(() => null);
-    if (cooled && sev !== "critical") {
+    const cooldownAppliesToCritical = input.enforceCooldownMin != null;
+    if (cooled && (sev !== "critical" || cooldownAppliesToCritical)) {
       return { sent: false, reason: "cooldown" };
     }
 
@@ -100,7 +111,8 @@ export class AlertsService {
 
     await this.persistLog({ ...input, channels, sent: allOk, error });
     if (allOk) {
-      await this.redis.client.setex(cooldownKey, DEFAULT_COOLDOWN_MIN * 60, "1").catch(() => {});
+      const cooldownSec = (input.enforceCooldownMin ?? DEFAULT_COOLDOWN_MIN) * 60;
+      await this.redis.client.setex(cooldownKey, cooldownSec, "1").catch(() => {});
     }
     return { sent: allOk, reason: error };
   }
