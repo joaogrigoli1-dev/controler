@@ -30,6 +30,30 @@ export interface DispatchInput {
   forceChannels?: string[];
 }
 
+/** Métricas de host já coletadas no tick — insumo do motor de AlertRules (E1). */
+export interface RuleEvalContext {
+  cpuPercent?: number;
+  memPercent?: number;
+  diskPercent?: number;
+  /** loadAvg[0] do host */
+  load1m?: number;
+  psiCpuSomeAvg60?: number;
+  psiIoSomeAvg60?: number;
+  psiIoFullAvg60?: number;
+  psiMemSomeAvg60?: number;
+}
+
+/** Tipos de condição suportados pelo motor de regras (condition.type no JSON). */
+const RULE_CONDITION_TYPES = new Set([
+  "cpu_above",
+  "mem_above",
+  "disk_above",
+  "load_above",
+  "psi_cpu_above",
+  "psi_io_above",
+  "psi_mem_above"
+]);
+
 @Injectable()
 export class AlertsService {
   private readonly log = new Logger("Alerts");
@@ -44,6 +68,17 @@ export class AlertsService {
   async dispatch(input: DispatchInput): Promise<{ sent: boolean; reason?: string }> {
     const sev = input.severity;
     const channels = input.forceChannels || this.channelsFor(sev);
+
+    // E1b: silêncio explícito da regra (silencedUntil) vence tudo — inclusive critical
+    if (input.ruleId) {
+      const rule = await this.prisma.alertRule
+        .findUnique({ where: { id: input.ruleId } })
+        .catch(() => null);
+      if (rule?.silencedUntil && rule.silencedUntil > new Date()) {
+        await this.persistLog({ ...input, channels, sent: false, error: "silenced" });
+        return { sent: false, reason: "silenced" };
+      }
+    }
 
     // Cooldown check (per ruleKey)
     const cooldownKey = `${COOLDOWN_PREFIX}${input.ruleKey}`;
@@ -173,7 +208,78 @@ export class AlertsService {
     });
   }
 
-  // ─── 3. Rules CRUD ──────────────────────────────────────
+  // ─── 3. Motor de avaliação de AlertRules (E1) ───────────
+  /**
+   * Avalia todas as regras habilitadas do banco contra as métricas do tick atual.
+   * Chamado pelo MetricsScheduler a cada host tick. Nunca lança: erros por regra
+   * são logados e a avaliação segue. Cooldown/flood ficam a cargo do dispatch.
+   */
+  async evaluateRules(ctx: RuleEvalContext): Promise<void> {
+    let rules: Awaited<ReturnType<typeof this.prisma.alertRule.findMany>>;
+    try {
+      rules = await this.prisma.alertRule.findMany({ where: { enabled: true } });
+    } catch (err: any) {
+      this.log.warn(`evaluateRules: falha ao carregar regras: ${err?.message}`);
+      return;
+    }
+    const now = new Date();
+    for (const rule of rules) {
+      try {
+        // Regra silenciada → pula (dispatch também re-checa, cinto e suspensório)
+        if (rule.silencedUntil && rule.silencedUntil > now) continue;
+
+        const cond = rule.condition as { type?: string; target?: string; threshold?: number; duration?: string } | null;
+        if (!cond || typeof cond !== "object" || !cond.type) {
+          this.log.debug(`evaluateRules: regra "${rule.name}" (${rule.id}) com condition inválida — pulando`);
+          continue;
+        }
+        if (!RULE_CONDITION_TYPES.has(cond.type)) {
+          this.log.debug(`evaluateRules: tipo de condição desconhecido "${cond.type}" na regra "${rule.name}" — pulando`);
+          continue;
+        }
+        const threshold = Number(cond.threshold);
+        if (!Number.isFinite(threshold)) {
+          this.log.debug(`evaluateRules: threshold inválido (${cond.threshold}) na regra "${rule.name}" — pulando`);
+          continue;
+        }
+        const value = this.metricForCondition(cond.type, ctx);
+        if (value === undefined || value === null || !Number.isFinite(value)) {
+          // Métrica não disponível neste tick (ex.: PSI sem coleta) — não é erro
+          this.log.debug(`evaluateRules: métrica de "${cond.type}" indisponível neste tick (regra "${rule.name}")`);
+          continue;
+        }
+
+        if (value > threshold) {
+          await this.dispatch({
+            ruleId: rule.id,
+            ruleKey: `rule:${rule.id}`,
+            severity: (rule.severity as DispatchInput["severity"]) || "warning",
+            title: rule.name,
+            message: `${rule.description || rule.name}: valor atual ${value.toFixed(1)} excede ${threshold}`,
+            metadata: { condition: rule.condition as Record<string, unknown>, value }
+          });
+        }
+      } catch (err: any) {
+        this.log.warn(`evaluateRules: regra "${rule.name}" (${rule.id}) falhou: ${err?.message}`);
+      }
+    }
+  }
+
+  /** Mapeia condition.type → métrica correspondente do contexto do tick. */
+  private metricForCondition(type: string, ctx: RuleEvalContext): number | undefined {
+    switch (type) {
+      case "cpu_above": return ctx.cpuPercent;
+      case "mem_above": return ctx.memPercent;
+      case "disk_above": return ctx.diskPercent;
+      case "load_above": return ctx.load1m;
+      case "psi_cpu_above": return ctx.psiCpuSomeAvg60;
+      case "psi_io_above": return ctx.psiIoFullAvg60 ?? ctx.psiIoSomeAvg60;
+      case "psi_mem_above": return ctx.psiMemSomeAvg60;
+      default: return undefined;
+    }
+  }
+
+  // ─── 4. Rules CRUD ──────────────────────────────────────
   listRules() {
     return this.prisma.alertRule.findMany({ orderBy: { createdAt: "desc" } });
   }
@@ -194,7 +300,7 @@ export class AlertsService {
     });
   }
 
-  // ─── 4. Logs / summary ──────────────────────────────────
+  // ─── 5. Logs / summary ──────────────────────────────────
   recentLogs(limit = 100) {
     return this.prisma.alertLog.findMany({ orderBy: { createdAt: "desc" }, take: limit });
   }

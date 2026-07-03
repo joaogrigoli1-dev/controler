@@ -173,8 +173,8 @@ export class MetricsScheduler {
       }
 
       // FASE 3: alertas PSI/swap com SUSTENTAÇÃO (n ciclos consecutivos).
-      // Nota: criticals FURAM o cooldown do AlertsService → disparo só ao
-      // CRUZAR o limiar (streak === 2), senão floodaria a cada tick.
+      // E4: operadores >= em todos os streaks (consistência CPU >= 2 / swap >= 5);
+      // === deixava evento sustentado sem disparo se o contador pulasse o valor exato.
       if (sat) {
         this.psiStreak.cpu = sat.psi.cpu.some.avg60 > 25 ? this.psiStreak.cpu + 1 : 0;
         this.psiStreak.io = (sat.psi.io.full?.avg10 ?? 0) > 25 ? this.psiStreak.io + 1 : 0;
@@ -183,15 +183,32 @@ export class MetricsScheduler {
         if (this.psiStreak.cpu >= 2) {
           await this.alerts.dispatch({ ruleKey: "host_psi_cpu", severity: "warning", title: "Pressão de CPU sustentada (PSI)", message: `psi cpu some avg60=${sat.psi.cpu.some.avg60.toFixed(1)} > 25 há ${this.psiStreak.cpu} ciclos` });
         }
-        if (this.psiStreak.io === 2) {
+        if (this.psiStreak.io >= 2) {
           await this.alerts.dispatch({ ruleKey: "host_psi_io", severity: "critical", title: "Pressão de IO crítica (PSI full)", message: `psi io full avg10=${(sat.psi.io.full?.avg10 ?? 0).toFixed(1)} > 25 por 2 ciclos — disco travando processos` });
         }
-        if (this.psiStreak.mem === 2) {
+        if (this.psiStreak.mem >= 2) {
           await this.alerts.dispatch({ ruleKey: "host_psi_mem", severity: "critical", title: "Pressão de memória crítica (PSI full)", message: `psi mem full avg10=${(sat.psi.memory.full?.avg10 ?? 0).toFixed(1)} > 5 por 2 ciclos — risco de OOM iminente` });
         }
         if (this.psiStreak.swap >= 5) {
           await this.alerts.dispatch({ ruleKey: "host_swap_thrash", severity: "warning", title: "Swap thrashing", message: `swap-out ${(sat.swap?.outPagesSec ?? 0).toFixed(1)} págs/s sustentado há ${this.psiStreak.swap} ciclos` });
         }
+      }
+
+      // E1c: motor de AlertRules do banco — avalia regras habilitadas contra as
+      // métricas deste tick (cooldown/silencedUntil tratados no AlertsService)
+      try {
+        await this.alerts.evaluateRules({
+          cpuPercent: m.cpuPercent,
+          memPercent: m.memPercent,
+          diskPercent: m.diskPercent,
+          load1m: m.loadAvg?.[0],
+          psiCpuSomeAvg60: sat?.psi.cpu.some.avg60,
+          psiIoSomeAvg60: sat?.psi.io.some.avg60,
+          psiIoFullAvg60: sat?.psi.io.full?.avg60,
+          psiMemSomeAvg60: sat?.psi.memory.some.avg60
+        });
+      } catch (e: any) {
+        this.log.warn(`evaluateRules failed: ${e?.message}`);
       }
     } catch (err: any) {
       this.log.warn(`host metrics failed: ${err?.message}`);

@@ -315,7 +315,14 @@ export class RollupService implements OnModuleInit {
 
         const pts = pointsByContainer.get(id) ?? [];
         const checksTotal = pts.length;
-        const checksUp = pts.filter(p => p.health !== "unhealthy" && p.health !== "exited").length;
+        // E7: contar como "up" APENAS estados saudáveis/rodando.
+        // Antes: `health !== "unhealthy" && health !== "exited"` — isso contava
+        // "starting" (healthcheck ainda não passou) como up, inflando checksUp.
+        // Agora: "healthy" (healthcheck OK) ou "none" (rodando sem healthcheck
+        // definido — o coletor converte "none" em "exited" quando o container
+        // não está rodando, então "none" implica running). Container preso em
+        // "starting" NÃO conta como up. O uptimePct por eventos permanece intacto.
+        const checksUp = pts.filter(p => p.health === "healthy" || p.health === "none").length;
         const uptimePct = +(((bucketSec - downtimeSec) / bucketSec) * 100).toFixed(3);
 
         const data = { checksTotal, checksUp, downtimeSec, incidents, uptimePct };

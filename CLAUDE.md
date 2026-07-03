@@ -26,6 +26,10 @@
 
 ## Específicos de infra
 
+- **SRV1 (hardware real):** KVM8 — 8 vCPU / 32 GB RAM / 400 GB disco, Ubuntu 24.04
+- **SSH SRV1:** porta **47391** (via SSM `/shared/srv1/port`, fallback 22); chave via SSM
+  `/shared/srv1/private_key_path`
+- **Containers:** contagem dinâmica (~33-34) — não afirmar número fixo
 - Coolify API visto de dentro da app: `http://10.0.6.1:8000`
 - SSH key do container: `/data/coolify/applications/a8u2gdchrpjnn6era2i8kh8d/ssh/id_ed25519`
 - Coletores raw a cada 60s (env `NOC_RAW_INTERVAL_MS`); chave SSH do coletor = `/root/.ssh/id_ed25519`

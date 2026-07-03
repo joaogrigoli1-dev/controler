@@ -81,26 +81,46 @@ function redirectToLogin() {
   }
 }
 
+// FE-06: timeout padrão do cliente HTTP (configurável por request via `timeoutMs`).
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 export async function apiFetch<T = any>(
   path: string,
-  init: RequestInit & { otp?: string; _retried?: boolean } = {}
+  init: RequestInit & { otp?: string; _retried?: boolean; timeoutMs?: number } = {}
 ): Promise<T> {
+  const { otp, _retried, timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchInit } = init;
   const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(init.headers as Record<string, string>)
+    ...(fetchInit.headers as Record<string, string>)
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  if (init.otp) headers["X-Otp-Code"] = init.otp;
+  if (otp) headers["X-Otp-Code"] = otp;
+
+  // FE-06: AbortController com timeout — cobre o fetch E a leitura do body.
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
 
   let res: Response;
+  let text: string;
   try {
-    res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: "include" });
+    res = await fetch(`${BASE}${path}`, {
+      ...fetchInit,
+      headers,
+      credentials: "include",
+      signal: controller.signal
+    });
+    text = await res.text();
   } catch (err) {
     console.error(`[api] network error ${path}:`, err);
+    if (timedOut) {
+      throw new ApiError(0, "O servidor demorou para responder. Verifique sua rede e tente novamente.");
+    }
     throw new ApiError(0, friendlyMessage(0, null));
+  } finally {
+    clearTimeout(timer);
   }
-  const text = await res.text();
   const body = text ? safeParse(text) : null;
 
   // FE-03: 401 em rota protegida → tenta refresh 1x e repete a request

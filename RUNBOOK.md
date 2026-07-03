@@ -264,6 +264,49 @@ ssh -p 47391 root@62.72.63.18 'systemctl --failed --no-legend; redis-cli -h 127.
 # redis ouve em 127.0.0.1 e 10.0.1.1
 ```
 
+## Operação NOC — pendências e ack (2026-07-02)
+
+> Contexto completo e racional: `DECISOES-NOC-2026-07-02.md`.
+
+### Porta SSH do SRV1 (47391 via SSM)
+
+- Porta oficial: **47391**, resolvida pelo código via SSM **`/shared/srv1/port`**, com
+  fallback para 22 se o parâmetro faltar.
+- **NÃO fechar a porta 22 às cegas** — risco de lockout. No reharden: manter a 47391 e só
+  avaliar fechar a 22 após confirmar (período de observação) que toda a coleta/integração
+  usa a porta do SSM. Fazer com sessão de contingência aberta.
+
+### ollama exposto em `*:11434` (pendente)
+
+- O ollama ouve em `*:11434` no host. Recomendação: **restringir a 11434 no firewall
+  Hostinger** ao uso local (não expor à internet).
+- Relacionado: o fqdn do app controler no Coolify ainda aponta para `*.sslip.io` —
+  ajustar para `noc.controler.net.br`. Ambos pendentes por serem mudanças em serviço/rota
+  vivos (não executar sem janela).
+
+### Ack-list de apps Coolify offline
+
+- Apps offline reconhecidos (ack) **não geram alerta**, mas o estado offline continua
+  registrado/visível no NOC.
+- Env do app (Coolify): **`NOC_COOLIFY_ACK_OFFLINE_UUIDS`** — lista de UUIDs separados
+  por vírgula.
+- Em ack hoje: `passaro-professor`, `manalista`, `apptecph-web` (decisão de negócio
+  pendente do dono: reativar ou aposentar formalmente).
+- Para reativar alertas de um app: remover o UUID do env + redeploy/restart da API.
+
+### Unit `staggered-docker-start.service`
+
+- Unit systemd instalada/enabled no SRV1 a partir de `ops/staggered-docker-start.service` —
+  start escalonado dos containers no boot (mitigação anti thundering-herd; ver incidente
+  SRV1 2026-06).
+- As units órfãs antigas em `failed` (ex.: `staggered-containers.service`) receberam
+  `systemctl reset-failed`.
+
+```bash
+# Conferir
+ssh -p 47391 root@62.72.63.18 'systemctl status staggered-docker-start.service --no-pager; systemctl --failed --no-legend'
+```
+
 ---
 
 ## POSTMORTEM — Incidente 28/05/2026 (8h-10h BRT)

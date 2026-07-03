@@ -1,9 +1,9 @@
 "use client";
 /**
- * /analytics â FASE 4: KPIs de confiabilidade (Fase 1 Â§catÃ¡logo) + tendÃªncias reais.
+ * /analytics — FASE 4: KPIs de confiabilidade (Fase 1 §catálogo) + tendências reais.
  *
- * Linha 1: reliability (/analytics/reliability â FASE 3; mock rotulado atÃ© lÃ¡).
- * Linha 2: disponibilidade diÃ¡ria (UptimeBar) + disponibilidade por alvo.
+ * Linha 1: reliability (/analytics/reliability — FASE 3; mock rotulado até lá).
+ * Linha 2: disponibilidade diária (UptimeBar) + disponibilidade por alvo.
  * Linha 3: CPU/RAM 24h + heatmap de eventos (dados reais existentes).
  * Linha 4: top containers, breakdown de alertas, deploys por projeto (reais).
  */
@@ -40,7 +40,7 @@ const SEV_COLORS = {
 const WINDOWS = [7, 30, 90] as const;
 type WindowDays = (typeof WINDOWS)[number];
 
-/** RAG â accent do KpiTile (stale = sem accent, nunca fingir verde). */
+/** RAG → accent do KpiTile (stale = sem accent, nunca fingir verde). */
 const RAG_ACCENT: Record<Rag, "green" | "yellow" | "red" | undefined> = {
   ok: "green",
   warn: "yellow",
@@ -48,15 +48,15 @@ const RAG_ACCENT: Record<Rag, "green" | "yellow" | "red" | undefined> = {
   stale: undefined
 };
 
-/** NÃºmero pt-BR compacto (atÃ© 2 casas). */
+/** Número pt-BR compacto (até 2 casas). */
 function fmt(n: number | null | undefined, digits = 2): string {
-  if (n == null || Number.isNaN(n)) return "â";
+  if (n == null || Number.isNaN(n)) return "—";
   return n.toLocaleString("pt-BR", { maximumFractionDigits: digits });
 }
 
-/** Downtime humanizado: segundos â "Xs" / "X min" / "Xh Ymin". */
+/** Downtime humanizado: segundos → "Xs" / "X min" / "Xh Ymin". */
 function humanDowntime(sec: number | null | undefined): string {
-  if (sec == null) return "â";
+  if (sec == null) return "—";
   if (sec < 60) return `${Math.round(sec)}s`;
   const min = Math.round(sec / 60);
   if (min < 60) return `${min} min`;
@@ -76,7 +76,7 @@ function dailyStatus(uptimePct: number | null | undefined): UptimeSegment["statu
 export default function AnalyticsPage() {
   const [days, setDays] = useState<WindowDays>(7);
 
-  // ââ Confiabilidade (FASE 3; cai p/ mock rotulado em 404/501) ââââââââââ
+  // ── Confiabilidade (FASE 3; cai p/ mock rotulado em 404/501) ──────────
   const rel = useNoc(
     `reliability-${days}`,
     () =>
@@ -86,7 +86,7 @@ export default function AnalyticsPage() {
     60000
   );
 
-  // ââ Dados reais existentes âââââââââââââââââââââââââââââââââââââââââââââ
+  // ── Dados reais existentes ─────────────────────────────────────────────
   const { data: overview } = useSWR(`an-overview-${days}`, () => api.analyticsOverview(days), { refreshInterval: 60000 });
   const hist = useNoc(
     "an-host-24h",
@@ -99,7 +99,7 @@ export default function AnalyticsPage() {
   const { data: alertsBd } = useSWR("an-alerts-bd", () => api.alertsBreakdown(168), { refreshInterval: 60000 });
   const { data: deployStats } = useSWR("an-deploys", () => api.deployStats(), { refreshInterval: 60000 });
 
-  // ââ Derivados ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // ── Derivados ──────────────────────────────────────────────────────────
   const r = rel.data;
   const mtbfInsufficient = r != null && (r.mtbfHours == null || (r.incidentCount ?? 0) < 5);
 
@@ -110,8 +110,8 @@ export default function AnalyticsPage() {
     status: dailyStatus(d.uptimePct),
     label:
       d.uptimePct == null
-        ? `${d.date} Â· sem dado`
-        : `${d.date} Â· ${fmt(d.uptimePct)}% Â· ${d.incidents ?? 0} incidente(s)`
+        ? `${d.date} · sem dado`
+        : `${d.date} · ${fmt(d.uptimePct)}% · ${d.incidents ?? 0} incidente(s)`
   }));
 
   const histData = (hist.data ?? []).map(p => ({
@@ -134,10 +134,10 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6 animate-fade-up">
-      {/* ââ Seletor de janela âââââââââââââââââââââââââââââââââââââââââââ */}
+      {/* ── Seletor de janela ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
-          <span className="section-title !mb-0">Confiabilidade â janela {days}d</span>
+          <span className="section-title !mb-0">Confiabilidade — janela {days}d</span>
           <DataBadge source={rel.source} stale={rel.stale} />
         </div>
         <div className="flex items-center gap-2 text-xs text-white/40">
@@ -160,7 +160,7 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* ââ Linha 1: KPIs de confiabilidade ââââââââââââââââââââââââââââ */}
+      {/* ── Linha 1: KPIs de confiabilidade ──────────────────────────── */}
       {rel.isLoading && !r ? (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {Array.from({ length: 5 }, (_, i) => (
@@ -173,14 +173,14 @@ export default function AnalyticsPage() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           <KpiTile
             label="Disponibilidade"
-            value={r?.availabilityPct != null ? `${fmt(r.availabilityPct)}%` : "â"}
+            value={r?.availabilityPct != null ? `${fmt(r.availabilityPct)}%` : "—"}
             sub={r?.coveragePct != null ? `cobertura ${fmt(r.coveragePct, 1)}%` : "cobertura n/d"}
             accent={RAG_ACCENT[availRag]}
             icon={<Gauge size={14} />}
           />
           <KpiTile
             label="MTTR"
-            value={r?.mttrMinutes != null ? `${fmt(r.mttrMinutes)} min` : "â"}
+            value={r?.mttrMinutes != null ? `${fmt(r.mttrMinutes)} min` : "—"}
             sub={r?.timeToDetectMinutes != null ? `time-to-detect ${fmt(r.timeToDetectMinutes)}min` : undefined}
             accent="cyan"
             icon={<Timer size={14} />}
@@ -198,14 +198,14 @@ export default function AnalyticsPage() {
           />
           <KpiTile
             label="Deploy success"
-            value={r?.deploySuccessRatePct != null ? `${fmt(r.deploySuccessRatePct)}%` : "â"}
+            value={r?.deploySuccessRatePct != null ? `${fmt(r.deploySuccessRatePct)}%` : "—"}
             sub={`${r?.deploysTotal ?? 0} deploys`}
             accent={RAG_ACCENT[deployRag]}
             icon={<Rocket size={14} />}
           />
           <KpiTile
             label="Incidentes"
-            value={r?.incidentCount ?? "â"}
+            value={r?.incidentCount ?? "—"}
             sub={`janela ${days}d`}
             accent={(r?.incidentCount ?? 0) > 0 ? "yellow" : "green"}
             icon={<ShieldAlert size={14} />}
@@ -213,7 +213,7 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {/* ââ KPIs operacionais (overview real, mesma janela) ââââââââââââ */}
+      {/* ── KPIs operacionais (overview real, mesma janela) ──────────── */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <KpiTile
           label={`Deploys ${days}d`}
@@ -233,7 +233,7 @@ export default function AnalyticsPage() {
           icon={<AlertCircle size={14} />}
         />
         <KpiTile
-          label={`CrÃ­ticos ${days}d`}
+          label={`Críticos ${days}d`}
           value={overview?.alerts?.critical ?? 0}
           sub={`${overview?.alerts?.warning ?? 0} warnings`}
           accent={(overview?.alerts?.critical ?? 0) > 0 ? "red" : "green"}
@@ -258,17 +258,17 @@ export default function AnalyticsPage() {
         <KpiTile
           label="Scanner aberto"
           value={overview?.scanner?.openFindings ?? 0}
-          sub="findings nÃ£o resolvidos"
+          sub="findings não resolvidos"
           accent={(overview?.scanner?.openFindings ?? 0) > 5 ? "red" : "green"}
           icon={<Activity size={14} />}
         />
       </div>
 
-      {/* ââ Linha 2: disponibilidade diÃ¡ria + por alvo ââââââââââââââââââ */}
+      {/* ── Linha 2: disponibilidade diária + por alvo ────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="glass-card p-6">
           <div className="flex items-center justify-between">
-            <div className="section-title !mb-0">Disponibilidade diÃ¡ria ({days}d)</div>
+            <div className="section-title !mb-0">Disponibilidade diária ({days}d)</div>
             <DataBadge source={rel.source} stale={rel.stale} />
           </div>
           <div className="mt-4">
@@ -283,10 +283,10 @@ export default function AnalyticsPage() {
                 <UptimeBar segments={dailySegments} />
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-white/60">
                   <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-green/80" /> â¥ 99,9%
+                    <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-green/80" /> ≥ 99,9%
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-yellow/80" /> â¥ 99%
+                    <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-yellow/80" /> ≥ 99%
                   </span>
                   <span className="flex items-center gap-1.5">
                     <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-red/80" /> &lt; 99%
@@ -347,11 +347,11 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* ââ Linha 3: tendÃªncias reais 24h âââââââââââââââââââââââââââââââ */}
+      {/* ── Linha 3: tendências reais 24h ─────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="glass-card p-6">
           <div className="flex items-center justify-between">
-            <div className="section-title !mb-0">CPU / RAM â Ãºltimas 24h</div>
+            <div className="section-title !mb-0">CPU / RAM — últimas 24h</div>
             <DataBadge stale={hist.stale} />
           </div>
           <div className="mt-4">
@@ -360,7 +360,7 @@ export default function AnalyticsPage() {
             ) : hist.error && !hist.data ? (
               <CardError message={hist.error.message} onRetry={hist.refresh} />
             ) : histData.length === 0 ? (
-              <EmptyState message="Sem snapshots nas Ãºltimas 24h." />
+              <EmptyState message="Sem snapshots nas últimas 24h." />
             ) : (
               <TimeSeriesChart
                 data={histData}
@@ -384,7 +384,7 @@ export default function AnalyticsPage() {
           <div className="section-title">Heatmap eventos 24h</div>
           <div className="h-[260px]">
             {heatData.length === 0 ? (
-              <EmptyState message="Sem eventos nas Ãºltimas 24h." />
+              <EmptyState message="Sem eventos nas últimas 24h." />
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={heatData}>
@@ -403,7 +403,7 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* ââ Linha 4: top containers + breakdown de alertas ââââââââââââââ */}
+      {/* ── Linha 4: top containers + breakdown de alertas ────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="glass-card p-6">
           <div className="section-title flex items-center gap-2"><Cpu size={12} /> Top CPU (24h)</div>
@@ -483,11 +483,11 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* ââ Deploys por projeto âââââââââââââââââââââââââââââââââââââââââ */}
+      {/* ── Deploys por projeto ───────────────────────────────────────── */}
       <div className="glass-card p-6">
         <div className="section-title">Deploys por projeto (30d)</div>
         {deployArr.length === 0 && (
-          <EmptyState message="Nenhum deploy registrado nos Ãºltimos 30 dias." />
+          <EmptyState message="Nenhum deploy registrado nos últimos 30 dias." />
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {deployArr.map((d: any) => {
@@ -505,8 +505,8 @@ export default function AnalyticsPage() {
                   </span>
                 </div>
                 <div className="text-xs text-white/60 text-mono mt-1">
-                  {d.total} deploys Â· {d.success} â Â· {d.failed} â
-                  {d.avgDuration > 0 && ` Â· ${Math.round(d.avgDuration)}s avg`}
+                  {d.total} deploys · {d.success} ✓ · {d.failed} ✗
+                  {d.avgDuration > 0 && ` · ${Math.round(d.avgDuration)}s avg`}
                 </div>
                 <div className="mt-2 h-1 bg-white/5 rounded-full overflow-hidden">
                   <div
@@ -520,9 +520,9 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* ââ RodapÃ© metodolÃ³gico âââââââââââââââââââââââââââââââââââââââââ */}
+      {/* ── Rodapé metodológico ───────────────────────────────────────── */}
       <p className="text-[11px] text-white/60">
-        MTTR = mÃ©dia(resolvedAt â detectedAt) Â· disponibilidade derivada de eventos de transiÃ§Ã£o Â· fonte: catÃ¡logo Fase 1
+        MTTR = média(resolvedAt − detectedAt) · disponibilidade derivada de eventos de transição · fonte: catálogo Fase 1
       </p>
     </div>
   );

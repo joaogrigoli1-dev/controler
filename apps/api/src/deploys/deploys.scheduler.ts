@@ -12,6 +12,14 @@
  * Anti-flood: o cooldown do AlertsService NÃO se aplica a severity critical, então
  * este scheduler mantém guarda própria no Redis (TTL) antes de despachar críticos.
  * Tolerante a erro por app (try/catch por iteração) — o job nunca derruba o app.
+ *
+ * Decisão 5 — Supressão de alertas para apps reconhecidamente offline:
+ *   Apps do Coolify INTENCIONALMENTE parados (exited/unhealthy conhecido) não devem
+ *   gerar alerta WhatsApp/SMS a cada ciclo. A lista de UUIDs "acknowledged offline"
+ *   tem default embutido (ver DEFAULT_ACK_OFFLINE_UUIDS) e pode ser sobrescrita pela
+ *   env `NOC_COOLIFY_ACK_OFFLINE_UUIDS` (CSV de UUIDs; se definida, SUBSTITUI o default).
+ *   Para esses apps o estado continua sendo REGISTRADO (timeline/DB), mas o alerta
+ *   é suprimido. Qualquer outro app mantém o comportamento normal (alerta CRITICAL).
  */
 
 import { Injectable, Logger } from "@nestjs/common";
@@ -26,6 +34,22 @@ const SYNC_INTERVAL_MS = 5 * 60_000; // 5min
 const MAX_DEPLOYMENTS_PER_APP = 20; // só os recentes; upsert cobre o resto ao longo do tempo
 const RECENT_FAIL_WINDOW_MS = 30 * 60_000; // não alertar falhas antigas em backfill
 const ALERT_GUARD_PREFIX = "deploys:alerted:";
+
+/** Decisão 5: UUIDs de apps Coolify reconhecidamente offline (alerta suprimido). */
+const DEFAULT_ACK_OFFLINE_UUIDS = [
+  "v8so4ocgkkkk8ows48skggcg", // passaro-professor
+  "x4g4sgw48s4s84wg8kkggs8g", // manalista
+  "m56hx08nsdc65kxvtadczbfv" // apptecph-web
+];
+
+/** Resolve a lista de "acknowledged offline": env `NOC_COOLIFY_ACK_OFFLINE_UUIDS` (CSV) sobrescreve o default. */
+function ackOfflineUuids(): Set<string> {
+  const env = (process.env.NOC_COOLIFY_ACK_OFFLINE_UUIDS || "").trim();
+  const list = env
+    ? env.split(",").map(s => s.trim().toLowerCase()).filter(Boolean)
+    : DEFAULT_ACK_OFFLINE_UUIDS;
+  return new Set(list);
+}
 
 /** Mapeia o status cru do Coolify para o vocabulário do DeployHistory. */
 function mapDeployStatus(raw: string | null | undefined): string {
@@ -163,6 +187,24 @@ export class DeploysScheduler {
     const already = await this.redis.client.get(guardKey).catch(() => null);
     if (already) return;
     await this.redis.client.setex(guardKey, 30 * 60, "1").catch(() => {});
+
+    // Decisão 5: app reconhecidamente offline → registra o estado (timeline/DB),
+    // mas NÃO dispara alerta (WhatsApp/SMS). Guarda Redis acima limita a 1 registro / 30min.
+    if (ackOfflineUuids().has(String(app.uuid).toLowerCase())) {
+      this.log.log(`app ${app.name} (${app.uuid}) está na ack-offline list; alerta suprimido (status="${app.status}")`);
+      await this.timeline
+        .log({
+          eventType: "coolify",
+          title: `App ${app.name} está ${status} (ack-offline)`,
+          severity: "info",
+          project: app.name,
+          detail: `Status composto "${app.status}" registrado; alerta suprimido — app na lista acknowledged-offline (NOC_COOLIFY_ACK_OFFLINE_UUIDS).`,
+          actor: "scheduler",
+          metadata: { ruleKey: `coolify_unhealthy_${app.name}`, coolifyUuid: app.uuid, status: app.status, ackOffline: true }
+        })
+        .catch(err => this.log.warn(`timeline ack-offline(${app.name}): ${err?.message}`));
+      return;
+    }
 
     await this.alerts
       .dispatch({
