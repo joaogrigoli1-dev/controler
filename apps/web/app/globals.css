@@ -245,3 +245,9 @@
   .text-display { font-family: var(--font-body, 'Inter'), system-ui, sans-serif; font-weight: 650; letter-spacing: -0.01em; }
   .kpi-value { font-size: 30px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 }
+
+/* Login: entrada suave dos passos (phone/code) */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

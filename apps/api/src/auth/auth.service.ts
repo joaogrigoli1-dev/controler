@@ -65,6 +65,20 @@ export class AuthService {
   private formatPhone(p: string): string {
     return p.replace(/\D/g, "");
   }
+  /**
+   * Candidatos de telefone tolerantes ao DDI 55 (BR): o número pode estar
+   * cadastrado com ou sem o "55" na frente. Sem isto, digitar o celular sem o
+   * país cai no caminho anti-enumeração e o OTP nunca é enviado (silencioso).
+   * Ex.: "65984665555" -> ["65984665555","5565984665555"]; "5565984665555" -> ["5565984665555","65984665555"].
+   */
+  private phoneCandidates(p: string): string[] {
+    const d = this.formatPhone(p);
+    const set = new Set<string>();
+    if (d) set.add(d);
+    if (d.startsWith("55") && d.length > 4) set.add(d.slice(2));
+    else if (d) set.add("55" + d);
+    return [...set];
+  }
   private async checkRateLimit(ip: string): Promise<{ allowed: boolean; retryAfterSec?: number }> {
     const key = `auth:ratelimit:${ip}`;
     try {
@@ -97,9 +111,8 @@ export class AuthService {
       });
     }
 
-    const phoneClean = this.formatPhone(phone);
     const user = await this.prisma.user.findFirst({
-      where: { phone: phoneClean, active: true, blocked: false }
+      where: { phone: { in: this.phoneCandidates(phone) }, active: true, blocked: false }
     });
     if (!user) {
       // Mensagem genérica anti-enumeração
@@ -140,10 +153,11 @@ export class AuthService {
 
   // ─── 2. VERIFY CODE ─────────────────────────────────────
   async verifyCode(phone: string, code: string, ip: string, userAgent: string): Promise<OtpVerifyResult> {
-    const phoneClean = this.formatPhone(phone);
     const codeHash = this.hashValue(code);
 
-    const user = await this.prisma.user.findFirst({ where: { phone: phoneClean, active: true } });
+    const user = await this.prisma.user.findFirst({
+      where: { phone: { in: this.phoneCandidates(phone) }, active: true }
+    });
     if (!user) throw new UnauthorizedException("Código inválido ou expirado");
 
     // BE-02: consumo atômico (anti-replay/TOCTOU) — marca usado na mesma operação que valida.
