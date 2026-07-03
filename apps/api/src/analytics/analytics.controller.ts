@@ -12,6 +12,18 @@ export class AnalyticsController {
     return this.svc.overviewKpis(days ? parseInt(days, 10) : 7);
   }
 
+  /** FASE 3 — contrato ReliabilitySchema (apps/web/lib/schemas.ts). */
+  @Get("reliability")
+  reliability(@Query("days") days?: string) {
+    return this.svc.reliability(days ? parseInt(days, 10) : 30);
+  }
+
+  /** FASE 3 — contrato HealthOverviewSchema (golden signals, cache 20s). */
+  @Get("health")
+  health() {
+    return this.svc.health();
+  }
+
   @Get("host/history")
   host(@Query("hours") hours?: string) {
     return this.svc.hostMetricsHistory(hours ? parseInt(hours, 10) : 24);

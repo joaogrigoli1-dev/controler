@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Topbar } from "@/components/layout/Topbar";
 import { CommandPalette } from "@/components/layout/CommandPalette";
 import { Toaster, toast } from "@/components/ui/Toast";
+import { ErrorBoundary } from "@/components/noc/ErrorBoundary";
 import { isAuthed } from "@/lib/auth";
 
 // FE-04: erro de qualquer query SWR vira toast (deduplicado por chave, 1x por minuto)
@@ -38,7 +39,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           paddingBottom: "32px"
         }}
       >
-        <div className="px-6 py-6">{children}</div>
+        <div className="px-6 py-6">
+          <ErrorBoundary>{children}</ErrorBoundary>
+        </div>
       </main>
       <CommandPalette open={cmdkOpen} onOpenChange={setCmdkOpen} />
       <Toaster />

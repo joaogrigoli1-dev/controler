@@ -22,17 +22,18 @@ const ACCENT_MAP = {
 export function KpiTile({ label, value, sub, delta, trend, icon, accent }: Props) {
   return (
     <div className={cn("kpi-tile", accent && ACCENT_MAP[accent])}>
-      <div className="flex items-start justify-between text-xs uppercase tracking-widest text-white/40">
+      <div className="flex items-start justify-between text-xs uppercase tracking-widest text-white/60">
         <span>{label}</span>
         {icon && <span className="opacity-60">{icon}</span>}
       </div>
-      <div className="text-3xl font-bold text-mono mt-1">{value}</div>
+      {/* dark-v2 v4: KPI editorial 30px/650/-0.02em/tabular */}
+      <div className="kpi-value text-mono mt-1">{value}</div>
       {(sub || delta !== undefined) && (
-        <div className="text-xs text-white/50 flex items-center gap-2 mt-1">
+        <div className="text-xs text-white/60 flex items-center gap-2 mt-1">
           {delta !== undefined && (
             <span className={cn(
               "text-mono",
-              trend === "up" ? "text-green" : trend === "down" ? "text-red" : "text-white/40"
+              trend === "up" ? "text-green" : trend === "down" ? "text-red" : "text-white/60"
             )}>
               {trend === "up" ? "▲" : trend === "down" ? "▼" : "■"} {Math.abs(delta)}
             </span>

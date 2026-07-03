@@ -14,6 +14,7 @@ import {
 const NAV = [
   { href: "/overview", label: "Overview", icon: LayoutGrid, hint: "G H" },
   { href: "/srv1", label: "SRV1", icon: Server, hint: "G S" },
+  { href: "/srv1/containers", label: "Containers", icon: Boxes, hint: "G B" },
   { href: "/coolify", label: "Coolify", icon: Boxes, hint: "G C" },
   { href: "/hestia", label: "Mail & Sites", icon: Globe, hint: "G M" },
   { href: "/vault", label: "Vault", icon: KeyRound, hint: "G V" },
@@ -40,7 +41,7 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
 
   return (
     <aside
-      className="fixed top-0 left-0 h-full bg-surface-0/80 backdrop-blur-xl border-r border-white/5 flex flex-col z-40"
+      className="noc-sidebar fixed top-0 left-0 h-full flex flex-col z-40"
       style={{ width: "var(--sidebar-w)" }}
       aria-label="Navegação principal"
     >
@@ -67,7 +68,8 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
 
       <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto" aria-label="Telas do dashboard">
         {NAV.map(({ href, label, icon: Icon, hint }) => {
-          const isActive = path.startsWith(href);
+          // "/srv1" não pode acender junto com "/srv1/containers" (prefixo comum)
+          const isActive = href === "/srv1" ? path === "/srv1" : path.startsWith(href);
           return (
             <Link
               key={href}
@@ -108,7 +110,7 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
           <div className="bezel-card max-w-xs" onClick={e => e.stopPropagation()}>
             <div className="inner">
               <h3 className="text-display font-bold text-lg mb-2">Sair do Controler?</h3>
-              <p className="text-xs text-white/50 mb-4">Sua sessão será encerrada neste dispositivo.</p>
+              <p className="text-xs text-white/70 mb-4">Sua sessão será encerrada neste dispositivo.</p>
               <div className="flex gap-2">
                 <button onClick={() => setLogoutModal(false)} disabled={loggingOut} className="btn flex-1" autoFocus>
                   Cancelar

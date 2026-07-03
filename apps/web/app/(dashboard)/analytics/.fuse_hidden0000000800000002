@@ -1,0 +1,528 @@
+"use client";
+/**
+ * /analytics — FASE 4: KPIs de confiabilidade (Fase 1 §catálogo) + tendências reais.
+ *
+ * Linha 1: reliability (/analytics/reliability — FASE 3; mock rotulado até lá).
+ * Linha 2: disponibilidade diária (UptimeBar) + disponibilidade por alvo.
+ * Linha 3: CPU/RAM 24h + heatmap de eventos (dados reais existentes).
+ * Linha 4: top containers, breakdown de alertas, deploys por projeto (reais).
+ */
+import { useState } from "react";
+import useSWR from "swr";
+import { api } from "@/lib/api";
+import { nocFetch, useNoc } from "@/lib/noc";
+import { ReliabilitySchema, HostHistorySchema, THRESHOLDS, ragOf, type Rag } from "@/lib/schemas";
+import { mockReliability } from "@/lib/mocks";
+import { cn } from "@/lib/utils";
+import { KpiTile } from "@/components/ui/KpiTile";
+import { RagBadge } from "@/components/noc/RagBadge";
+import { DataBadge } from "@/components/noc/DataBadge";
+import { TimeSeriesChart, TOOLTIP_STYLE, SERIES } from "@/components/noc/TimeSeriesChart";
+import { UptimeBar, type UptimeSegment } from "@/components/noc/UptimeBar";
+import { Skeleton } from "@/components/noc/Skeleton";
+import { CardError, EmptyState } from "@/components/noc/CardError";
+import {
+  BarChart, Bar, PieChart, Pie, Cell,
+  ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Legend
+} from "recharts";
+import {
+  Activity, AlertCircle, CalendarRange, Cpu, Crosshair, Gauge,
+  MemoryStick, Rocket, ShieldAlert, Timer
+} from "lucide-react";
+
+const SEV_COLORS = {
+  info: "hsl(191 87% 53%)",
+  warning: "hsl(45 95% 53%)",
+  critical: "hsl(0 90% 71%)"
+};
+
+const WINDOWS = [7, 30, 90] as const;
+type WindowDays = (typeof WINDOWS)[number];
+
+/** RAG → accent do KpiTile (stale = sem accent, nunca fingir verde). */
+const RAG_ACCENT: Record<Rag, "green" | "yellow" | "red" | undefined> = {
+  ok: "green",
+  warn: "yellow",
+  crit: "red",
+  stale: undefined
+};
+
+/** Número pt-BR compacto (até 2 casas). */
+function fmt(n: number | null | undefined, digits = 2): string {
+  if (n == null || Number.isNaN(n)) return "—";
+  return n.toLocaleString("pt-BR", { maximumFractionDigits: digits });
+}
+
+/** Downtime humanizado: segundos → "Xs" / "X min" / "Xh Ymin". */
+function humanDowntime(sec: number | null | undefined): string {
+  if (sec == null) return "—";
+  if (sec < 60) return `${Math.round(sec)}s`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m > 0 ? `${h}h ${m}min` : `${h}h`;
+}
+
+/** Status do dia p/ UptimeBar (spec linha 2). */
+function dailyStatus(uptimePct: number | null | undefined): UptimeSegment["status"] {
+  if (uptimePct == null) return "nodata";
+  if (uptimePct >= 99.9) return "ok";
+  if (uptimePct >= 99) return "warn";
+  return "crit";
+}
+
+export default function AnalyticsPage() {
+  const [days, setDays] = useState<WindowDays>(7);
+
+  // ── Confiabilidade (FASE 3; cai p/ mock rotulado em 404/501) ──────────
+  const rel = useNoc(
+    `reliability-${days}`,
+    () =>
+      nocFetch(`/analytics/reliability?days=${days}`, ReliabilitySchema, {
+        mock: () => mockReliability(days)
+      }),
+    60000
+  );
+
+  // ── Dados reais existentes ─────────────────────────────────────────────
+  const { data: overview } = useSWR(`an-overview-${days}`, () => api.analyticsOverview(days), { refreshInterval: 60000 });
+  const hist = useNoc(
+    "an-host-24h",
+    () => nocFetch("/analytics/host/history?hours=24", HostHistorySchema),
+    60000
+  );
+  const { data: heat } = useSWR("an-heat", () => api.heatmap(), { refreshInterval: 60000 });
+  const { data: topCpu } = useSWR("an-top-cpu", () => api.topContainers("cpu", 24, 5), { refreshInterval: 60000 });
+  const { data: topMem } = useSWR("an-top-mem", () => api.topContainers("mem", 24, 5), { refreshInterval: 60000 });
+  const { data: alertsBd } = useSWR("an-alerts-bd", () => api.alertsBreakdown(168), { refreshInterval: 60000 });
+  const { data: deployStats } = useSWR("an-deploys", () => api.deployStats(), { refreshInterval: 60000 });
+
+  // ── Derivados ──────────────────────────────────────────────────────────
+  const r = rel.data;
+  const mtbfInsufficient = r != null && (r.mtbfHours == null || (r.incidentCount ?? 0) < 5);
+
+  const availRag = ragOf(r?.availabilityPct, 99, 97, true);
+  const deployRag = ragOf(r?.deploySuccessRatePct, THRESHOLDS.deploySuccessPct.warn, THRESHOLDS.deploySuccessPct.crit, true);
+
+  const dailySegments: UptimeSegment[] = (r?.dailyAvailability ?? []).map(d => ({
+    status: dailyStatus(d.uptimePct),
+    label:
+      d.uptimePct == null
+        ? `${d.date} · sem dado`
+        : `${d.date} · ${fmt(d.uptimePct)}% · ${d.incidents ?? 0} incidente(s)`
+  }));
+
+  const histData = (hist.data ?? []).map(p => ({
+    t: new Date(p.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+    cpu: p.cpuPercent,
+    mem:
+      p.memUsedMb != null && p.memTotalMb != null && p.memTotalMb > 0
+        ? Math.round((p.memUsedMb / p.memTotalMb) * 100)
+        : null
+  }));
+
+  const heatData = Object.entries(heat || {}).map(([k, v]: any) => ({ hour: k, ...v }));
+  const deployArr = Object.entries(deployStats || {}).map(([proj, st]: any) => ({ proj, ...st }));
+
+  const sevPie = alertsBd
+    ? Object.entries(alertsBd.bySeverity || {})
+        .filter(([, n]: any) => n > 0)
+        .map(([sev, n]: any) => ({ name: sev, value: n }))
+    : [];
+
+  return (
+    <div className="space-y-6 animate-fade-up">
+      {/* ── Seletor de janela ─────────────────────────────────────────── */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <span className="section-title !mb-0">Confiabilidade — janela {days}d</span>
+          <DataBadge source={rel.source} stale={rel.stale} />
+        </div>
+        <div className="flex items-center gap-2 text-xs text-white/40">
+          <CalendarRange size={13} />
+          <div className="flex gap-1 p-0.5 rounded-md bg-white/[0.04] border border-white/5">
+            {WINDOWS.map(w => (
+              <button
+                key={w}
+                onClick={() => setDays(w)}
+                className={cn(
+                  "px-3 py-1 rounded text-xs text-mono transition-colors",
+                  days === w ? "bg-accent/20 text-accent" : "text-white/60 hover:text-white/80"
+                )}
+                aria-pressed={days === w}
+              >
+                {w}d
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Linha 1: KPIs de confiabilidade ──────────────────────────── */}
+      {rel.isLoading && !r ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          {Array.from({ length: 5 }, (_, i) => (
+            <Skeleton key={i} className="h-[104px]" />
+          ))}
+        </div>
+      ) : rel.error && !r ? (
+        <CardError message={rel.error.message} onRetry={rel.refresh} />
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          <KpiTile
+            label="Disponibilidade"
+            value={r?.availabilityPct != null ? `${fmt(r.availabilityPct)}%` : "—"}
+            sub={r?.coveragePct != null ? `cobertura ${fmt(r.coveragePct, 1)}%` : "cobertura n/d"}
+            accent={RAG_ACCENT[availRag]}
+            icon={<Gauge size={14} />}
+          />
+          <KpiTile
+            label="MTTR"
+            value={r?.mttrMinutes != null ? `${fmt(r.mttrMinutes)} min` : "—"}
+            sub={r?.timeToDetectMinutes != null ? `time-to-detect ${fmt(r.timeToDetectMinutes)}min` : undefined}
+            accent="cyan"
+            icon={<Timer size={14} />}
+          />
+          <KpiTile
+            label="MTBF"
+            value={mtbfInsufficient || r?.mtbfHours == null ? "n/d" : `${fmt(r.mtbfHours)} h`}
+            sub={
+              mtbfInsufficient || r?.mtbfHours == null
+                ? "amostra insuficiente (n<5)"
+                : `${r?.incidentCount ?? 0} incidentes na amostra`
+            }
+            accent="accent"
+            icon={<Activity size={14} />}
+          />
+          <KpiTile
+            label="Deploy success"
+            value={r?.deploySuccessRatePct != null ? `${fmt(r.deploySuccessRatePct)}%` : "—"}
+            sub={`${r?.deploysTotal ?? 0} deploys`}
+            accent={RAG_ACCENT[deployRag]}
+            icon={<Rocket size={14} />}
+          />
+          <KpiTile
+            label="Incidentes"
+            value={r?.incidentCount ?? "—"}
+            sub={`janela ${days}d`}
+            accent={(r?.incidentCount ?? 0) > 0 ? "yellow" : "green"}
+            icon={<ShieldAlert size={14} />}
+          />
+        </div>
+      )}
+
+      {/* ── KPIs operacionais (overview real, mesma janela) ──────────── */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <KpiTile
+          label={`Deploys ${days}d`}
+          value={overview?.deploys?.current ?? 0}
+          delta={overview?.deploys?.delta}
+          trend={(overview?.deploys?.delta ?? 0) > 0 ? "up" : (overview?.deploys?.delta ?? 0) < 0 ? "down" : "flat"}
+          sub={overview?.deploys?.successRate != null ? `${overview.deploys.successRate}% sucesso` : undefined}
+          accent="accent"
+          icon={<Rocket size={14} />}
+        />
+        <KpiTile
+          label={`Alertas ${days}d`}
+          value={overview?.alerts?.current ?? 0}
+          delta={overview?.alerts?.delta}
+          trend={(overview?.alerts?.delta ?? 0) > 0 ? "up" : "down"}
+          accent="yellow"
+          icon={<AlertCircle size={14} />}
+        />
+        <KpiTile
+          label={`Críticos ${days}d`}
+          value={overview?.alerts?.critical ?? 0}
+          sub={`${overview?.alerts?.warning ?? 0} warnings`}
+          accent={(overview?.alerts?.critical ?? 0) > 0 ? "red" : "green"}
+          icon={<ShieldAlert size={14} />}
+        />
+        <KpiTile
+          label="Sites online"
+          value={`${overview?.sites?.online ?? 0}/${overview?.sites?.total ?? 0}`}
+          accent={
+            overview?.sites?.total && overview.sites.online === overview.sites.total ? "green" : "yellow"
+          }
+          icon={<Crosshair size={14} />}
+        />
+        <KpiTile
+          label="APIs healthy"
+          value={`${overview?.apis?.healthy ?? 0}/${overview?.apis?.total ?? 0}`}
+          accent={
+            overview?.apis?.total && overview.apis.healthy === overview.apis.total ? "green" : "yellow"
+          }
+          icon={<Activity size={14} />}
+        />
+        <KpiTile
+          label="Scanner aberto"
+          value={overview?.scanner?.openFindings ?? 0}
+          sub="findings não resolvidos"
+          accent={(overview?.scanner?.openFindings ?? 0) > 5 ? "red" : "green"}
+          icon={<Activity size={14} />}
+        />
+      </div>
+
+      {/* ── Linha 2: disponibilidade diária + por alvo ────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between">
+            <div className="section-title !mb-0">Disponibilidade diária ({days}d)</div>
+            <DataBadge source={rel.source} stale={rel.stale} />
+          </div>
+          <div className="mt-4">
+            {rel.isLoading && !r ? (
+              <Skeleton className="h-6" />
+            ) : rel.error && !r ? (
+              <CardError message={rel.error.message} onRetry={rel.refresh} />
+            ) : dailySegments.length === 0 ? (
+              <EmptyState message="Sem dados de disponibilidade na janela." />
+            ) : (
+              <>
+                <UptimeBar segments={dailySegments} />
+                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-white/60">
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-green/80" /> ≥ 99,9%
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-yellow/80" /> ≥ 99%
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-red/80" /> &lt; 99%
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-2.5 h-2.5 rounded-[2px] bg-white/[0.06]" /> sem dado
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between">
+            <div className="section-title !mb-0">Disponibilidade por alvo</div>
+            <DataBadge source={rel.source} stale={rel.stale} />
+          </div>
+          <div className="mt-4">
+            {rel.isLoading && !r ? (
+              <Skeleton className="h-24" />
+            ) : rel.error && !r ? (
+              <CardError message={rel.error.message} onRetry={rel.refresh} />
+            ) : !r?.byTarget?.length ? (
+              <EmptyState message="Nenhum alvo monitorado na janela." />
+            ) : (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-white/60 uppercase tracking-wider text-[10px]">
+                    <th className="pb-2 font-medium">Alvo</th>
+                    <th className="pb-2 font-medium">Tipo</th>
+                    <th className="pb-2 font-medium">Uptime</th>
+                    <th className="pb-2 font-medium text-right">Incidentes</th>
+                    <th className="pb-2 font-medium text-right">Downtime</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.byTarget.map(t => (
+                    <tr key={`${t.targetType}:${t.targetKey}`} className="border-t border-white/5">
+                      <td className="py-2 text-mono truncate max-w-[180px]" title={t.targetKey}>
+                        {t.targetKey}
+                      </td>
+                      <td className="py-2 text-white/60">{t.targetType}</td>
+                      <td className="py-2">
+                        <RagBadge
+                          rag={ragOf(t.uptimePct, 99, 97, true)}
+                          label={t.uptimePct != null ? `${fmt(t.uptimePct)}%` : "n/d"}
+                        />
+                      </td>
+                      <td className="py-2 text-mono text-right">{t.incidents ?? 0}</td>
+                      <td className="py-2 text-mono text-right text-white/60">{humanDowntime(t.downtimeSec)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Linha 3: tendências reais 24h ─────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="glass-card p-6">
+          <div className="flex items-center justify-between">
+            <div className="section-title !mb-0">CPU / RAM — últimas 24h</div>
+            <DataBadge stale={hist.stale} />
+          </div>
+          <div className="mt-4">
+            {hist.isLoading && !hist.data ? (
+              <Skeleton className="h-[260px]" />
+            ) : hist.error && !hist.data ? (
+              <CardError message={hist.error.message} onRetry={hist.refresh} />
+            ) : histData.length === 0 ? (
+              <EmptyState message="Sem snapshots nas últimas 24h." />
+            ) : (
+              <TimeSeriesChart
+                data={histData}
+                series={[
+                  { key: "cpu", label: "CPU %", color: "hsl(191 87% 53%)" },
+                  { key: "mem", label: "RAM %", color: "hsl(248 92% 70%)" }
+                ]}
+                xKey="t"
+                height={260}
+                warn={THRESHOLDS.cpuPercent.warn}
+                crit={THRESHOLDS.cpuPercent.crit}
+                yDomain={[0, 100]}
+                unit="%"
+                legend
+              />
+            )}
+          </div>
+        </div>
+
+        <div className="glass-card p-6">
+          <div className="section-title">Heatmap eventos 24h</div>
+          <div className="h-[260px]">
+            {heatData.length === 0 ? (
+              <EmptyState message="Sem eventos nas últimas 24h." />
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={heatData}>
+                  <CartesianGrid stroke="rgba(255,255,255,0.04)" />
+                  <XAxis dataKey="hour" tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }} />
+                  <YAxis tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 10 }} allowDecimals={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Legend wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }} />
+                  <Bar dataKey="info" stackId="a" fill={SEV_COLORS.info} />
+                  <Bar dataKey="warning" stackId="a" fill={SEV_COLORS.warning} />
+                  <Bar dataKey="critical" stackId="a" fill={SEV_COLORS.critical} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Linha 4: top containers + breakdown de alertas ────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="glass-card p-6">
+          <div className="section-title flex items-center gap-2"><Cpu size={12} /> Top CPU (24h)</div>
+          <div className="space-y-2 text-xs">
+            {(topCpu || []).map((c, i) => (
+              <div key={c.name} className="flex items-center gap-3">
+                <span className="text-mono text-white/40 w-4">{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-mono truncate" title={c.name}>{c.name}</div>
+                  <div className="h-1 mt-1 bg-white/5 rounded-full overflow-hidden">
+                    <div className="h-full bg-cyan" style={{ width: `${Math.min(100, c.avgCpu)}%` }} />
+                  </div>
+                </div>
+                <span className="text-mono text-cyan">{c.avgCpu}%</span>
+              </div>
+            ))}
+            {!topCpu?.length && <EmptyState message="Sem dados de 24h." />}
+          </div>
+        </div>
+
+        <div className="glass-card p-6">
+          <div className="section-title flex items-center gap-2"><MemoryStick size={12} /> Top RAM (24h)</div>
+          <div className="space-y-2 text-xs">
+            {(topMem || []).map((c, i) => (
+              <div key={c.name} className="flex items-center gap-3">
+                <span className="text-mono text-white/40 w-4">{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-mono truncate" title={c.name}>{c.name}</div>
+                  <div className="h-1 mt-1 bg-white/5 rounded-full overflow-hidden">
+                    <div className="h-full bg-accent" style={{ width: `${Math.min(100, c.avgMem)}%` }} />
+                  </div>
+                </div>
+                <span className="text-mono text-accent">{c.avgMem}%</span>
+              </div>
+            ))}
+            {!topMem?.length && <EmptyState message="Sem dados de 24h." />}
+          </div>
+        </div>
+
+        <div className="glass-card p-6">
+          <div className="section-title">Alertas por severidade (7d)</div>
+          {sevPie.length === 0 ? (
+            <EmptyState message="Nenhum alerta na janela." />
+          ) : (
+            <div className="h-[200px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={sevPie}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={70}
+                    innerRadius={40}
+                    paddingAngle={2}
+                  >
+                    {sevPie.map((d: any) => (
+                      <Cell key={d.name} fill={SEV_COLORS[d.name as keyof typeof SEV_COLORS] || "#888"} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Legend wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          {alertsBd?.byChannel && Object.keys(alertsBd.byChannel).length > 0 && (
+            <div className="mt-2 pt-2 border-t border-white/5 text-[10px] text-white/60 flex flex-wrap gap-2">
+              {Object.entries(alertsBd.byChannel).map(([ch, n]: any) => (
+                <span key={ch} className="text-mono">
+                  <span className="text-cyan">{ch}</span>:{n}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Deploys por projeto ───────────────────────────────────────── */}
+      <div className="glass-card p-6">
+        <div className="section-title">Deploys por projeto (30d)</div>
+        {deployArr.length === 0 && (
+          <EmptyState message="Nenhum deploy registrado nos últimos 30 dias." />
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {deployArr.map((d: any) => {
+            const pct = d.total > 0 ? Math.round((d.success / d.total) * 100) : 0;
+            return (
+              <div key={d.proj} className="p-3 rounded bg-white/[0.03] border border-white/5">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium">{d.proj}</div>
+                  <span
+                    className={`text-mono text-xs ${
+                      pct >= 95 ? "text-green" : pct >= 80 ? "text-yellow" : "text-red"
+                    }`}
+                  >
+                    {pct}%
+                  </span>
+                </div>
+                <div className="text-xs text-white/60 text-mono mt-1">
+                  {d.total} deploys · {d.success} ✓ · {d.failed} ✗
+                  {d.avgDuration > 0 && ` · ${Math.round(d.avgDuration)}s avg`}
+                </div>
+                <div className="mt-2 h-1 bg-white/5 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full ${pct >= 95 ? "bg-green" : pct >= 80 ? "bg-yellow" : "bg-red"}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Rodapé metodológico ───────────────────────────────────────── */}
+      <p className="text-[11px] text-white/60">
+        MTTR = média(resolvedAt − detectedAt) · disponibilidade derivada de eventos de transição · fonte: catálogo Fase 1
+      </p>
+    </div>
+  );
+}

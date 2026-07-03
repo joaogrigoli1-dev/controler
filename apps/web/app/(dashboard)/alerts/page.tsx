@@ -4,12 +4,14 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { KpiTile } from "@/components/ui/KpiTile";
+import { CardError } from "@/components/noc/CardError";
 import { Send, AlertCircle, Bell, Clock } from "lucide-react";
 
 export default function AlertsPage() {
-  const { data: summary } = useSWR("alerts-sum", () => api.alertsSummary(), { refreshInterval: 30000 });
-  const { data: logs, mutate } = useSWR("alerts-logs", () => api.alerts(), { refreshInterval: 30000 });
-  const { data: rules } = useSWR("alerts-rules", () => api.alertsRules(), { refreshInterval: 120000 });
+  // R11 (FASE 5): error states visíveis + retry (tela pré-FASE 4)
+  const { data: summary, error: summaryError, mutate: mutateSummary } = useSWR("alerts-sum", () => api.alertsSummary(), { refreshInterval: 30000 });
+  const { data: logs, error: logsError, mutate } = useSWR("alerts-logs", () => api.alerts(), { refreshInterval: 30000 });
+  const { data: rules, error: rulesError, mutate: mutateRules } = useSWR("alerts-rules", () => api.alertsRules(), { refreshInterval: 120000 });
   const [test, setTest] = useState({ severity: "warning", title: "Teste", message: "Mensagem de teste" });
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -30,6 +32,9 @@ export default function AlertsPage() {
 
   return (
     <div className="space-y-6 animate-fade-up">
+      {summaryError && !summary && (
+        <CardError message={`Erro ao carregar o resumo de alertas: ${summaryError.message}`} onRetry={() => void mutateSummary()} />
+      )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <KpiTile label="Total" value={summary?.total ?? 0} accent="cyan" icon={<Bell size={14} />} />
         <KpiTile label="Críticos" value={summary?.critical ?? 0} accent="red" />
@@ -43,7 +48,7 @@ export default function AlertsPage() {
           <div className="section-title flex items-center gap-2"><Send size={12} /> Testar alerta</div>
           <div className="space-y-3">
             <div>
-              <label className="text-xs text-white/40">Severidade</label>
+              <label className="text-xs text-white/60">Severidade</label>
               <select
                 value={test.severity}
                 onChange={e => setTest({ ...test, severity: e.target.value })}
@@ -55,12 +60,12 @@ export default function AlertsPage() {
               </select>
             </div>
             <div>
-              <label className="text-xs text-white/40">Título</label>
+              <label className="text-xs text-white/60">Título</label>
               <input value={test.title} onChange={e => setTest({ ...test, title: e.target.value })}
                 className="w-full mt-1 bg-white/5 border border-white/10 rounded px-2 py-2 text-sm text-mono" />
             </div>
             <div>
-              <label className="text-xs text-white/40">Mensagem</label>
+              <label className="text-xs text-white/60">Mensagem</label>
               <textarea value={test.message} onChange={e => setTest({ ...test, message: e.target.value })}
                 rows={3} className="w-full mt-1 bg-white/5 border border-white/10 rounded px-2 py-2 text-sm" />
             </div>
@@ -88,12 +93,15 @@ export default function AlertsPage() {
 
         <div className="glass-card p-6 lg:col-span-2">
           <div className="section-title">Regras configuradas</div>
+          {rulesError && !rules && (
+            <CardError message={`Erro ao carregar as regras: ${rulesError.message}`} onRetry={() => void mutateRules()} />
+          )}
           <div className="space-y-2">
             {(rules || []).map((r: any) => (
               <div key={r.id} className="flex items-center justify-between p-2.5 rounded bg-white/[0.02]">
                 <div>
                   <div className="text-sm">{r.name}</div>
-                  <div className="text-[10px] text-white/40">canais: {(r.channels || []).join(", ")} · cooldown {r.cooldownMin}min</div>
+                  <div className="text-[10px] text-white/60">canais: {(r.channels || []).join(", ")} · cooldown {r.cooldownMin}min</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <StatusBadge status={r.severity} />
@@ -107,8 +115,11 @@ export default function AlertsPage() {
 
       <div className="glass-card p-6">
         <div className="section-title flex items-center gap-2"><AlertCircle size={12} /> Disparos recentes</div>
+        {logsError && !logs && (
+          <CardError message={`Erro ao carregar os disparos: ${logsError.message}`} onRetry={() => void mutate()} />
+        )}
         <table className="w-full text-xs">
-          <thead className="text-white/40 text-[10px] uppercase tracking-widest">
+          <thead className="text-white/60 text-[10px] uppercase tracking-widest">
             <tr><th className="text-left py-2">Quando</th><th className="text-left">Severidade</th><th className="text-left">Título</th><th className="text-left">Canais</th><th className="text-center">Enviado</th></tr>
           </thead>
           <tbody>

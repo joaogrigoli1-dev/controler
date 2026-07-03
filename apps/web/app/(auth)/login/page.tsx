@@ -96,7 +96,7 @@ export default function LoginPage() {
         className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] pointer-events-none opacity-50"
         style={{
           background:
-            "radial-gradient(circle, hsl(248 92% 70% / 0.18) 0%, transparent 60%)"
+            "radial-gradient(circle, hsl(var(--purple) / 0.18) 0%, transparent 60%)"
         }}
       />
 
@@ -115,10 +115,10 @@ export default function LoginPage() {
           {step === "phone" && (
             <>
               <h1 className="text-2xl font-bold text-display mb-1">Entrar</h1>
-              <p className="text-sm text-white/50 mb-6">
+              <p className="text-sm text-white/70 mb-6">
                 Você receberá um código de 6 dígitos no <strong className="text-white/80">WhatsApp</strong>.
               </p>
-              <label className="text-xs text-white/40 uppercase tracking-wider" htmlFor="phone-input">
+              <label className="text-xs text-white/60 uppercase tracking-wider" htmlFor="phone-input">
                 Celular
               </label>
               <input
@@ -163,10 +163,10 @@ export default function LoginPage() {
               <h1 className="text-2xl font-bold text-display mb-1">
                 Olá{firstName ? `, ${firstName}` : ""}
               </h1>
-              <p className="text-sm text-white/50 mb-6">
+              <p className="text-sm text-white/70 mb-6">
                 Digite o código de <strong>6 dígitos</strong> recebido no WhatsApp.
               </p>
-              <label className="text-xs text-white/40 uppercase tracking-wider" htmlFor="code-input">
+              <label className="text-xs text-white/60 uppercase tracking-wider" htmlFor="code-input">
                 Código
               </label>
               <input
@@ -215,7 +215,7 @@ export default function LoginPage() {
                   setCode("");
                   setError(null);
                 }}
-                className="text-xs text-white/40 hover:text-white mt-3 w-full text-center transition"
+                className="text-xs text-white/60 hover:text-white mt-3 w-full text-center transition"
               >
                 ← Trocar número
               </button>

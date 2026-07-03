@@ -54,11 +54,45 @@ export class CoolifyService {
     });
   }
 
+  /**
+   * FASE 3 (Gap #6): a rota antiga `GET /deployments?uuid=` retornava 404 sempre.
+   * Rota correta da API do Coolify: `GET /api/v1/deployments/applications/{uuid}`.
+   * 404 → [] (app sem histórico de deploy). Cada item é normalizado com os campos
+   * canônicos do contrato (deployment_uuid, status, commit, commit_message,
+   * created_at, started_at, finished_at, durationSec) mantendo os originais.
+   */
   async listDeployments(uuid: string) {
     this.assertUuid(uuid);
     const c = await this.getClient();
-    const { data } = await c.get(`/deployments`, { params: { uuid } }).catch(() => ({ data: [] }));
-    return data;
+    const res = await c.get(`/deployments/applications/${uuid}`, { validateStatus: () => true });
+    if (res.status === 404) return [];
+    if (res.status >= 400) {
+      this.log.warn(`listDeployments(${uuid}) → HTTP ${res.status}`);
+      return [];
+    }
+    // A API pode devolver array direto ou envelope { deployments: [...] } / { data: [...] }
+    const raw = Array.isArray(res.data) ? res.data : res.data?.deployments ?? res.data?.data ?? [];
+    if (!Array.isArray(raw)) return [];
+    return raw.map((d: any) => {
+      const started = d.started_at ?? d.created_at ?? null;
+      const finished = d.finished_at ?? null;
+      let durationSec: number | null = null;
+      if (started && finished) {
+        const delta = (new Date(finished).getTime() - new Date(started).getTime()) / 1000;
+        durationSec = Number.isFinite(delta) && delta >= 0 ? Math.round(delta) : null;
+      }
+      return {
+        ...d,
+        deployment_uuid: d.deployment_uuid ?? d.uuid ?? null,
+        status: d.status ?? null,
+        commit: d.commit ?? d.git_commit_sha ?? null,
+        commit_message: d.commit_message ?? null,
+        created_at: d.created_at ?? null,
+        started_at: started,
+        finished_at: finished,
+        durationSec
+      };
+    });
   }
 
   async getEnvs(uuid: string) {

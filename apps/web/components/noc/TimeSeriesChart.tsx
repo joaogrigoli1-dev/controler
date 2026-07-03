@@ -1,0 +1,110 @@
+"use client";
+/**
+ * TimeSeriesChart — Recharts com bandas de threshold W/C (Fase 1 §d).
+ */
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ReferenceLine,
+  ResponsiveContainer,
+  Legend
+} from "recharts";
+
+export const TOOLTIP_STYLE: React.CSSProperties = {
+  background: "rgba(26, 28, 42, 0.97)",
+  border: "1px solid rgba(255,255,255,0.09)",
+  borderRadius: 10,
+  fontSize: 12
+};
+
+/**
+ * SERIES — paleta de data-viz dark-v2 v4 (única fonte de cor de série).
+ * Páginas importam daqui; hex cru em página é violação (R7).
+ */
+export const SERIES = {
+  teal: "#2dd4bf",
+  indigo: "#818cf8",
+  amber: "#fbbf24",
+  rose: "#fb7185"
+} as const;
+
+export interface SeriesDef {
+  key: string;
+  label?: string;
+  color: string;
+  dashed?: boolean;
+}
+
+export function TimeSeriesChart({
+  data,
+  series,
+  xKey = "t",
+  height = 200,
+  warn,
+  crit,
+  yDomain,
+  unit,
+  legend = false
+}: {
+  data: Array<Record<string, unknown>>;
+  series: SeriesDef[];
+  xKey?: string;
+  height?: number;
+  /** Linha tracejada âmbar no limiar W. */
+  warn?: number;
+  /** Linha tracejada vermelha no limiar C. */
+  crit?: number;
+  yDomain?: [number | "auto", number | "auto"];
+  unit?: string;
+  legend?: boolean;
+}) {
+  return (
+    <div style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 6, right: 8, bottom: 0, left: -14 }}>
+          <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+          <XAxis
+            dataKey={xKey}
+            tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10 }}
+            tickLine={false}
+            axisLine={{ stroke: "rgba(255,255,255,0.08)" }}
+            minTickGap={40}
+          />
+          <YAxis
+            tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10 }}
+            tickLine={false}
+            axisLine={false}
+            domain={yDomain ?? [0, "auto"]}
+            unit={unit}
+            width={54}
+          />
+          <Tooltip contentStyle={TOOLTIP_STYLE} />
+          {legend && <Legend wrapperStyle={{ fontSize: 11 }} />}
+          {typeof warn === "number" && (
+            <ReferenceLine y={warn} stroke={SERIES.amber} strokeDasharray="4 4" strokeOpacity={0.6} />
+          )}
+          {typeof crit === "number" && (
+            <ReferenceLine y={crit} stroke={SERIES.rose} strokeDasharray="4 4" strokeOpacity={0.7} />
+          )}
+          {series.map(s => (
+            <Line
+              key={s.key}
+              type="monotone"
+              dataKey={s.key}
+              name={s.label ?? s.key}
+              stroke={s.color}
+              strokeWidth={2}
+              strokeDasharray={s.dashed ? "5 3" : undefined}
+              dot={false}
+              isAnimationActive={false}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}

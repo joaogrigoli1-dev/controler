@@ -33,9 +33,11 @@ const config: Config = {
         text: "hsl(var(--text))"
       },
       borderRadius: {
+        // dark-v2 v4: botão/input 8 (md) · menu/item 10 · card/modal 14 (lg)
         lg: "var(--radius-lg)",
+        menu: "var(--radius-menu)",
         md: "var(--radius)",
-        sm: "calc(var(--radius) - 4px)"
+        sm: "var(--radius-sm)"
       },
       keyframes: {
         pulse: { "0%,100%": { opacity: "1" }, "50%": { opacity: "0.4" } },
