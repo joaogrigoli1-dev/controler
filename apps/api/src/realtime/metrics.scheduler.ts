@@ -161,16 +161,10 @@ export class MetricsScheduler {
       // WS: payload legado + saturação (gauges PSI em tempo real no front)
       this.gw.emitHostMetrics({ ...m, saturation: sat, ts: Date.now() });
 
-      // Thresholds → alertas (sem flood: AlertsService tem cooldown 30min)
-      if (m.cpuPercent > 85) {
-        await this.alerts.dispatch({ ruleKey: "host_cpu_high", severity: "warning", title: "CPU SRV1 alta", message: `CPU em ${m.cpuPercent.toFixed(1)}% (load ${m.loadAvg[0].toFixed(2)})` });
-      }
-      if (m.memPercent > 90) {
-        await this.alerts.dispatch({ ruleKey: "host_mem_high", severity: "warning", title: "RAM SRV1 alta", message: `RAM em ${m.memPercent.toFixed(1)}% (${(m.memUsedMb/1024).toFixed(1)}GB)` });
-      }
-      if (m.diskPercent > 85) {
-        await this.alerts.dispatch({ ruleKey: "host_disk_high", severity: "warning", title: "Disco SRV1 cheio", message: `Disco em ${m.diskPercent.toFixed(1)}% (${m.diskUsedGb.toFixed(0)}/${m.diskTotalGb.toFixed(0)}GB)` });
-      }
+      // Thresholds de host (CPU/RAM/disco) agora são FONTE ÚNICA nas AlertRules do
+      // banco (host_cpu_above / host_mem_above / host_disk_above), avaliadas por
+      // evaluateRules() abaixo — editáveis pela UI. Os disparos fixos antigos foram
+      // removidos para não duplicar alerta. PSI/swap seguem fixos (não estão na tabela).
 
       // FASE 3: alertas PSI/swap com SUSTENTAÇÃO (n ciclos consecutivos).
       // E4: operadores >= em todos os streaks (consistência CPU >= 2 / swap >= 5);

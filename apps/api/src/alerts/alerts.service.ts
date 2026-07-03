@@ -50,15 +50,31 @@ export interface RuleEvalContext {
   psiMemSomeAvg60?: number;
 }
 
-/** Tipos de condição suportados pelo motor de regras (condition.type no JSON). */
+/**
+ * Tipos de condição de LIMIAR (métrica de host) avaliados a cada tick pelo motor.
+ * Inclui os nomes reais semeados (prefixo `host_`) e aliases sem prefixo.
+ */
 const RULE_CONDITION_TYPES = new Set([
-  "cpu_above",
-  "mem_above",
-  "disk_above",
-  "load_above",
+  "host_cpu_above", "cpu_above",
+  "host_mem_above", "mem_above",
+  "host_disk_above", "disk_above",
+  "host_load_above", "load_above",
   "psi_cpu_above",
   "psi_io_above",
   "psi_mem_above"
+]);
+
+/**
+ * Tipos de condição orientados a EVENTO — NÃO são avaliados por métrica de tick;
+ * já têm disparadores dedicados (deploys.scheduler, ssl.scheduler, sites-check,
+ * container-metrics). O motor os ignora silenciosamente (não são "desconhecidos").
+ */
+const EVENT_RULE_TYPES = new Set([
+  "container_stopped",
+  "deploy_failed",
+  "site_5xx",
+  "ssl_expiring",
+  "auth_failure_burst"
 ]);
 
 @Injectable()
@@ -245,6 +261,8 @@ export class AlertsService {
           this.log.debug(`evaluateRules: regra "${rule.name}" (${rule.id}) com condition inválida — pulando`);
           continue;
         }
+        // Regras de evento têm disparadores próprios (scheduler) — o motor as ignora.
+        if (EVENT_RULE_TYPES.has(cond.type)) continue;
         if (!RULE_CONDITION_TYPES.has(cond.type)) {
           this.log.debug(`evaluateRules: tipo de condição desconhecido "${cond.type}" na regra "${rule.name}" — pulando`);
           continue;
@@ -280,10 +298,10 @@ export class AlertsService {
   /** Mapeia condition.type → métrica correspondente do contexto do tick. */
   private metricForCondition(type: string, ctx: RuleEvalContext): number | undefined {
     switch (type) {
-      case "cpu_above": return ctx.cpuPercent;
-      case "mem_above": return ctx.memPercent;
-      case "disk_above": return ctx.diskPercent;
-      case "load_above": return ctx.load1m;
+      case "host_cpu_above": case "cpu_above": return ctx.cpuPercent;
+      case "host_mem_above": case "mem_above": return ctx.memPercent;
+      case "host_disk_above": case "disk_above": return ctx.diskPercent;
+      case "host_load_above": case "load_above": return ctx.load1m;
       case "psi_cpu_above": return ctx.psiCpuSomeAvg60;
       case "psi_io_above": return ctx.psiIoFullAvg60 ?? ctx.psiIoSomeAvg60;
       case "psi_mem_above": return ctx.psiMemSomeAvg60;
