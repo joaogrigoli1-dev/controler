@@ -36,16 +36,16 @@ enum SessionStatus {
 }
 
 model User {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   name      String
-  email     String   @unique
-  phone     String   @unique
-  role      UserRole @default(admin) // BD-06
-  active    Boolean  @default(true)
-  blocked   Boolean  @default(false)
+  email     String    @unique
+  phone     String    @unique
+  role      UserRole  @default(admin) // BD-06
+  active    Boolean   @default(true)
+  blocked   Boolean   @default(false)
   lastLogin DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   tokens    OtpToken[]
   sessions  Session[]
@@ -59,7 +59,7 @@ model OtpToken {
   id        String     @id @default(cuid())
   userId    String
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  codeHash  String     // BD-08: hmac-sha256(code, TOKEN_PEPPER)
+  codeHash  String // BD-08: hmac-sha256(code, TOKEN_PEPPER)
   channel   String     @default("whatsapp") // whatsapp | sms | backdoor
   purpose   OtpPurpose @default(login) // BD-06
   expiresAt DateTime
@@ -100,8 +100,8 @@ model VaultAuditLog {
   // BD-03: SetNull preserva a trilha de auditoria se o usuário for deletado
   userId    String?
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  action    String   // REVEAL | LIST | EXPORT
-  resource  String   // /myclinicsoft/zapi_token
+  action    String // REVEAL | LIST | EXPORT
+  resource  String // /myclinicsoft/zapi_token
   ipAddress String
   userAgent String?
   createdAt DateTime @default(now())
@@ -134,12 +134,12 @@ model AuditLog {
 
 model TimelineEvent {
   id        String   @id @default(cuid())
-  eventType String   // deploy | health_check | sync_drift | alert | scanner | manual_action
+  eventType String // deploy | health_check | sync_drift | alert | scanner | manual_action
   title     String
   severity  String   @default("info") // info | warning | critical
   project   String?
   detail    String?
-  actor     String   // scheduler | user:id | system
+  actor     String // scheduler | user:id | system
   metadata  Json?
   createdAt DateTime @default(now())
 
@@ -169,20 +169,36 @@ model MetricSnapshot {
 }
 
 model HostMetricSnapshot {
-  id           String   @id @default(cuid())
-  cpuPercent   Float
-  loadAvg1m    Float?
-  loadAvg5m    Float?
-  loadAvg15m   Float?
-  memTotalMb   Int
-  memUsedMb    Int
-  memCachedMb  Int?
-  swapUsedMb   Int?
-  diskTotalGb  Float?
-  diskUsedGb   Float?
-  netInBytes   BigInt?
-  netOutBytes  BigInt?
-  createdAt    DateTime @default(now())
+  id          String   @id @default(cuid())
+  cpuPercent  Float
+  loadAvg1m   Float?
+  loadAvg5m   Float?
+  loadAvg15m  Float?
+  memTotalMb  Int
+  memUsedMb   Int
+  memCachedMb Int?
+  swapUsedMb  Int?
+  diskTotalGb Float?
+  diskUsedGb  Float?
+  netInBytes  BigInt?
+  netOutBytes BigInt?
+  createdAt   DateTime @default(now())
+
+  // FASE 3 (KPIs): swap detalhado + PSI (Pressure Stall Information) — nullable p/ retrocompat
+  swapTotalMb      Float?
+  swapInPagesSec   Float?
+  swapOutPagesSec  Float?
+  psiCpuSomeAvg10  Float?
+  psiCpuSomeAvg60  Float?
+  psiCpuSomeAvg300 Float?
+  psiIoSomeAvg10   Float?
+  psiIoSomeAvg60   Float?
+  psiIoFullAvg10   Float?
+  psiIoFullAvg60   Float?
+  psiMemSomeAvg10  Float?
+  psiMemSomeAvg60  Float?
+  psiMemFullAvg10  Float?
+  psiMemFullAvg60  Float?
 
   @@index([createdAt(sort: Desc)])
   @@map("host_metric_snapshots")
@@ -193,24 +209,24 @@ model HostMetricSnapshot {
 // ─────────────────────────────────────────────────────────
 
 model AlertRule {
-  id          String   @id @default(cuid())
-  name        String
-  description String?
-  condition   Json     // { type: "cpu_above", target: "host", threshold: 80, duration: "5m" }
-  severity    String   // info | warning | critical
-  channels    String[] // ["whatsapp", "sms", "internal"]
-  cooldownMin Int      @default(30)
-  enabled     Boolean  @default(true)
+  id            String     @id @default(cuid())
+  name          String
+  description   String?
+  condition     Json // { type: "cpu_above", target: "host", threshold: 80, duration: "5m" }
+  severity      String // info | warning | critical
+  channels      String[] // ["whatsapp", "sms", "internal"]
+  cooldownMin   Int        @default(30)
+  enabled       Boolean    @default(true)
   silencedUntil DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  logs        AlertLog[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  logs          AlertLog[]
 
   @@map("alert_rules")
 }
 
 model AlertLog {
-  id        String   @id @default(cuid())
+  id        String     @id @default(cuid())
   ruleId    String?
   rule      AlertRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
   ruleKey   String
@@ -221,7 +237,7 @@ model AlertLog {
   sent      Boolean
   error     String?
   metadata  Json?
-  createdAt DateTime @default(now())
+  createdAt DateTime   @default(now())
 
   @@index([createdAt(sort: Desc)])
   @@index([severity, createdAt(sort: Desc)])
@@ -234,10 +250,10 @@ model AlertLog {
 // ─────────────────────────────────────────────────────────
 
 model DeployHistory {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   project     String
   coolifyUuid String?
-  status      String   // success | failed | running | cancelled
+  status      String // success | failed | running | cancelled
   commitSha   String?
   commitMsg   String?
   branch      String?
@@ -247,10 +263,18 @@ model DeployHistory {
   startedAt   DateTime
   finishedAt  DateTime?
   logsUrl     String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
+
+  // FASE 3 (KPIs): idempotência de upsert (deploymentUuid) + metadados de deploy
+  deploymentUuid String?   @unique
+  queuedAt       DateTime?
+  isRollback     Boolean   @default(false)
+  imageTag       String?
+  failReason     String?
 
   @@index([project, startedAt(sort: Desc)])
   @@index([status, startedAt(sort: Desc)])
+  @@index([coolifyUuid, startedAt(sort: Desc)])
   @@map("deploy_history")
 }
 
@@ -259,56 +283,56 @@ model DeployHistory {
 // ─────────────────────────────────────────────────────────
 
 model Project {
-  id          String   @id @default(cuid())
-  slug        String   @unique // myclinicsoft, fisiomt, libertakidz
-  name        String
-  icon        String?
-  description String?
-  coolifyUuids String[]  // pode ter mais de 1 app no Coolify
-  repoUrl     String?
-  prodUrl     String?
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  apis        ProjectApi[]
+  id           String       @id @default(cuid())
+  slug         String       @unique // myclinicsoft, fisiomt, libertakidz
+  name         String
+  icon         String?
+  description  String?
+  coolifyUuids String[] // pode ter mais de 1 app no Coolify
+  repoUrl      String?
+  prodUrl      String?
+  active       Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  apis         ProjectApi[]
 
   @@map("projects")
 }
 
 model ProjectApi {
-  id            String   @id @default(cuid())
-  projectId     String
-  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name          String   // Z-API, OpenAI, Stripe
-  baseUrl       String
-  environment   String   @default("prod")
-  healthUrl     String?
-  ssmKeyPath    String?  // /myclinicsoft/zapi_token
-  status        String?  // healthy | degraded | down | unknown
+  id             String    @id @default(cuid())
+  projectId      String
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name           String // Z-API, OpenAI, Stripe
+  baseUrl        String
+  environment    String    @default("prod")
+  healthUrl      String?
+  ssmKeyPath     String? // /myclinicsoft/zapi_token
+  status         String? // healthy | degraded | down | unknown
   responseTimeMs Int?
-  lastChecked   DateTime?
-  rateLimit     Json?
-  docsUrl       String?
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  lastChecked    DateTime?
+  rateLimit      Json?
+  docsUrl        String?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([projectId, status])
   @@map("project_apis")
 }
 
 model Site {
-  id          String   @id @default(cuid())
-  domain      String   @unique
-  scope       String   @default("nginx") // nginx | coolify | mail | webmail | nextcloud
+  id            String    @id @default(cuid())
+  domain        String    @unique
+  scope         String    @default("nginx") // nginx | coolify | mail | webmail | nextcloud
   containerName String?
-  sslIssuer   String?
-  sslExpiresAt DateTime?
+  sslIssuer     String?
+  sslExpiresAt  DateTime?
   lastCheckedAt DateTime?
-  statusCode  Int?
-  responseMs  Int?
-  notes       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  statusCode    Int?
+  responseMs    Int?
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@map("sites")
 }
@@ -318,19 +342,237 @@ model Site {
 // ─────────────────────────────────────────────────────────
 
 model ScannerFinding {
-  id          String   @id @default(cuid())
-  category    String   // stopped_containers | dangling_images | dangling_volumes | stale_branches | orphan_ssm | failing_crons
-  severity    String   @default("info")
-  title       String
-  detail      String?
-  metadata    Json?
-  actionSafe  Boolean  @default(false)
-  action      String?
-  resolved    Boolean  @default(false)
-  resolvedAt  DateTime?
-  createdAt   DateTime @default(now())
+  id         String    @id @default(cuid())
+  category   String // stopped_containers | dangling_images | dangling_volumes | stale_branches | orphan_ssm | failing_crons
+  severity   String    @default("info")
+  title      String
+  detail     String?
+  metadata   Json?
+  actionSafe Boolean   @default(false)
+  action     String?
+  resolved   Boolean   @default(false)
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
 
   @@index([category, resolved])
   @@index([createdAt(sort: Desc)])
   @@map("scanner_findings")
+}
+
+// ─────────────────────────────────────────────────────────
+// FASE 3 — SÉRIES TEMPORAIS / KPIs
+// Registry normalizado + séries raw (BigInt PK) + rollups
+// por granularity + eventos por transição.
+// BRIN em ts das tabelas raw: SQL custom na migration.
+// ─────────────────────────────────────────────────────────
+
+enum Granularity {
+  hourly
+  daily
+}
+
+enum ContainerHealth {
+  healthy
+  unhealthy
+  starting
+  none
+  exited
+}
+
+enum UptimeTargetType {
+  container
+  site
+  api
+  systemd_unit
+  host
+}
+
+// Registry: 1 linha por container (34), chave = nome estável
+model Container {
+  id            Int             @id @default(autoincrement())
+  name          String          @unique
+  coolifyUuid   String?
+  image         String?
+  kind          String          @default("app")
+  monitored     Boolean         @default(true)
+  currentHealth ContainerHealth @default(none)
+  restartCount  Int             @default(0)
+  startedAt     DateTime?
+  firstSeenAt   DateTime        @default(now())
+  lastSeenAt    DateTime        @default(now())
+
+  metrics     ContainerMetricPoint[]
+  rollups     ContainerMetricRollup[]
+  stateEvents ContainerStateEvent[]
+
+  @@index([coolifyUuid])
+  @@map("containers")
+}
+
+// Raw 30s — net/blkio já como TAXA (Δ/Δt, clamp ≥ 0)
+model ContainerMetricPoint {
+  id             BigInt          @id @default(autoincrement())
+  containerId    Int
+  container      Container       @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  ts             DateTime        @default(now())
+  cpuPercent     Float
+  memUsedMb      Float
+  memLimitMb     Float?
+  memPercent     Float?
+  netRxKbps      Float?
+  netTxKbps      Float?
+  blkioReadKbps  Float?
+  blkioWriteKbps Float?
+  pids           Int?
+  restartCount   Int?
+  health         ContainerHealth @default(none)
+  uptimeSec      Int?
+
+  @@index([containerId, ts(sort: Desc)])
+  @@index([ts])
+  @@map("container_metric_points")
+}
+
+// 1 linha por transição → base de uptime/timeline
+model ContainerStateEvent {
+  id          BigInt    @id @default(autoincrement())
+  containerId Int
+  container   Container @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  ts          DateTime  @default(now())
+  fromState   String?
+  toState     String
+  exitCode    Int?
+  oomKilled   Boolean   @default(false)
+  reason      String?
+
+  @@index([containerId, ts(sort: Desc)])
+  @@index([ts])
+  @@map("container_state_events")
+}
+
+model HostDiskIoPoint {
+  id           BigInt   @id @default(autoincrement())
+  device       String
+  ts           DateTime @default(now())
+  utilPercent  Float
+  readAwaitMs  Float?
+  writeAwaitMs Float?
+  readIops     Float?
+  writeIops    Float?
+  readKbps     Float?
+  writeKbps    Float?
+  avgQueueSize Float?
+
+  @@index([device, ts(sort: Desc)])
+  @@index([ts])
+  @@map("host_disk_io_points")
+}
+
+// Top-10 cpu/mem a cada 60s — forense de leak
+model HostProcessSample {
+  id         BigInt   @id @default(autoincrement())
+  ts         DateTime @default(now())
+  rank       Int
+  pid        Int
+  command    String
+  cgroup     String?
+  cpuPercent Float
+  memMb      Float
+
+  @@index([ts(sort: Desc)])
+  @@map("host_process_samples")
+}
+
+// Por transição (docker/ssh/fail2ban/staggered…)
+model SystemdUnitEvent {
+  id          BigInt   @id @default(autoincrement())
+  unitName    String
+  ts          DateTime @default(now())
+  activeState String
+  subState    String?
+  fromState   String?
+  nRestarts   Int?
+  message     String?
+
+  @@index([unitName, ts(sort: Desc)])
+  @@index([activeState, ts(sort: Desc)])
+  @@map("systemd_unit_events")
+}
+
+model SslCheckHistory {
+  id            BigInt    @id @default(autoincrement())
+  domain        String
+  checkedAt     DateTime  @default(now())
+  ok            Boolean
+  notAfter      DateTime?
+  daysRemaining Int?
+  issuer        String?
+  error         String?
+
+  @@index([domain, checkedAt(sort: Desc)])
+  @@map("ssl_check_history")
+}
+
+// p95 RECOMPUTADO do raw, nunca incremental
+model ContainerMetricRollup {
+  id                BigInt      @id @default(autoincrement())
+  containerId       Int
+  container         Container   @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  granularity       Granularity
+  bucket            DateTime
+  sampleCount       Int
+  cpuAvg            Float
+  cpuMax            Float
+  cpuP95            Float?
+  memAvgMb          Float
+  memMaxMb          Float
+  netRxKbpsAvg      Float?
+  netTxKbpsAvg      Float?
+  blkioReadKbpsAvg  Float?
+  blkioWriteKbpsAvg Float?
+  restartsDelta     Int         @default(0)
+  unhealthySec      Int         @default(0)
+
+  @@unique([containerId, granularity, bucket])
+  @@index([granularity, bucket(sort: Desc)])
+  @@map("container_metric_rollups")
+}
+
+model HostMetricRollup {
+  id             BigInt      @id @default(autoincrement())
+  granularity    Granularity
+  bucket         DateTime
+  sampleCount    Int
+  cpuAvg         Float
+  cpuMax         Float
+  loadAvg1mMax   Float?
+  memUsedAvgMb   Float
+  memUsedMaxMb   Float
+  swapUsedMaxMb  Int?
+  psiCpuSomeMax  Float?
+  psiIoFullMax   Float?
+  psiMemFullMax  Float?
+  diskUtilMaxPct Float?
+  diskAwaitMaxMs Float?
+
+  @@unique([granularity, bucket])
+  @@map("host_metric_rollups")
+}
+
+// KPI "99.9%" por alvo — derivado de checks + state events
+model AvailabilityRollup {
+  id          BigInt           @id @default(autoincrement())
+  targetType  UptimeTargetType
+  targetKey   String
+  granularity Granularity
+  bucket      DateTime
+  checksTotal Int              @default(0)
+  checksUp    Int              @default(0)
+  downtimeSec Int              @default(0)
+  incidents   Int              @default(0)
+  uptimePct   Float
+
+  @@unique([targetType, targetKey, granularity, bucket])
+  @@index([targetType, granularity, bucket(sort: Desc)])
+  @@map("availability_rollups")
 }

@@ -5,20 +5,64 @@ import { OtpReauthGuard } from "../auth/otp-reauth.guard";
 import { RolesGuard } from "../auth/roles.guard";
 import { Roles } from "../auth/roles.decorator";
 import { SshService } from "../common/ssh.service";
+import { PrismaService } from "../common/prisma.service";
 
 @UseGuards(JwtAuthGuard)
 @Controller("srv1")
 export class Srv1Controller {
-  constructor(private readonly srv1: Srv1Service, private readonly ssh: SshService) {}
+  constructor(
+    private readonly srv1: Srv1Service,
+    private readonly ssh: SshService,
+    private readonly prisma: PrismaService
+  ) {}
 
   @Get("host")
   host() {
     return this.srv1.getHostMetrics();
   }
 
+  // ─── FASE 3: saturação (PSI/swap), disk IO e rede ────────
+  @Get("saturation")
+  saturation() {
+    return this.srv1.getSaturation();
+  }
+
+  @Get("diskio")
+  diskio() {
+    return this.srv1.getDiskIo();
+  }
+
+  @Get("network")
+  network() {
+    return this.srv1.getNetwork();
+  }
+
   @Get("containers")
   containers() {
     return this.srv1.getContainers();
+  }
+
+  // ─── FASE 3: eventos de estado do container (registry + ContainerStateEvent)
+  @Get("containers/:name/events")
+  async containerEvents(@Param("name") name: string, @Query("limit") limit?: string) {
+    if (!/^[a-zA-Z0-9_.-]+$/.test(name)) return [];
+    const take = Math.min(Math.max(parseInt(limit || "50", 10) || 50, 1), 200);
+    const container = await this.prisma.container.findUnique({ where: { name }, select: { id: true } });
+    if (!container) return [];
+    const events = await this.prisma.containerStateEvent.findMany({
+      where: { containerId: container.id },
+      orderBy: { ts: "desc" },
+      take
+    });
+    // Shape do StateEventSchema do frontend (ts como ISO string)
+    return events.map(e => ({
+      ts: e.ts.toISOString(),
+      fromState: e.fromState,
+      toState: e.toState,
+      exitCode: e.exitCode,
+      oomKilled: e.oomKilled,
+      reason: e.reason
+    }));
   }
 
   @Get("services")
