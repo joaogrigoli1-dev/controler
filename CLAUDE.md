@@ -9,7 +9,7 @@
 - **Stack:** NestJS 10 + Fastify + Prisma 5 + Postgres 16 + Redis 7 + Socket.IO | Next.js 14 (App Router) + Tailwind + Recharts
 - **Monorepo pnpm:** `apps/api` (14 módulos: auth, srv1, coolify, hestia, vault, alerts, scanner, realtime, timeline, deploys, apis, analytics, users, common), `apps/web` (login + 8 telas), `packages/shared` (tipos+Zod), `packages/ui`, `mcps/hestia` (futuro)
 - **Auth:** OTP via WhatsApp ou SMS; JWT 15min access + 7d refresh; re-auth OTP em ações sensíveis
-- **8 telas:** /overview, /srv1, /coolify, /hestia, /vault, /apis, /alerts, /analytics
+- **10 telas:** /overview, /srv1, /srv1/containers (+drill /srv1/containers/[name]), /coolify (+drill /coolify/[uuid]), /hestia, /vault, /apis, /alerts, /analytics — contrato Zod em `apps/web/lib/schemas.ts`
 
 ## Deploy — particularidades (fluxo geral no global)
 
@@ -28,6 +28,8 @@
 
 - Coolify API visto de dentro da app: `http://10.0.6.1:8000`
 - SSH key do container: `/data/coolify/applications/a8u2gdchrpjnn6era2i8kh8d/ssh/id_ed25519`
+- Coletores raw a cada 60s (env `NOC_RAW_INTERVAL_MS`); chave SSH do coletor = `/root/.ssh/id_ed25519`
+  (mount do Coolify) com env `SRV1_SSH_KEY_PATH` apontando para ela
 - fail2ban: whitelist em `/etc/fail2ban/jail.d/docker-whitelist.conf` (10.0.0.0/8 + 172.16.0.0/12)
 - Secrets consumidos: SSM `/controler/*`, `/shared/*`, `/cloudflare/*`, `/myclinicsoft/whatsapp/*`,
   `/myclinicsoft/infobip_api_key` — **fonte da verdade é o SSM** (não duplicar listas aqui)
@@ -46,4 +48,5 @@ pnpm dev   # web: :3000 | api: :4000
 ## Documentação
 
 `README.md` (setup) | `ARCHITECTURE.md` (stack/auth) | `RUNBOOK.md` (operação/rollback) |
-`COMPARISON.md` (KPIs) | `SRV1_INVENTORY.md` (41 containers) | `SETUP_GUIDE.md` (secrets/DNS)
+`COMPARISON.md` (KPIs) | `SRV1_INVENTORY.md` (33 containers, KVM8) | `SETUP_GUIDE.md` (secrets/DNS) |
+`Relatorio-Final-NOC-2026-07-02.md` (antes/depois NOC)

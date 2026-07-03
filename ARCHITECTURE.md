@@ -29,8 +29,8 @@ flowchart LR
     API -->|REST v1| Hostinger[Hostinger API]
     API -->|node-ssh| SRV1[SRV1 root@62.72.63.18]
 
-    Scheduler[NestJS @Cron / @Interval] -.->|30s| API
-    Scheduler -.->|2min| Coolify
+    Scheduler[NestJS @Cron / @Interval] -.->|60s raw| API
+    Scheduler -.->|5min deploys| Coolify
     Scheduler -.->|8h BRT digest| WhatsApp
 ```
 
@@ -45,9 +45,16 @@ Models principais:
 - **`TimelineEvent`** — feed de eventos cronológico
 - **`MetricSnapshot`** / **`HostMetricSnapshot`** — métricas time-series
 - **`AlertRule`** / **`AlertLog`** — alertas + regras configuráveis
-- **`DeployHistory`** — histórico de deploys por projeto
+- **`DeployHistory`** — histórico de deploys por projeto (upsert idempotente por `deploymentUuid`)
 - **`Project`** / **`ProjectApi`** / **`Site`** — inventário monitorado
 - **`ScannerFinding`** — achados do Resource Scanner
+
+Models FASE 3 (séries temporais / KPIs — ver seção "Monitoramento"):
+- **`Container`** — registry, 1 linha por container (chave = nome estável, não container id)
+- **`ContainerMetricPoint`** / **`ContainerStateEvent`** — raw por container + transições de estado
+- **`HostDiskIoPoint`** / **`HostProcessSample`** / **`SystemdUnitEvent`** — iostat, top processos, units
+- **`SslCheckHistory`** — histórico de probes TLS por domínio
+- **`ContainerMetricRollup`** / **`HostMetricRollup`** / **`AvailabilityRollup`** — agregados horário/diário
 
 ## Auth (espelho do MyClinicSoft)
 
@@ -118,10 +125,58 @@ Cache em memória de 60s por chave (com `SsmService.invalidate(name)`).
 
 | Job | Periodicidade | Função |
 |-----|---------------|--------|
-| `host-metrics` | 30s | snapshot + emit WS |
-| `container-metrics` | 30s | snapshot + emit WS |
+| `host-metrics` | 60s (`NOC_RAW_INTERVAL_MS`) | snapshot host + PSI + disk IO + top processos (a cada 5 ciclos) + WS + alertas |
+| `container-metrics` | 60s (`NOC_RAW_INTERVAL_MS`) | registry + metric points + state events + alertas (33 containers) |
+| `systemd-units` | 5min | transições failed↔active das units |
+| `sites-check` | 15min | HTTP ping nos sites |
+| `apis-ping` | 30min | ping nas ProjectApi com healthUrl |
+| `coolify-deploys-sync` | 5min | upsert deploys via API Coolify + alerta failed/unhealthy |
+| `ssl-probe` | 6/6h (+2min pós-boot) | probe TLS de todos os domínios |
+| `rollup-hourly` / `rollup-daily` | :05 de cada hora / 00:25 UTC | recompute raw → rollup |
 | `daily-digest` | 0 8 * * * BRT | WhatsApp resumo |
-| `cleanup` | 0 3 * * * BRT | remove snapshots > 30d |
+| `cleanup` | 0 3 * * * BRT | purge com retenção por tabela |
+| `purge` | 03:45 BRT | purge das séries FASE 3 em lotes |
+
+## Monitoramento (FASE 3, 2026-07)
+
+O controler **é** o NOC do SRV1 (não há Prometheus/Grafana/cAdvisor). Frameworks por camada:
+**USE + PSI** no host, **docker stats** por container, **RED** em serviços/APIs, **Golden Signals**
+no /overview. Catálogo completo de KPIs/limiares em `Fase1-Arquitetura-KPIs-2026-07-02.md`.
+
+### Fontes de coleta
+
+| Fonte | Via | O quê |
+|-------|-----|-------|
+| **SSH SRV1** | `root@62.72.63.18:47391` (chave montada `/root/.ssh/id_ed25519`, override `SRV1_SSH_KEY_PATH`) | PSI `/proc/pressure/*`, iostat, `/proc/net/dev`, docker stats/inspect (33 containers), systemd, top processos, portas |
+| **Coolify API** | `http://10.0.6.1:8000` — `GET /api/v1/deployments/applications/{uuid}` | estado de apps + histórico de deploys (fonte de verdade, upsert por `deploymentUuid`) |
+| **Hostinger API** | REST v1 (vm 1379597) | baseline cpu/ram/disk/tráfego/uptime na visão do hypervisor |
+| **TLS probe** | `tls.connect(443, SNI)` direto do container (sem SSH) | `notAfter`/issuer/daysRemaining de todos os `Site` + noc.controler.net.br |
+
+### Cadências e retenção
+
+- **Raw 60s** (host + containers) — configurável via env `NOC_RAW_INTERVAL_MS`; guarda de
+  sobreposição por tick + circuit breaker `load1m > 3×nproc` (dinâmico, KVM8 = 24).
+- **Rollups horário/diário** SEMPRE recomputados do raw (nunca incremental — p95 não é composável);
+  upsert idempotente pelos `@@unique`; catch-up no boot (48h horário / 7d diário).
+- **Retenção** (purge diário): raw containers/iostat 10d · snapshots host 30d · top processos 7d ·
+  state/systemd events 180d · rollup horário 90d · diário 400d.
+
+### Endpoints novos
+
+- `/api/v1/srv1/saturation` · `/srv1/diskio` · `/srv1/network` · `/srv1/containers/:name/events`
+- `/api/v1/analytics/health` (Health Score composto) · `/analytics/reliability` (disponibilidade %, MTTR/MTBF, deploy success rate)
+
+### Contrato com o frontend
+
+Todas as respostas consumidas pelo web são validadas com **Zod** em `apps/web/lib/schemas.ts`
+(contrato compartilhado — se o backend mudar shape, o front acusa em runtime, não renderiza lixo).
+Dados mock remanescentes são **rotulados** na UI até o coletor correspondente estar ligado.
+
+### Migrations
+
+- `prisma migrate deploy` roda **no start do container da API** (CMD do `apps/api/Dockerfile`) —
+  idempotente; baseline `0_baseline` resolvido em prod em 2026-07-02.
+- **`db push` é PROIBIDO em produção** (ver `apps/api/prisma/migrations/README.md`).
 
 ## Deploy
 
@@ -145,7 +200,7 @@ Traefik faz roteamento por subdomínio:
 | Realtime | Polling 5-30s | WebSocket Socket.IO |
 | Cache | nenhum | Redis com TTL por endpoint |
 | Reveal vault | toggle simples | OTP + audit log |
-| Telas | 9 | 8 (re-escopadas) + login |
+| Telas | 9 | 10 (8 + drills de container e Coolify) + login |
 | KPIs | 18 | 66+ |
 | Testes | nenhum | Vitest + Playwright (placeholder) |
 | Type safety | sem | TS strict em tudo |

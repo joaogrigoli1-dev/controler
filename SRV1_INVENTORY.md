@@ -1,20 +1,21 @@
-# SRV1 — Inventário Completo (varrido 2026-05-27)
+# SRV1 — Inventário Completo (varrido 2026-05-27 · hardware/contagens atualizados 2026-07-02)
 
 Servidor: **srv1379597.hstgr.cloud** (IP `62.72.63.18`, IPv6 `2a02:4780:14:44ba::1`)
+
+> **Inventário vivo no NOC:** a lista real e atual de containers (estado, health, métricas)
+> está em https://noc.controler.net.br/srv1/containers — este arquivo é foto de referência.
 
 ## Hardware / OS
 
 | Item | Valor |
 |------|-------|
-| Plano | Hostinger KVM 4 |
-| vCPU | 4 |
-| RAM | 16 GB (4.8GB usados / 1.5GB livre / 10GB cache) |
-| Disco | 200 GB (91GB usados — 47%) |
+| Plano | Hostinger **KVM 8** (upgrade; era KVM 4) |
+| vCPU | 8 |
+| RAM | 32 GB |
+| Disco | 400 GB (~68GB usados — ~18%) |
 | OS | Ubuntu 24.04.4 LTS (Noble) |
-| Kernel | 6.8.0-110-generic |
-| Uptime | 26 dias 19h |
-| Load avg | 1.22 / 1.19 / 1.23 |
-| Swap | 4 GB (apenas 75MB usado) |
+| Kernel | 6.8 |
+| Swap | 4 GB |
 
 ## Firewall (Hostinger group 234899 — `srv1-main-firewall`)
 
@@ -31,7 +32,7 @@ Servidor: **srv1379597.hstgr.cloud** (IP `62.72.63.18`, IPv6 `2a02:4780:14:44ba:
 
 ⚠ **Não sincronizado** (`is_synced: false`) — provavelmente bloqueado por iptables local.
 
-## Stacks identificadas (38 containers rodando)
+## Stacks identificadas (**33 containers rodando** na varredura 2026-07-02; lista abaixo é da foto de 2026-05)
 
 ### 1. Coolify (orquestrador)
 - `coolify` (4.1.0) — UI principal `:8000`
@@ -99,13 +100,11 @@ qemu-guest-agent
 unattended-upgrades
 ```
 
-## ⚠ Serviços com FALHA (precisam atenção)
+## Serviços com falha — ✅ CORRIGIDOS em 2026-07-02 (0 failed)
 
-| Serviço | Estado | Ação sugerida |
-|---------|--------|---------------|
-| `openclaw-node.service` | not-found, failed | Remover unit file (já não usa) |
-| `redis-server.service` | loaded, failed | Migrou para Docker — remover |
-| `ssh-emergency.service` | loaded, failed | Investigar / remover |
+Os units failed foram sanados na FASE 6 do NOC (detalhes e reversão no RUNBOOK.md):
+`staggered-containers` (script sem +x), `redis-server` (bind tolerante `-10.0.1.1` + drop-in
+After=network-online/docker) e `ssh-emergency` (ExecStart best-effort).
 
 ## Cron jobs root
 
@@ -191,14 +190,14 @@ Domínios em uso (descobertos via apps Coolify + nginx containers):
 
 ## Capacidade restante (próximas decisões)
 
-- **CPU**: 30% livre — ok para mais 2-3 apps pequenas
-- **RAM**: 10 GB livres (incluindo cache) — ok
-- **Disco**: 103 GB livres + ~12 GB reclamáveis = **115 GB** — ok
+- **CPU**: folga ampla no KVM8 (8 vCPU, ~7% de uso em 2026-07) — ok
+- **RAM**: ~25 GB livres de 32 GB — ok
+- **Disco**: ~320 GB livres de 400 GB — ok
 - **Postgres-main** já existe em `:5433` → controler-v4 vai criar database `controler_v4` reutilizando essa instância (economiza 100 MB RAM vs novo container)
 
 ## Recomendações que o v4 vai aplicar
 
-1. ✅ Monitorar todos os 38 containers (não só os 7 Coolify)
+1. ✅ Monitorar todos os 33 containers (não só os apps Coolify)
 2. ✅ Adicionar 3 serviços systemd ao Status (clamav, ollama, pm2-root)
 3. ✅ Card "Mail Stack" dedicado (mailserver + 4 roundcubes + stalwart)
 4. ✅ Card "xospam Stack" dedicado (6 containers)

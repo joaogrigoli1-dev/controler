@@ -169,6 +169,101 @@ git push origin main
 mcp__coolify-mcp__coolify_deploy uuid=a8u2gdchrpjnn6era2i8kh8d force=true
 ```
 
+## Migrations em produção (FASE 6, 2026-07)
+
+Regra: **`db push` é PROIBIDO em prod**. O fluxo é `prisma migrate` — e o `migrate deploy`
+roda **automaticamente no start do container da API** (CMD do `apps/api/Dockerfile`).
+Baseline `0_baseline` foi resolvido em prod em 2026-07-02 (`prisma migrate resolve --applied 0_baseline`).
+
+### Fluxo normal (nova migration)
+
+```bash
+# 1. Dev: criar a migration versionada
+pnpm --filter @controler/api exec prisma migrate dev --name minha_mudanca
+
+# 2. BACKUP antes de qualquer deploy que carregue migration nova
+ssh root@62.72.63.18   # porta 47391
+CID=$(docker ps -q --filter "name=postgres-a8u2gdchrpjnn6era" | head -1)
+docker exec $CID pg_dump -U controler controler | gzip > /root/backups/controler-pre-<tag>-$(date +%Y%m%d-%H%M).sql.gz
+gzip -t /root/backups/controler-pre-<tag>-*.sql.gz   # valida o arquivo
+
+# 3. Push + deploy — o container aplica as migrations pendentes sozinho no boot
+git push origin main && mcp__coolify-mcp__coolify_deploy uuid=a8u2gdchrpjnn6era2i8kh8d force=true
+
+# 4. Conferir no log do boot da API: "migrate deploy" + health
+curl https://noc.controler.net.br/be-health
+```
+
+### Rollback de migration
+
+Prisma não tem "migrate down" — rollback = **restaurar backup + voltar o código**:
+
+```bash
+# 1. Restaurar o dump pré-migration (ex.: /root/backups/controler-pre-fase6-20260702-2113.sql.gz)
+ssh root@62.72.63.18
+CID=$(docker ps -q --filter "name=postgres-a8u2gdchrpjnn6era" | head -1)
+gunzip -c /root/backups/controler-pre-<tag>.sql.gz | docker exec -i $CID psql -U controler -d controler
+
+# 2. Redeploy do commit anterior (git revert ou Coolify UI → revisão anterior)
+# 3. Health check manual obrigatório
+curl https://noc.controler.net.br/be-health
+```
+
+## Coletores (FASE 3) — verificação e troubleshooting
+
+Coletores raw a cada **60s** (host + 33 containers), env de escape `NOC_RAW_INTERVAL_MS`
+(ex.: `300000` = 5min). SSL probe 6/6h, deploys Coolify 5/5min, rollups horário/diário.
+
+### Verificar se estão gravando
+
+```bash
+# Contagem de linhas nas tabelas novas (deve crescer a cada minuto)
+CID=$(docker ps -q --filter "name=postgres-a8u2gdchrpjnn6era" | head -1)
+docker exec $CID psql -U controler -d controler -c "
+  SELECT 'container_metric_points' t, count(*), max(ts) FROM container_metric_points
+  UNION ALL SELECT 'host_metric_snapshots', count(*), max(\"createdAt\") FROM host_metric_snapshots
+  UNION ALL SELECT 'host_disk_io_points', count(*), max(ts) FROM host_disk_io_points
+  UNION ALL SELECT 'ssl_check_history', count(*), max(\"checkedAt\") FROM ssl_check_history
+  UNION ALL SELECT 'deploy_history', count(*), max(\"createdAt\") FROM deploy_history;"
+
+# Logs do scheduler (procurar por [Scheduler], [Rollup], [SslScheduler], [DeploysScheduler])
+docker logs --tail 100 $(docker ps -q --filter "name=api-a8u2gdchrpjnn6era" | head -1) 2>&1 | grep -Ei "scheduler|rollup|ssl"
+```
+
+### Troubleshooting do SSH do coletor
+
+Sintoma: `host metrics failed` / `container metrics failed` nos logs, tabelas paradas.
+
+- A chave é **montada pelo Coolify em `/root/.ssh/id_ed25519`** dentro do container da API;
+  o env **`SRV1_SSH_KEY_PATH=/root/.ssh/id_ed25519`** (env do app no Coolify) aponta para ela.
+- O SshService tenta uma **cadeia de chaves candidatas** (env → SSM `private_key_path` → defaults);
+  cuidado: o SSM `/controler/srv1/private_key_path` pode conter path do Mac
+  (`~/.ssh/id_ed25519_cowork`) que NÃO existe no container — o env tem precedência.
+- sshd do SRV1 tem `PasswordAuthentication no` → sem chave válida não há fallback.
+
+```bash
+# Dentro do container da API: chave existe? conecta?
+docker exec $(docker ps -q --filter "name=api-a8u2gdchrpjnn6era" | head -1) \
+  sh -c 'ls -la /root/.ssh/ && ssh -p 47391 -o BatchMode=yes -o StrictHostKeyChecking=no root@62.72.63.18 uptime'
+```
+
+## Systemd units do SRV1 — fixes de 2026-07-02
+
+Os 3 units failed da FASE 0 foram corrigidos (`systemctl --failed` = 0 agora). O que foi feito
+e como reverter:
+
+| Unit | Causa | Fix aplicado | Reverter |
+|------|-------|--------------|----------|
+| `staggered-containers.service` | script sem bit de execução | `chmod 755` no script (ExecStart) | n/a (fix trivial) |
+| `redis-server.service` | `bind 10.0.1.1` — IP de bridge docker que sobe DEPOIS do redis | bind tolerante `-10.0.1.1` em `/etc/redis/redis.conf` + drop-in `After=network-online.target docker.service` | remover o `-` do bind e apagar o drop-in em `/etc/systemd/system/redis-server.service.d/` |
+| `ssh-emergency.service` | dependia de `ssh.socket`, ausente no Ubuntu 24 | `ExecStart=-...` (best-effort, não marca failed) | remover o `-` do ExecStart |
+
+```bash
+# Conferir
+ssh -p 47391 root@62.72.63.18 'systemctl --failed --no-legend; redis-cli -h 127.0.0.1 ping'
+# redis ouve em 127.0.0.1 e 10.0.1.1
+```
+
 ---
 
 ## POSTMORTEM — Incidente 28/05/2026 (8h-10h BRT)
