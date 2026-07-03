@@ -65,6 +65,18 @@ services:
       - ./ssh:/root/.ssh:ro
     expose:
       - "4000"
+    # WS: expõe SOMENTE o gateway Socket.IO (/ws) no mesmo domínio do app.
+    # O restante da API continua interno (acessado via rewrite /be do Next).
+    # O gateway valida JWT no handshake, então /ws público é seguro.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.controler-ws.rule=Host(`noc.controler.net.br`) && PathPrefix(`/ws`)"
+      - "traefik.http.routers.controler-ws.entryPoints=https"
+      - "traefik.http.routers.controler-ws.tls=true"
+      - "traefik.http.routers.controler-ws.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.controler-ws.priority=100"
+      - "traefik.http.routers.controler-ws.service=controler-ws"
+      - "traefik.http.services.controler-ws.loadbalancer.server.port=4000"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:4000/health"]
       interval: 30s
