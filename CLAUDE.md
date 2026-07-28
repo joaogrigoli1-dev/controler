@@ -7,9 +7,9 @@
 
 - Command Center NOC da infraestrutura SRV1. **Local:** `~/Dev/controler` | **Prod:** https://noc.controler.net.br | **UUID Coolify:** `a8u2gdchrpjnn6era2i8kh8d` | v4.0.0
 - **Stack:** NestJS 10 + Fastify + Prisma 5 + Postgres 16 + Redis 7 + Socket.IO | Next.js 14 (App Router) + Tailwind + Recharts
-- **Monorepo pnpm:** `apps/api` (14 módulos: auth, srv1, coolify, hestia, vault, alerts, scanner, realtime, timeline, deploys, apis, analytics, users, common), `apps/web` (login + 8 telas), `packages/shared` (tipos+Zod), `packages/ui`, `mcps/hestia` (futuro)
+- **Monorepo pnpm:** `apps/api`, `apps/web`, `packages/shared` (tipos+Zod — fonte única), `packages/ui`
 - **Auth:** OTP via WhatsApp ou SMS; JWT 15min access + 7d refresh; re-auth OTP em ações sensíveis
-- **10 telas:** /overview, /srv1, /srv1/containers (+drill /srv1/containers/[name]), /coolify (+drill /coolify/[uuid]), /hestia, /vault, /apis, /alerts, /analytics — contrato Zod em `apps/web/lib/schemas.ts`
+- Contrato Zod das telas em `apps/web/lib/schemas.ts` — front e back derivam dali
 
 ## Deploy — particularidades (fluxo geral no global)
 
@@ -40,17 +40,8 @@
 
 ## Subir local
 
-```bash
-cd ~/Dev/controler
-cp .env.example .env
-docker compose up -d postgres redis
-pnpm install
-pnpm --filter @controler/api prisma:migrate && pnpm --filter @controler/api prisma:seed
-pnpm dev   # web: :3000 | api: :4000
-```
+`pnpm dev` (web :3000 | api :4000). Passo a passo no `README.md`.
 
 ## Documentação
 
-`README.md` (setup) | `ARCHITECTURE.md` (stack/auth) | `RUNBOOK.md` (operação/rollback) |
-`COMPARISON.md` (KPIs) | `SRV1_INVENTORY.md` (33 containers, KVM8) | `SETUP_GUIDE.md` (secrets/DNS) |
-`Relatorio-Final-NOC-2026-07-02.md` (antes/depois NOC)
+`README.md` · `ARCHITECTURE.md` · `RUNBOOK.md` (operação/rollback) · `SETUP_GUIDE.md` (secrets/DNS)
