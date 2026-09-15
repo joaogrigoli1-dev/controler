@@ -5,10 +5,15 @@ import { useEffect, useState } from "react";
 import { mutate } from "swr";
 import { getSocket } from "@/lib/socket";
 
-// UX-15: timezone explícita ao lado do relógio
-const TZ_LABEL = new Intl.DateTimeFormat("pt-BR", { timeZoneName: "short" })
-  .formatToParts(new Date())
-  .find(p => p.type === "timeZoneName")?.value || "";
+// UX-15: o mesmo fuso no SSR e no navegador evita divergência de hidratação.
+const TZ_LABEL = "UTC−4";
+const CUIABA_TIME = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: "America/Cuiaba",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false
+});
 
 function pageTitle(path: string) {
   if (path.startsWith("/overview")) return "Mission Control";
@@ -31,7 +36,7 @@ export function Topbar() {
   const [now, setNow] = useState<string>("--:--:--");
 
   useEffect(() => {
-    setNow(new Date().toLocaleTimeString("pt-BR"));
+    setNow(CUIABA_TIME.format(new Date()));
     const s = getSocket();
     let wasDisconnected = false;
     const onConn = () => {
@@ -46,7 +51,7 @@ export function Topbar() {
     s.on("connect", onConn);
     s.on("disconnect", onDisc);
     if (s.connected) onConn();
-    const t = setInterval(() => setNow(new Date().toLocaleTimeString("pt-BR")), 1000);
+    const t = setInterval(() => setNow(CUIABA_TIME.format(new Date())), 1000);
     return () => { s.off("connect", onConn); s.off("disconnect", onDisc); clearInterval(t); };
   }, []);
 
@@ -78,7 +83,7 @@ export function Topbar() {
         <span
           className="text-mono text-white/70 hidden sm:inline"
           aria-label={`Hora atual: ${now} (${TZ_LABEL})`}
-          title={`Horário local do seu navegador (${TZ_LABEL}). Logs e alertas do servidor usam America/Sao_Paulo.`}
+          title={`Horário operacional (${TZ_LABEL}). Logs e alertas do servidor usam America/Cuiaba.`}
         >
           {now} <span className="text-white/40">{TZ_LABEL}</span>
         </span>
