@@ -59,6 +59,7 @@ services:
       ZAPI_TOKEN: ${ZAPI_TOKEN}
       ZAPI_CLIENT_TOKEN: ${ZAPI_CLIENT_TOKEN}
       INFOBIP_API_KEY: ${INFOBIP_API_KEY}
+      SINC_INGEST_TOKEN: ${SINC_INGEST_TOKEN}
       ALERT_PHONE_DEFAULT: ${ALERT_PHONE_DEFAULT:-556598466555}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -70,13 +71,20 @@ services:
     # O gateway valida JWT no handshake, então /ws público é seguro.
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.controler-ws.rule=Host(`noc.controler.net.br`) && PathPrefix(`/ws`)"
+      - "traefik.http.routers.controler-ws.rule=(Host(`controler.net.br`) || Host(`noc.controler.net.br`)) && PathPrefix(`/ws`)"
       - "traefik.http.routers.controler-ws.entryPoints=https"
       - "traefik.http.routers.controler-ws.tls=true"
       - "traefik.http.routers.controler-ws.tls.certresolver=letsencrypt"
       - "traefik.http.routers.controler-ws.priority=100"
       - "traefik.http.routers.controler-ws.service=controler-ws"
       - "traefik.http.services.controler-ws.loadbalancer.server.port=4000"
+      - "traefik.http.routers.controler-sinc-ingest.rule=(Host(`controler.net.br`) || Host(`noc.controler.net.br`)) && Path(`/api/v1/roteador/events/batch`)"
+      - "traefik.http.routers.controler-sinc-ingest.entryPoints=https"
+      - "traefik.http.routers.controler-sinc-ingest.tls=true"
+      - "traefik.http.routers.controler-sinc-ingest.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.controler-sinc-ingest.priority=110"
+      - "traefik.http.routers.controler-sinc-ingest.service=controler-sinc-ingest"
+      - "traefik.http.services.controler-sinc-ingest.loadbalancer.server.port=4000"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:4000/health"]
       interval: 30s
@@ -99,6 +107,15 @@ services:
       API_INTERNAL_URL: http://api:4000
     expose:
       - "3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.controler-web.rule=(Host(`controler.net.br`) || Host(`noc.controler.net.br`))"
+      - "traefik.http.routers.controler-web.entryPoints=https"
+      - "traefik.http.routers.controler-web.tls=true"
+      - "traefik.http.routers.controler-web.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.controler-web.priority=90"
+      - "traefik.http.routers.controler-web.service=controler-web"
+      - "traefik.http.services.controler-web.loadbalancer.server.port=3000"
 
 volumes:
   postgres-data:

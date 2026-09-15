@@ -4,7 +4,7 @@ Sistema NOC profissional para gestão centralizada da infraestrutura SRV1.
 
 **Stack**: Next.js 14 + NestJS + Prisma + PostgreSQL + Redis + Socket.IO
 
-**Subdomínio (planejado)**: https://controler-v4.net.br
+**Produção**: https://controler.net.br · https://noc.controler.net.br
 
 ## Estrutura
 
@@ -61,3 +61,4 @@ OTP WhatsApp via Z-API (espelhado do MyClinicSoft):
 - `apps/api/prisma/schema.prisma` — modelo de dados
 - `ARCHITECTURE.md` — decisões técnicas (gerado na Etapa 8)
 - `RUNBOOK.md` — operação e incident response (gerado na Etapa 8)
+- `docs/SINC-PANEL-CONTRACT.md` — contrato, fronteira e validação do painel `/sinc`

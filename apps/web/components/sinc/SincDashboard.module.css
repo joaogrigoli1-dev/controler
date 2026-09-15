@@ -1,0 +1,83 @@
+/* Scoped subset of mac-dark 2.6.3, references/tahoe-dark.tokens.json.
+   Keeps the existing Controler shell and other routes unchanged. */
+.panel {
+  --td-bg-window: #1e1e1e;
+  --td-bg-card: #2c2c2e;
+  --td-bg-hover: #3a3a3c;
+  --td-text-primary: rgba(255,255,255,.85);
+  --td-text-secondary: rgba(255,255,255,.55);
+  --td-text-small: rgba(255,255,255,.74);
+  --td-separator: rgba(255,255,255,.10);
+  --td-action: #0078d4;
+  --td-on-action: #ffffff;
+  --td-green: #30d158;
+  --td-orange: #ff9230;
+  --td-focus-ring: rgba(26,169,255,.50);
+  --td-focus-ring-thin: rgba(26,169,255,.15);
+  --td-shadow-card: 0 1px 3px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.2);
+  --td-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, sans-serif;
+  --td-font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  padding: 16px;
+  border-radius: 26px;
+  background: var(--td-bg-window);
+  color: var(--td-text-primary);
+  font: 400 13px/1.4 var(--td-font-sans);
+  color-scheme: dark;
+  display: grid;
+  gap: 8px;
+}
+.panel * { box-sizing: border-box; }
+.panel h1, .panel h2, .panel h3, .panel p { margin: 0; }
+.panel h1 { font: 600 22px/26px var(--td-font-sans); }
+.panel h2, .panel h3 { font: 600 15px/20px var(--td-font-sans); }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; }
+.headerText { display: grid; gap: 4px; min-width: 0; }
+.muted { color: var(--td-text-secondary); }
+.button {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--td-action);
+  color: var(--td-on-action);
+  font: 510 13px/16px var(--td-font-sans);
+  cursor: pointer;
+}
+.button:hover:not(:disabled) { filter: brightness(.94); }
+.button:active:not(:disabled) { filter: brightness(.85); }
+.button:disabled { cursor: wait; background: var(--td-bg-hover); color: var(--td-text-primary); }
+.button:focus-visible { outline: 3.5px solid var(--td-focus-ring); outline-offset: 0; box-shadow: 0 0 0 1px var(--td-focus-ring-thin); }
+.card { min-width: 0; background: var(--td-bg-card); border-radius: 16px; padding: 16px; box-shadow: var(--td-shadow-card); }
+.cardHeader { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.cardTitle { display: flex; align-items: center; gap: 8px; }
+.cardTitle svg { flex-shrink: 0; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+.projects { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
+.project { min-width: 0; display: grid; align-content: start; gap: 8px; }
+.project h3 { overflow-wrap: anywhere; }
+.facts { margin: 0; display: grid; gap: 8px; }
+.facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.facts dt { color: var(--td-text-secondary); }
+.facts dd { margin: 0; text-align: right; overflow-wrap: anywhere; min-width: 0; }
+.status { display: inline-flex; align-items: center; gap: 6px; color: var(--td-text-small); font: 500 11px/14px var(--td-font-sans); }
+.status::before { content: ""; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: currentColor; }
+.status[data-tone="good"]::before { background: var(--td-green); }
+.status[data-tone="warning"]::before { background: var(--td-orange); }
+.notice { padding: 12px 16px; display: grid; gap: 4px; }
+.notice strong { font-weight: 600; }
+.table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+.table caption { text-align: left; color: var(--td-text-secondary); padding-bottom: 8px; }
+.table th { color: var(--td-text-small); font: 600 11px/14px var(--td-font-sans); text-transform: uppercase; letter-spacing: .07em; }
+.table th, .table td { text-align: left; padding: 8px; border-bottom: 1px solid var(--td-separator); vertical-align: top; overflow-wrap: anywhere; }
+.table th:first-child, .table td:first-child { padding-left: 0; }
+.table th:last-child, .table td:last-child { padding-right: 0; }
+.table tbody tr:last-child td { border-bottom: 0; }
+.mono { font: 400 12px/16px var(--td-font-mono); overflow-wrap: anywhere; }
+.empty { padding: 8px 0; color: var(--td-text-secondary); }
+.footer { font: 400 10px/14px var(--td-font-sans); color: var(--td-text-small); }
+@media (max-width: 1350px) { .projects { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (prefers-contrast: more) { .panel { --td-text-secondary: rgba(255,255,255,.74); } }

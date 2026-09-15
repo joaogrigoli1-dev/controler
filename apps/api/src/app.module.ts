@@ -18,6 +18,7 @@ import { DeploysModule } from "./deploys/deploys.module";
 import { ApisModule } from "./apis/apis.module";
 import { AnalyticsModule } from "./analytics/analytics.module";
 import { UsersModule } from "./users/users.module";
+import { SincModule } from "./sinc/sinc.module";
 import { HealthController } from "./common/health.controller";
 
 @Module({
@@ -43,7 +44,8 @@ import { HealthController } from "./common/health.controller";
     TimelineModule,
     DeploysModule,
     ApisModule,
-    AnalyticsModule
+    AnalyticsModule,
+    SincModule
   ],
   controllers: [HealthController],
   providers: [

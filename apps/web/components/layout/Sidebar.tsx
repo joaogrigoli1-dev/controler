@@ -8,7 +8,7 @@ import { clearSession } from "@/lib/auth";
 import { disposeSocket } from "@/lib/socket";
 import {
   LayoutGrid, Server, Boxes, Globe, KeyRound, Plug, Bell, BarChart3,
-  Search, LogOut, Activity
+  Search, LogOut, Activity, GitBranch
 } from "lucide-react";
 
 const NAV = [
@@ -19,6 +19,7 @@ const NAV = [
   { href: "/hestia", label: "Mail & Sites", icon: Globe, hint: "G M" },
   { href: "/vault", label: "Vault", icon: KeyRound, hint: "G V" },
   { href: "/apis", label: "APIs", icon: Plug, hint: "G A" },
+  { href: "/sinc", label: "Sinc", icon: GitBranch, hint: "" },
   { href: "/alerts", label: "Alertas", icon: Bell, hint: "G N" },
   { href: "/analytics", label: "Analytics", icon: BarChart3, hint: "G T" }
 ];
@@ -76,7 +77,7 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
               href={href}
               className={cn("nav-link", isActive && "active")}
               aria-current={isActive ? "page" : undefined}
-              title={`${label} (atalho: ${hint})`}
+              title={hint ? `${label} (atalho: ${hint})` : label}
             >
               <Icon size={15} aria-hidden="true" />
               <span className="flex-1">{label}</span>

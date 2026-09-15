@@ -576,3 +576,46 @@ model AvailabilityRollup {
   @@index([targetType, granularity, bucket(sort: Desc)])
   @@map("availability_rollups")
 }
+
+// Sinc — redacted informational projections; independent of local agent storage.
+model SincProjectionEvent {
+  eventId        String   @id @db.VarChar(128)
+  idempotencyKey String   @unique @db.VarChar(128)
+  projectId      String   @db.VarChar(128)
+  entityId       String   @db.VarChar(128)
+  revision       Int
+  contentHash    String   @db.VarChar(71)
+  occurredAt     DateTime @db.Timestamptz(3)
+  receivedAt     DateTime @default(now()) @db.Timestamptz(3)
+  envelope       Json
+  head           SincProjectionHead?
+
+  @@unique([projectId, entityId, revision])
+  @@index([projectId, occurredAt(sort: Desc)])
+  @@index([receivedAt(sort: Desc)])
+  @@map("sinc_projection_events")
+}
+
+model SincProjectionHead {
+  projectId String @db.VarChar(128)
+  entityId  String @db.VarChar(128)
+  revision  Int
+  eventId   String @unique @db.VarChar(128)
+  event     SincProjectionEvent @relation(fields: [eventId], references: [eventId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([projectId, entityId])
+  @@map("sinc_projection_heads")
+}
+
+model SincProjectionBatch {
+  batchId        String   @id @db.VarChar(36)
+  idempotencyKey String   @unique @db.VarChar(71)
+  projectId      String   @db.VarChar(128)
+  contentHash    String   @db.VarChar(71)
+  generatedAt    DateTime @db.Timestamptz(3)
+  receivedAt     DateTime @default(now()) @db.Timestamptz(3)
+  eventCount     Int
+
+  @@index([projectId, receivedAt(sort: Desc)])
+  @@map("sinc_projection_batches")
+}
