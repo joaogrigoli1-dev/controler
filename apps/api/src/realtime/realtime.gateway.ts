@@ -13,7 +13,7 @@ import { requireAccessSecret } from "../common/crypto.util";
 // BE-01: CORS restrito às origens conhecidas (antes: origin: true = qualquer origem)
 const WS_ALLOWED_ORIGINS = [
   /^http:\/\/localhost(:\d+)?$/,
-  /^https?:\/\/(noc\.controler|painel\.controler|controler)\.net\.br$/,
+  /^https?:\/\/(noc\.controler|painel\.controler|www\.controler|controler)\.net\.br$/,
   /^https?:\/\/[a-z0-9-]+\.62\.72\.63\.18\.sslip\.io$/
 ];
 
