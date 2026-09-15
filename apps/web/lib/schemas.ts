@@ -331,3 +331,62 @@ export const HostHistoryPointSchema = z
   .passthrough();
 export const HostHistorySchema = z.array(HostHistoryPointSchema);
 export type HostHistoryPoint = z.infer<typeof HostHistoryPointSchema>;
+
+// ─── Roteador F6 — leitura informativa da projeção persistida ─────────
+const NullableMetricSummarySchema = z.object({
+  knownCount: z.number().int().nonnegative(),
+  unknownCount: z.number().int().nonnegative(),
+  knownSumMicros: z.string().regex(/^\d+$/),
+  totalMicros: z.string().regex(/^\d+$/).nullable(),
+}).strict();
+
+const RouteMetricGroupSchema = z.object({
+  eventCount: z.number().int().nonnegative(),
+  durationMs: z.object({
+    knownCount: z.number().int().nonnegative(),
+    unknownCount: z.number().int().nonnegative(),
+    p50: z.number().int().nonnegative().nullable(),
+    p95: z.number().int().nonnegative().nullable(),
+  }).strict(),
+  apiEquivalentCost: NullableMetricSummarySchema,
+  observedBilledCost: NullableMetricSummarySchema,
+}).strict();
+
+const RoteadorRouteSchema = z.object({
+  route_id: z.string(), model_id: z.string(),
+  effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]),
+}).strict().nullable();
+
+export const RoteadorDashboardSchema = z.object({
+  generatedAt: z.string(), source: z.literal("postgres_projection"),
+  authority: z.literal("informational_only"), projectId: z.literal("roteador"),
+  state: z.enum(["available", "empty"]),
+  overview: z.object({
+    historyEvents: z.number().int().nonnegative(), currentEntities: z.number().int().nonnegative(),
+    recommendations: z.number().int().nonnegative(), blocked: z.number().int().nonnegative(), integrationFailures: z.number().int().nonnegative(),
+    currentStates: z.object({ recommendations: z.number().int().nonnegative(), blocked: z.number().int().nonnegative(), integrationFailures: z.number().int().nonnegative() }).strict(),
+  }).strict(),
+  metrics: z.object({ observed: RouteMetricGroupSchema, simulated: RouteMetricGroupSchema }).strict(),
+  recentRoutes: z.array(z.object({
+    eventId: z.string(), entityId: z.string(), revision: z.number().int().positive(), occurredAt: z.string(),
+    state: z.enum(["recommendation", "blocked", "integration_failure"]), route: RoteadorRouteSchema,
+    policyId: z.string(), decisionHash: z.string(), dataClass: z.enum(["observed", "simulated"]),
+    durationMs: z.number().int().nonnegative().nullable(), isCurrent: z.boolean(),
+    explanation: z.object({ status: z.enum(["transported", "not_transported"]), matchedRuleIds: z.array(z.string()) }).strict(),
+  }).strict()),
+  modelTree: z.array(z.object({
+    family: z.enum(["GPT", "Claude", "Outros"]),
+    models: z.array(z.object({ family: z.enum(["GPT", "Claude", "Outros"]), modelId: z.string(), effort: z.string(), observed: z.number().int().nonnegative(), simulated: z.number().int().nonnegative(), total: z.number().int().nonnegative() }).strict()),
+  }).strict()),
+  experiment: z.object({
+    status: z.enum(["not_transported", "prepared", "execution_incomplete", "partially_measured"]),
+    plannedPairs: z.number().int().nonnegative(), executedPairs: z.number().int().nonnegative(), evaluatedPairs: z.number().int().nonnegative(),
+    functionalApprovalRate: z.null(), criticalFailureRate: z.null(), pairedSavingsMicros: z.null(), winner: z.null(),
+  }).strict(),
+  health: z.object({
+    sampleLimit: z.number().int().positive(), sampleLimited: z.boolean(), sampledEvents: z.number().int().nonnegative(), totalStoredEvents: z.number().int().nonnegative(), totalCurrentEntities: z.number().int().nonnegative(),
+    latestOccurredAt: z.string().nullable(), latestReceivedAt: z.string().nullable(), lagSeconds: z.number().int().nonnegative().nullable(), detectedRevisionGaps: z.number().int().nonnegative(),
+    gapStatus: z.enum(["partial_sample", "detected", "none_detected"]),
+  }).strict(),
+}).strict();
+export type RoteadorDashboard = z.infer<typeof RoteadorDashboardSchema>;

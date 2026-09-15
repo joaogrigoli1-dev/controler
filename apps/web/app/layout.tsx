@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Controler — NOC",
   description: "Network Operations Center — gestão de toda a infraestrutura SRV1",
-  icons: { icon: "/favicon.ico" }
+  icons: { icon: [{ url: "/favicon.svg", type: "image/svg+xml" }] }
 };
 
 export const viewport: Viewport = {

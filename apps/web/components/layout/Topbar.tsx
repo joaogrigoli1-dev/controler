@@ -17,6 +17,8 @@ function pageTitle(path: string) {
   if (path.startsWith("/hestia")) return "Mail & Sites";
   if (path.startsWith("/vault")) return "Vault SSM";
   if (path.startsWith("/apis")) return "APIs por Projeto";
+  if (path.startsWith("/sinc")) return "Sinc";
+  if (path.startsWith("/roteador")) return "Roteador";
   if (path.startsWith("/alerts")) return "Alert Center";
   if (path.startsWith("/analytics")) return "Analytics";
   return "Controler";
@@ -24,10 +26,12 @@ function pageTitle(path: string) {
 
 export function Topbar() {
   const path = usePathname() || "";
+  const tahoeRoute = path.startsWith("/sinc") || path.startsWith("/roteador");
   const [connected, setConnected] = useState(false);
-  const [now, setNow] = useState<string>(new Date().toLocaleTimeString("pt-BR"));
+  const [now, setNow] = useState<string>("--:--:--");
 
   useEffect(() => {
+    setNow(new Date().toLocaleTimeString("pt-BR"));
     const s = getSocket();
     let wasDisconnected = false;
     const onConn = () => {
@@ -48,25 +52,25 @@ export function Topbar() {
 
   return (
     <header
-      className="fixed top-0 right-0 bg-surface-0/60 backdrop-blur-xl border-b border-white/5 flex items-center justify-between px-6 z-40 scanline"
+      className="noc-topbar fixed top-0 right-0 bg-surface-0/60 backdrop-blur-xl border-b border-white/5 flex items-center justify-between px-6 z-40 scanline"
       style={{ left: "var(--sidebar-w)", height: "var(--topbar-h)" }}
     >
       <div className="flex items-center gap-4">
         <h1 className="text-display text-lg font-semibold tracking-tight">{pageTitle(path)}</h1>
         <span className="badge badge-cyan">
-          <span className="pulse-dot" style={{ background: "currentColor" }} />
-          LIVE
+          {!tahoeRoute && <span className="pulse-dot" style={{ background: "currentColor" }} />}
+          {tahoeRoute ? "INFORMATIVO" : "LIVE"}
         </span>
       </div>
       <div className="flex items-center gap-3 text-xs">
         {/* UX-14: deixa explícito que os dados podem estar desatualizados */}
         {!connected && (
-          <span className="badge badge-yellow" title="Sem conexão em tempo real — os valores exibidos podem estar desatualizados">
+          <span className="noc-realtime-status badge badge-yellow" title="Sem conexão em tempo real — os valores exibidos podem estar desatualizados">
             ⚠ Dados podem estar desatualizados
           </span>
         )}
         <div
-          className={`badge ${connected ? "badge-green" : "badge-red"}`}
+          className={`noc-realtime-status badge ${connected ? "badge-green" : "badge-red"}`}
           title={connected ? "WebSocket conectado — métricas em tempo real" : "Tentando reconectar ao servidor de métricas"}
         >
           {connected ? "● WS conectado" : "○ Reconectando..."}

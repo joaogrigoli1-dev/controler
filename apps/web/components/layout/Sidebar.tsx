@@ -8,7 +8,7 @@ import { clearSession } from "@/lib/auth";
 import { disposeSocket } from "@/lib/socket";
 import {
   LayoutGrid, Server, Boxes, Globe, KeyRound, Plug, Bell, BarChart3,
-  Search, LogOut, Activity, GitBranch
+  Search, LogOut, Activity, GitBranch, Route
 } from "lucide-react";
 
 const NAV = [
@@ -20,6 +20,7 @@ const NAV = [
   { href: "/vault", label: "Vault", icon: KeyRound, hint: "G V" },
   { href: "/apis", label: "APIs", icon: Plug, hint: "G A" },
   { href: "/sinc", label: "Sinc", icon: GitBranch, hint: "" },
+  { href: "/roteador", label: "Roteador", icon: Route, hint: "" },
   { href: "/alerts", label: "Alertas", icon: Bell, hint: "G N" },
   { href: "/analytics", label: "Analytics", icon: BarChart3, hint: "G T" }
 ];
@@ -101,14 +102,14 @@ export function Sidebar({ onCmdK }: { onCmdK: () => void }) {
 
       {logoutModal && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur z-50 flex items-center justify-center"
+          className="noc-modal-overlay fixed inset-0 bg-black/70 backdrop-blur z-50 flex items-center justify-center"
           onClick={() => !loggingOut && setLogoutModal(false)}
           onKeyDown={e => { if (e.key === "Escape" && !loggingOut) setLogoutModal(false); }}
           role="dialog"
           aria-modal="true"
           aria-label="Confirmar saída"
         >
-          <div className="bezel-card max-w-xs" onClick={e => e.stopPropagation()}>
+          <div className="noc-modal-panel bezel-card max-w-xs" onClick={e => e.stopPropagation()}>
             <div className="inner">
               <h3 className="text-display font-bold text-lg mb-2">Sair do Controler?</h3>
               <p className="text-xs text-white/70 mb-4">Sua sessão será encerrada neste dispositivo.</p>

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { SWRConfig } from "swr";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Topbar } from "@/components/layout/Topbar";
@@ -21,13 +21,15 @@ function onSwrError(err: any, key: string) {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [cmdkOpen, setCmdkOpen] = useState(false);
   const router = useRouter();
+  const pathname = usePathname() || "";
+  const tahoeShell = pathname.startsWith("/sinc") || pathname.startsWith("/roteador");
   useEffect(() => {
     if (!isAuthed()) router.replace("/login");
   }, [router]);
 
   return (
     <SWRConfig value={{ onError: onSwrError }}>
-    <div className="min-h-screen">
+    <div className="min-h-screen" data-tahoe-shell={tahoeShell ? "true" : "false"}>
       <Sidebar onCmdK={() => setCmdkOpen(true)} />
       <Topbar />
       <main
@@ -35,11 +37,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         style={{
           paddingLeft: "var(--sidebar-w)",
           paddingTop: "var(--topbar-h)",
-          paddingRight: "24px",
-          paddingBottom: "32px"
+          paddingRight: tahoeShell ? 0 : "24px",
+          paddingBottom: tahoeShell ? 0 : "32px"
         }}
       >
-        <div className="px-6 py-6">
+        <div className={tahoeShell ? "" : "px-6 py-6"}>
           <ErrorBoundary>{children}</ErrorBoundary>
         </div>
       </main>

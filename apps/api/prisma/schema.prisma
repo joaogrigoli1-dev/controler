@@ -589,11 +589,46 @@ model SincProjectionEvent {
   receivedAt     DateTime @default(now()) @db.Timestamptz(3)
   envelope       Json
   head           SincProjectionHead?
+  dashboardSupplements RouteDashboardSupplement[]
 
   @@unique([projectId, entityId, revision])
   @@index([projectId, occurredAt(sort: Desc)])
   @@index([receivedAt(sort: Desc)])
   @@map("sinc_projection_events")
+}
+
+// Roteador F6 — explanatory/experiment metadata, always linked to a validated F5 event.
+model RouteDashboardSupplement {
+  supplementId   String   @id @db.VarChar(36)
+  idempotencyKey String  @unique @db.VarChar(71)
+  projectId     String   @db.VarChar(128)
+  entityId      String   @db.VarChar(36)
+  revision      Int
+  decisionHash  String   @db.VarChar(71)
+  eventId       String   @db.VarChar(128)
+  contentHash   String   @db.VarChar(71)
+  occurredAt    DateTime @db.Timestamptz(3)
+  receivedAt    DateTime @default(now()) @db.Timestamptz(3)
+  envelope      Json
+  event         SincProjectionEvent @relation(fields: [eventId], references: [eventId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([projectId, entityId, revision])
+  @@index([projectId, occurredAt(sort: Desc)])
+  @@index([eventId])
+  @@map("route_dashboard_supplements")
+}
+
+model RouteDashboardSupplementBatch {
+  batchId        String   @id @db.VarChar(36)
+  idempotencyKey String   @unique @db.VarChar(71)
+  projectId      String   @db.VarChar(128)
+  contentHash    String   @db.VarChar(71)
+  generatedAt    DateTime @db.Timestamptz(3)
+  receivedAt     DateTime @default(now()) @db.Timestamptz(3)
+  itemCount      Int
+
+  @@index([projectId, receivedAt(sort: Desc)])
+  @@map("route_dashboard_supplement_batches")
 }
 
 model SincProjectionHead {

@@ -69,6 +69,7 @@ export class SincService {
   async ingest(input: unknown) {
     let batch: ReturnType<typeof parseSincBatch>;
     try { batch = parseSincBatch(input); } catch { throw new BadRequestException("Envelope Sinc inválido"); }
+    if (batch.project_id !== "roteador") throw new BadRequestException("Projeto de projeção inválido");
     try {
       return await this.prisma.$transaction(async tx => {
         // Serialize only this projection's writers across API replicas. Readers remain free.

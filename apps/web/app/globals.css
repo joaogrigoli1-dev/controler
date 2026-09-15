@@ -251,3 +251,123 @@
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* Tahoe 26 shared shell for the Sinc and Roteador surfaces. The route marker is
+   owned by the dashboard layout so the whole viewport, not only page cards,
+   receives the same solid mac-dark 2.6.3 cascade. */
+[data-tahoe-shell="true"] {
+  --td-bg-window: #1e1e1e;
+  --td-bg-sidebar: #1e1e1e;
+  --td-bg-toolbar: #1e1e1e;
+  --td-bg-card: #2c2c2e;
+  --td-bg-hover: #3a3a3c;
+  --td-text-primary: rgba(255,255,255,.85);
+  --td-text-secondary: rgba(255,255,255,.55);
+  --td-text-small: rgba(255,255,255,.74);
+  --td-separator: rgba(255,255,255,.10);
+  --td-action: #0078d4;
+  --td-on-action: #fff;
+  --td-green: #30d158;
+  --td-orange: #ff9230;
+  --td-red: #ff453a;
+  --td-focus-ring: rgba(26,169,255,.50);
+  --td-focus-ring-thin: rgba(26,169,255,.15);
+  --td-shadow-card: 0 1px 3px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.20);
+  --td-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, sans-serif;
+  --td-font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  min-height: 100vh;
+  background: var(--td-bg-window);
+  color: var(--td-text-primary);
+  color-scheme: dark;
+  font-family: var(--td-font-sans);
+}
+html:has([data-tahoe-shell="true"]) { color-scheme: dark; }
+body:has([data-tahoe-shell="true"]) { background: #1e1e1e; color: rgba(255,255,255,.85); }
+body:has([data-tahoe-shell="true"])::before,
+body:has([data-tahoe-shell="true"])::after { display: none; }
+[data-tahoe-shell="true"] .noc-sidebar,
+[data-tahoe-shell="true"] .noc-topbar {
+  background: var(--td-bg-sidebar) !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  border-color: var(--td-separator) !important;
+  box-shadow: none !important;
+  font-family: var(--td-font-sans);
+}
+[data-tahoe-shell="true"] .noc-topbar { background: var(--td-bg-toolbar) !important; }
+[data-tahoe-shell="true"] .noc-sidebar *,
+[data-tahoe-shell="true"] .noc-topbar * { font-family: var(--td-font-sans) !important; }
+[data-tahoe-shell="true"] .noc-sidebar { font-size: 13px; }
+[data-tahoe-shell="true"] .noc-sidebar .text-sm { font-size: 13px; line-height: 18px; }
+[data-tahoe-shell="true"] .noc-sidebar .nav-link { font-size: 13px; }
+[data-tahoe-shell="true"] .noc-sidebar [class*="text-[9px]"] { font-size: 10px !important; line-height: 16px; }
+[data-tahoe-shell="true"] .noc-sidebar [class*="text-white/"] { color: var(--td-text-small) !important; }
+[data-tahoe-shell="true"] .noc-topbar [class*="text-white/"] { color: var(--td-text-small) !important; }
+[data-tahoe-shell="true"] .noc-topbar h1 { font-size: 15px; line-height: 20px; }
+[data-tahoe-shell="true"] .noc-topbar .text-mono { color: var(--td-text-small) !important; font-size: 13px; line-height: 18px; }
+[data-tahoe-shell="true"] .noc-topbar .gap-4 { gap: 8px; }
+[data-tahoe-shell="true"] .nav-link {
+  min-height: 32px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--td-text-secondary);
+  background: transparent;
+  box-shadow: none;
+}
+[data-tahoe-shell="true"] .nav-link:hover { color: var(--td-text-primary); background: var(--td-bg-hover); }
+[data-tahoe-shell="true"] .nav-link.active {
+  color: var(--td-text-primary);
+  background: var(--td-bg-hover);
+  background-image: none;
+  box-shadow: none;
+}
+[data-tahoe-shell="true"] .nav-link:focus-visible,
+[data-tahoe-shell="true"] button:focus-visible,
+[data-tahoe-shell="true"] a:focus-visible {
+  outline: 3.5px solid var(--td-focus-ring);
+  outline-offset: 0;
+  box-shadow: 0 0 0 1px var(--td-focus-ring-thin);
+}
+[data-tahoe-shell="true"] .badge {
+  border-radius: 6px;
+  background: var(--td-bg-hover);
+  color: var(--td-text-small);
+}
+[data-tahoe-shell="true"] .pulse-dot { animation: none; box-shadow: none; }
+[data-tahoe-shell="true"] .noc-realtime-status { display: none; }
+[data-tahoe-shell="true"] .noc-sidebar [class*="bg-accent"] {
+  background: var(--td-bg-hover) !important;
+  border-color: var(--td-separator) !important;
+}
+[data-tahoe-shell="true"] .noc-sidebar .text-accent { color: var(--td-text-small) !important; }
+[data-tahoe-shell="true"] .noc-modal-overlay {
+  background: rgba(0,0,0,.72) !important;
+  backdrop-filter: none !important;
+}
+[data-tahoe-shell="true"] .noc-modal-panel,
+[data-tahoe-shell="true"] .noc-modal-panel::before,
+[data-tahoe-shell="true"] .noc-modal-panel::after {
+  background: var(--td-bg-card) !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  border-color: var(--td-separator) !important;
+  box-shadow: var(--td-shadow-card) !important;
+  border-radius: 16px !important;
+}
+[data-tahoe-shell="true"] .text-display { font-family: var(--td-font-sans); }
+[data-tahoe-shell="true"] .text-mono { font-family: var(--td-font-mono); }
+
+@media print {
+  html:has([data-tahoe-shell="true"]),
+  body:has([data-tahoe-shell="true"]),
+  html:has([data-tahoe-shell="true"]) body:has([data-tahoe-shell="true"])
+    [data-tahoe-shell="true"][data-tahoe-shell="true"],
+  html:has([data-tahoe-shell="true"]) body:has([data-tahoe-shell="true"])
+    [data-tahoe-shell="true"][data-tahoe-shell="true"] * {
+    color-scheme: light !important;
+    background: #fff !important;
+    background-image: none !important;
+    color: #000 !important;
+    box-shadow: none !important;
+  }
+}

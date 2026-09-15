@@ -15,6 +15,8 @@ const ITEMS = [
   { href: "/hestia", title: "Mail & Sites", group: "Navegação", shortcut: "G M" },
   { href: "/vault", title: "Vault SSM", group: "Navegação", shortcut: "G V" },
   { href: "/apis", title: "APIs", group: "Navegação", shortcut: "G A" },
+  { href: "/sinc", title: "Sinc", group: "Navegação", shortcut: "" },
+  { href: "/roteador", title: "Roteador", group: "Navegação", shortcut: "" },
   { href: "/alerts", title: "Alertas", group: "Navegação", shortcut: "G N" },
   { href: "/analytics", title: "Analytics", group: "Navegação", shortcut: "G T" }
 ];
@@ -36,10 +38,10 @@ export function CommandPalette({ open, onOpenChange }: Props) {
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-start justify-center pt-[10vh] animate-fade-up"
+      className="noc-modal-overlay fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-start justify-center pt-[10vh] animate-fade-up"
       onClick={() => onOpenChange(false)}
     >
-      <div className="w-full max-w-xl glass-card overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className="noc-modal-panel w-full max-w-xl glass-card overflow-hidden" onClick={e => e.stopPropagation()}>
         <Command label="Comando">
           <div className="flex items-center px-4 py-3 border-b border-white/10">
             <Command.Input
