@@ -22,7 +22,7 @@ export const TOOLTIP_STYLE: React.CSSProperties = {
 };
 
 /**
- * SERIES — paleta de data-viz dark-v2 v4 (única fonte de cor de série).
+ * SERIES — paleta de data-viz estética anterior v4 (hoje /mac-dark) (única fonte de cor de série).
  * Páginas importam daqui; hex cru em página é violação (R7).
  */
 export const SERIES = {

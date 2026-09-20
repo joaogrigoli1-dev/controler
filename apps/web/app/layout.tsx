@@ -17,7 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="pt-BR" className="dark">
       <head>
-        {/* dark-v2 v4: Inter (UI) + JetBrains Mono (dados) — Clash Display/Plus Jakarta removidos */}
+        {/* estética anterior v4 (hoje /mac-dark): Inter (UI) + JetBrains Mono (dados) — Clash Display/Plus Jakarta removidos */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&family=JetBrains+Mono:wght@400;500;600&display=swap"

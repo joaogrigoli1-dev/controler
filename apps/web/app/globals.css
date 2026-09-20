@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 /* ──────────────────────────────────────────────────────────
-   DESIGN TOKENS — Controler NOC · dark-v2 v4 "Premium" (02/07/2026)
-   Adaptação da skill /dark-v2 para apps/web (App Router).
+   DESIGN TOKENS — Controler NOC · estética anterior v4 (hoje /mac-dark) "Premium" (02/07/2026)
+   Adaptação da skill /mac-dark para apps/web (App Router).
    REGRA: toda estética entra AQUI (tokens) ou em components/ —
    página nunca define cor/radius/sombra local.
    Paleta: fundo #05060d · accent teal #2dd4bf · indigo #a5b4fc ·

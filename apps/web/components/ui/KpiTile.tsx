@@ -26,7 +26,7 @@ export function KpiTile({ label, value, sub, delta, trend, icon, accent }: Props
         <span>{label}</span>
         {icon && <span className="opacity-60">{icon}</span>}
       </div>
-      {/* dark-v2 v4: KPI editorial 30px/650/-0.02em/tabular */}
+      {/* estética anterior v4 (hoje /mac-dark): KPI editorial 30px/650/-0.02em/tabular */}
       <div className="kpi-value text-mono mt-1">{value}</div>
       {(sub || delta !== undefined) && (
         <div className="text-xs text-white/60 flex items-center gap-2 mt-1">

@@ -33,7 +33,7 @@ const config: Config = {
         text: "hsl(var(--text))"
       },
       borderRadius: {
-        // dark-v2 v4: botão/input 8 (md) · menu/item 10 · card/modal 14 (lg)
+        // estética anterior v4 (hoje /mac-dark): botão/input 8 (md) · menu/item 10 · card/modal 14 (lg)
         lg: "var(--radius-lg)",
         menu: "var(--radius-menu)",
         md: "var(--radius)",

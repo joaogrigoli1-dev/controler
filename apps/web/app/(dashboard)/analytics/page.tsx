@@ -30,7 +30,7 @@ import {
   MemoryStick, Rocket, ShieldAlert, Timer
 } from "lucide-react";
 
-/** R7: severidade → paleta SERIES (dark-v2 v4) — sem hsl cru em pagina. */
+/** R7: severidade → paleta SERIES (estética anterior v4 (hoje /mac-dark)) — sem hsl cru em pagina. */
 const SEV_COLORS = {
   info: SERIES.teal,
   warning: SERIES.amber,
