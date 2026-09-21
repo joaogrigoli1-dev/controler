@@ -1,11 +1,17 @@
 # AGENTS.md — controler
 
-> **As regras globais (`~/.Codex/AGENTS.md`) PREVALECEM sobre este arquivo em qualquer conflito/duplicação.**
+> **Fonte ÚNICA das instruções deste projeto para qualquer agente** (Claude Code, Claude
+> Desktop/Cowork, Codex). O `CLAUDE.md` da raiz só importa este arquivo (`@AGENTS.md`): regra
+> nova entra **aqui**, nunca lá. Unificado em 21/09/2026 (cópias anteriores em
+> `~/Dev/_lixo-2026-09-19/projetos/controler/instrucoes-antes-2026-09-21/` e no histórico git).
+> **As regras globais (`~/.claude/CLAUDE.md`, fonte única; o Codex lê a cópia gerada
+> `~/.codex/AGENTS.md`) PREVALECEM sobre este arquivo em qualquer conflito/duplicação.**
 > Fluxo de deploy, credenciais (SSM), idioma, autonomia e qualidade: ver o global. Aqui só o específico.
 
 ## Projeto
 
-- Command Center NOC da infraestrutura SRV1. **Local:** `~/Dev/controler` | **Prod:** https://noc.controler.net.br | **UUID Coolify:** `a8u2gdchrpjnn6era2i8kh8d` | v4.0.0
+- Command Center NOC (Network Operations Center) para gestão centralizada da infraestrutura SRV1
+  (62.72.63.18). **Local:** `~/Dev/controler` | **Prod:** https://noc.controler.net.br | **UUID Coolify:** `a8u2gdchrpjnn6era2i8kh8d` | v4.0.0
 - **Stack:** NestJS 10 + Fastify + Prisma 5 + Postgres 16 + Redis 7 + Socket.IO | Next.js 14 (App Router) + Tailwind + Recharts
 - **Monorepo pnpm:** `apps/api`, `apps/web`, `packages/shared` (tipos+Zod — fonte única), `packages/ui`
 - **Auth:** OTP via WhatsApp ou SMS; JWT 15min access + 7d refresh; re-auth OTP em ações sensíveis
@@ -45,12 +51,3 @@
 ## Documentação
 
 `README.md` · `ARCHITECTURE.md` · `RUNBOOK.md` (operação/rollback) · `SETUP_GUIDE.md` (secrets/DNS)
-
-## Imported Claude Cowork project instructions
-
-**controler** — Command Center NOC (Network Operations Center) para gestão centralizada da infraestrutura SRV1. (62.72.63.18)
-
-**Localização:** `~/Dev/controler/`
-**Produção:** `https://noc.controler.net.br`
-**Coolify UUID:** `a8u2gdchrpjnn6era2i8kh8d`
-**Versão:** 4.0.0
