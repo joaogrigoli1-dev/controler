@@ -154,7 +154,7 @@ No Coolify (app `a8u2gdchrpjnn6era2i8kh8d`) → *Resource Limits*: ex. **CPU 1.0
 - **Componentes UI:** `components/ui` (shadcn-like), `components/charts` (recharts), `components/layout`. 9 páginas.
 - **Estado global (web):** SWR (server-state) + Socket.IO; sem Redux/Zustand.
 - **Integrações externas:** SRV1 via SSH, Coolify API, Hestia, AWS SSM (segredos), Z-API/Meta (WhatsApp), Infobip (SMS), Redis/BullMQ, Hostinger (env token).
-- **Segurança (já endurecida):** boot falha sem `JWT_ACCESS_SECRET` forte; helmet + CSP; CORS restrito; rate-limit global 300/min. Auditoria prévia (`auditoria-controler-2026-06-10.md`) fechou 28 achados.
+- **Segurança (já endurecida):** boot falha sem `JWT_ACCESS_SECRET` forte; helmet + CSP; CORS restrito; rate-limit global 300/min. Auditoria prévia (`docs/auditorias/auditoria-controler-2026-06-10.md`) fechou 28 achados.
 
 ### 2.4 Riscos
 

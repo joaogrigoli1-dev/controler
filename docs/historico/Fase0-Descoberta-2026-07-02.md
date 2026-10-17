@@ -89,7 +89,7 @@ Servidor **folgado e saudável** agora (CPU ~7%, RAM 7/32 GB, disco 18%, load ~1
 
 **Top memória (docker stats):** mailserver 1,17 GiB (3,7%) · xospam_api 379 MiB · coolify 309 MiB · nextcloud 262 MiB · mariadb 240 MiB · myclinicsoft 232 MiB. CPU tudo <5%. **Nenhum leak aparente agora.**
 
-> **Nota de contagem:** docs/comentário citam **41 containers** e o run anterior contou **33**; a contagem viva atual é **34** (incluindo `postgres-main`). O número não deve ser afirmado estaticamente — usar contagem dinâmica e atualizar `SRV1_INVENTORY.md`.
+> **Nota de contagem:** docs/comentário citam **41 containers** e o run anterior contou **33**; a contagem viva atual é **34** (incluindo `postgres-main`). O número não deve ser afirmado estaticamente — usar contagem dinâmica e atualizar `docs/infra/SRV1_INVENTORY.md`.
 
 ---
 
@@ -167,7 +167,7 @@ Servidor **folgado e saudável** agora (CPU ~7%, RAM 7/32 GB, disco 18%, load ~1
 | 8 | **Telefone default com 12 dígitos (falta um 5)** | `alerts.service.ts:18` `556598466555` vs seed `5565984665555` | Sem `ALERT_PHONE_DEFAULT`, alerta vai a número inválido — falha no canal de emergência | **Média** | corrigir literal p/ 13 díg e/ou ler `/shared/alert_phone` do SSM |
 | 9 | **FQDN Coolify = sslip.io; CORS casa sslip** | app fqdn `*.sslip.io` · `main.ts:49` CORS regex sslip | Redeploy pode regenerar routing p/ sslip; CORS aberto a sslip é superfície extra | **Média** | setar fqdn correto (health check Coolify desabilitado → validar manual); restringir CORS a prod |
 | 10 | **`COOLIFY_BASE_URL` default público diverge do interno** | `coolify.service.ts:15` default `https://coolify.controler.net.br` vs real `http://10.0.6.1:8000` | Se env sumir, chamada interna vira dependência de rota externa+Cloudflare; degradação silenciosa | **Média** | default `http://10.0.6.1:8000`; logar warn ao cair no default |
-| 11 | **"41 containers" (comentário/docs) vs 34 reais** | 34 Up · `metrics.scheduler.ts:86`, `SRV1_INVENTORY.md` | Cosmético; inventário documental defasado | **Baixa** | atualizar comentário e `SRV1_INVENTORY.md`; contagem dinâmica |
+| 11 | **"41 containers" (comentário/docs) vs 34 reais** | 34 Up · `metrics.scheduler.ts:86`, `docs/infra/SRV1_INVENTORY.md` | Cosmético; inventário documental defasado | **Baixa** | atualizar comentário e `docs/infra/SRV1_INVENTORY.md`; contagem dinâmica |
 | 12 | **Ollama baseUrl `localhost:11434` no seed** | ollama no host `*:11434`; healthUrl `10.0.6.1:11434` (ok) · `seed.ts:133` baseUrl localhost | healthUrl certo; baseUrl induz erro a consumidor futuro | **Baixa** | alinhar baseUrl p/ `http://10.0.6.1:11434` |
 | 13 | **`projects` (seed) ≠ 9 projetos reais do Coolify** | 9 seed fixos com UUIDs · 9 projetos vivos diferentes | Modelo órfão/desalinhado no banco | **Baixa** | reconciliar via API ou marcar como referência estática |
 

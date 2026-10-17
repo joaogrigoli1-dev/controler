@@ -57,8 +57,19 @@ OTP WhatsApp via Z-API (espelhado do MyClinicSoft):
 
 ## Documentação
 
-- `_docs-antigos/CHECKPOINT_1_AUDITORIA.md` — auditoria + arquitetura
+Vivos, na raiz:
+
+- `ARCHITECTURE.md` — decisões técnicas
+- `RUNBOOK.md` — operação, rollback e incident response
+- `SETUP_GUIDE.md` — secrets e DNS
+- `AGENTS.md` — instruções do projeto para qualquer agente (o `CLAUDE.md` só importa este)
 - `apps/api/prisma/schema.prisma` — modelo de dados
-- `ARCHITECTURE.md` — decisões técnicas (gerado na Etapa 8)
-- `RUNBOOK.md` — operação e incident response (gerado na Etapa 8)
+
+Em `docs/`:
+
 - `docs/SINC-PANEL-CONTRACT.md` — contrato, fronteira e validação do painel `/sinc`
+- `docs/decisoes/` — registros de decisão ainda vigentes
+- `docs/incidentes/` — incidentes cuja mitigação continua em produção
+- `docs/auditorias/` — laudos de auditoria
+- `docs/infra/` — inventário do SRV1
+- `docs/historico/` — fases, plano e relatório final do projeto NOC (referência, não contrato)

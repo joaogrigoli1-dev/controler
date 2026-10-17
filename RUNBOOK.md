@@ -266,7 +266,7 @@ ssh -p 47391 root@62.72.63.18 'systemctl --failed --no-legend; redis-cli -h 127.
 
 ## Operação NOC — pendências e ack (2026-07-02)
 
-> Contexto completo e racional: `DECISOES-NOC-2026-07-02.md`.
+> Contexto completo e racional: `docs/decisoes/DECISOES-NOC-2026-07-02.md`.
 
 ### Porta SSH do SRV1 (47391 via SSM)
 

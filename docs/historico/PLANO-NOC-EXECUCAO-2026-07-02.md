@@ -164,7 +164,7 @@ Você é o @orquestrador (Fable 5). Objetivo: validar tudo, fazer deploy em prod
 3. DEPLOY: via Coolify (UUID a8u2gdchrpjnn6era2i8kh8d) — `coolify_deploy`. Acompanhar logs.
 4. HEALTH PÓS-DEPLOY (obrigatório, health do Coolify está OFF): `curl https://noc.controler.net.br/be-health` e validar telas.
 5. HARDENING/OPS: investigar e corrigir os 3 serviços systemd failed (redis-server, ssh-emergency, staggered-containers); confirmar que os coletores estão populando as tabelas; validar alertas com um disparo de teste.
-6. DOCS: atualizar ARCHITECTURE.md, RUNBOOK.md, SRV1_INVENTORY.md (33 containers, hardware 8c/32GB) e CLAUDE.md (porta SSH, hardware).
+6. DOCS: atualizar ARCHITECTURE.md, RUNBOOK.md, docs/infra/SRV1_INVENTORY.md (33 containers, hardware 8c/32GB) e CLAUDE.md (porta SSH, hardware).
 
 Gate final: /be-health OK, telas OK, coletores gravando, alerta de teste entregue. Entregue "Relatorio-Final-NOC-<data>.md" com o antes/depois e KPIs ativos. FIM.
 ```

@@ -51,3 +51,6 @@
 ## Documentação
 
 `README.md` · `ARCHITECTURE.md` · `RUNBOOK.md` (operação/rollback) · `SETUP_GUIDE.md` (secrets/DNS)
+
+Histórico e material de referência vivem em `docs/`: `decisoes/`, `incidentes/`, `auditorias/`,
+`infra/` e `historico/`. A raiz guarda só os quatro documentos acima.

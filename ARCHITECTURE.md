@@ -141,7 +141,7 @@ Cache em memória de 60s por chave (com `SsmService.invalidate(name)`).
 
 O controler **é** o NOC do SRV1 (não há Prometheus/Grafana/cAdvisor). Frameworks por camada:
 **USE + PSI** no host, **docker stats** por container, **RED** em serviços/APIs, **Golden Signals**
-no /overview. Catálogo completo de KPIs/limiares em `Fase1-Arquitetura-KPIs-2026-07-02.md`.
+no /overview. Catálogo completo de KPIs/limiares em `docs/historico/Fase1-Arquitetura-KPIs-2026-07-02.md`.
 
 ### Fontes de coleta
 

@@ -1,7 +1,7 @@
 /**
  * schemas.ts — Contrato Zod do NOC (FASE 4, B-04: validação de respostas).
  *
- * Fonte: Fase1-Arquitetura-KPIs-2026-07-02.md (catálogo de KPIs).
+ * Fonte: docs/historico/Fase1-Arquitetura-KPIs-2026-07-02.md (catálogo de KPIs).
  * Endpoints marcados [FASE 3] ainda não existem no backend — o lib/noc.ts
  * cai para mock rotulado quando recebem 404. Quando a FASE 3 implementar os
  * coletores, estes schemas são o contrato que o backend deve honrar

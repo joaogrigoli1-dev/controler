@@ -26,3 +26,6 @@ backups/
 rh/
 RH/
 .fuse_hidden*
+
+# Lixo de limpeza (não versionado)
+lixo/
